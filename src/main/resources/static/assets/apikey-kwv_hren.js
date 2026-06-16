@@ -1,1 +1,0 @@
-import{y as t}from"./index-CDh6RzB_.js";const a={list(){return t.get("/api-keys")},get(e){return t.get(`/api-keys/${e}`)},create(e){return t.post("/api-keys",e)},update(e,r){return t.put(`/api-keys/${e}`,r)},delete(e){return t.delete(`/api-keys/${e}`)}};export{a};
