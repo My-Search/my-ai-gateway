@@ -15,6 +15,18 @@ const router = createRouter({
       meta: { title: '登录', requiresAuth: false }
     },
     {
+      path: '/share/apikey/:code',
+      name: 'apikey-share-legacy',
+      component: () => import('@/views/share/Index.vue'),
+      meta: { title: 'API 密钥分享', requiresAuth: false }
+    },
+    {
+      path: '/apikey/:keyValue',
+      name: 'apikey-share',
+      component: () => import('@/views/share/Index.vue'),
+      meta: { title: 'API 密钥分享', requiresAuth: false }
+    },
+    {
       path: '/admin',
       component: () => import('@/components/layout/Layout.vue'),
       meta: { requiresAuth: true },

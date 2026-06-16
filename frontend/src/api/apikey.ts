@@ -5,6 +5,8 @@ export interface ApiKey {
   keyName: string
   keyValue: string
   enabled: number
+  shareCode?: string
+  shared?: number
   lastUsedAt?: string
   createdAt?: string
 }

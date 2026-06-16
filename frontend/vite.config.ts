@@ -36,6 +36,10 @@ export default defineConfig({
         target: 'http://localhost:1399',
         changeOrigin: true
       },
+      '/api/share': {
+        target: 'http://localhost:1399',
+        changeOrigin: true
+      },
       // 对外 AI 接口（OpenAI / Anthropic 兼容），本地开发时直接通过前端代理调用
       '/v1': {
         target: 'http://localhost:1399',

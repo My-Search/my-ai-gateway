@@ -230,3 +230,25 @@ ALTER TABLE request_logs ADD COLUMN total_tokens INTEGER DEFAULT 0;
 -- 为 token 统计查询添加索引
 CREATE INDEX IF NOT EXISTS idx_request_logs_channel_name ON request_logs(channel_name);
 CREATE INDEX IF NOT EXISTS idx_request_logs_channel_model ON request_logs(channel_model_name);
+
+-- ========================================
+-- VERSION:v1.8.0
+-- API密钥添加分享码字段，用于生成不可预测的分享链接
+-- ========================================
+
+-- 添加分享码字段
+ALTER TABLE api_keys ADD COLUMN share_code TEXT;
+
+-- 为分享码添加唯一索引
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_share_code ON api_keys(share_code);
+
+-- ========================================
+-- VERSION:v1.9.0
+-- API密钥添加分享开关字段，支持可撤销分享
+-- ========================================
+
+-- 添加分享开关字段（1=启用分享，0=关闭分享）
+ALTER TABLE api_keys ADD COLUMN shared INTEGER DEFAULT 1;
+
+-- 为历史数据设置默认值（已有记录的 shared 设为 0，需要手动开启）
+UPDATE api_keys SET shared = 0 WHERE shared IS NULL;

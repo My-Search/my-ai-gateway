@@ -24,6 +24,12 @@ public class ApiKey {
     /** 是否启用 */
     private Integer enabled;
 
+    /** 分享码（用于生成不可预测的分享链接） */
+    private String shareCode;
+
+    /** 是否启用分享（分享链接是否有效） */
+    private Integer shared;
+
     /** 最后使用时间 */
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime lastUsedAt;
@@ -54,6 +60,12 @@ public class ApiKey {
 
     public Integer getEnabled() { return enabled; }
     public void setEnabled(Integer enabled) { this.enabled = enabled; }
+
+    public String getShareCode() { return shareCode; }
+    public void setShareCode(String shareCode) { this.shareCode = shareCode; }
+
+    public Integer getShared() { return shared; }
+    public void setShared(Integer shared) { this.shared = shared; }
 
     public LocalDateTime getLastUsedAt() { return lastUsedAt; }
     public void setLastUsedAt(LocalDateTime lastUsedAt) { this.lastUsedAt = lastUsedAt; }

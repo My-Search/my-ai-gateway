@@ -47,12 +47,12 @@ fi
 echo "使用命令：${COMPOSE_CMD}"
 
 echo ""
-echo "5. 停止旧容器..."
-${COMPOSE_CMD} down
+echo "5. 重新构建镜像..."
+${COMPOSE_CMD} build --no-cache
 
 echo ""
-echo "6. 重新构建镜像..."
-${COMPOSE_CMD} build --no-cache
+echo "6. 停止旧容器..."
+${COMPOSE_CMD} down
 
 echo ""
 echo "7. 启动新容器..."

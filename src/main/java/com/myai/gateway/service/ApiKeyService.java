@@ -38,6 +38,19 @@ public class ApiKeyService {
     }
 
     /**
+     * 根据分享码查找
+     */
+    public ApiKey findByShareCode(String shareCode) {
+        if (shareCode == null || shareCode.isBlank()) {
+            return null;
+        }
+        return apiKeyMapper.selectOne(
+                new LambdaQueryWrapper<ApiKey>()
+                        .eq(ApiKey::getShareCode, shareCode)
+                        .eq(ApiKey::getEnabled, 1));
+    }
+
+    /**
      * 根据密钥值查找（用于请求验证）
      */
     public ApiKey findByKeyValue(String keyValue) {
@@ -45,6 +58,33 @@ public class ApiKeyService {
                 new LambdaQueryWrapper<ApiKey>()
                         .eq(ApiKey::getKeyValue, keyValue)
                         .eq(ApiKey::getEnabled, 1));
+    }
+
+    /**
+     * 根据密钥值查找分享信息（仅限已启用分享的密钥）
+     */
+    public ApiKey findByKeyValueForShare(String keyValue) {
+        if (keyValue == null || keyValue.isBlank()) {
+            return null;
+        }
+        return apiKeyMapper.selectOne(
+                new LambdaQueryWrapper<ApiKey>()
+                        .eq(ApiKey::getKeyValue, keyValue)
+                        .eq(ApiKey::getEnabled, 1)
+                        .eq(ApiKey::getShared, 1));
+    }
+
+    /**
+     * 切换分享状态
+     */
+    @Transactional
+    public void toggleShare(Long id, boolean shared) {
+        ApiKey key = apiKeyMapper.selectById(id);
+        if (key != null) {
+            key.setShared(shared ? 1 : 0);
+            key.setUpdatedAt(LocalDateTime.now());
+            apiKeyMapper.updateById(key);
+        }
     }
 
     @Transactional
@@ -60,6 +100,8 @@ public class ApiKeyService {
             // 如果冲突则重新生成
             apiKey.setKeyValue(generateApiKey());
         }
+        // 自动生成分享码
+        apiKey.setShareCode(generateShareCode());
         apiKeyMapper.insert(apiKey);
         return apiKey;
     }
@@ -110,5 +152,15 @@ public class ApiKeyService {
         secureRandom.nextBytes(randomBytes);
         String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
         return KEY_PREFIX + encoded;
+    }
+
+    /**
+     * 自动生成分享码
+     * 生成格式: 16位URL安全的随机字符串
+     */
+    private String generateShareCode() {
+        byte[] randomBytes = new byte[12];
+        secureRandom.nextBytes(randomBytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(randomBytes);
     }
 }

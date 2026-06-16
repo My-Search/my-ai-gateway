@@ -5,6 +5,7 @@ import com.myai.gateway.entity.*;
 import com.myai.gateway.relay.balancer.FailoverBalancer;
 import com.myai.gateway.relay.balancer.LoadBalancerFactory;
 import com.myai.gateway.relay.balancer.RoutingCandidate;
+import com.myai.gateway.relay.transformer.InternalMessage;
 import com.myai.gateway.relay.transformer.InternalRequest;
 import com.myai.gateway.relay.transformer.MessageTransformer;
 import com.myai.gateway.service.*;
@@ -15,6 +16,7 @@ import reactor.core.publisher.Mono;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -34,6 +36,7 @@ class RelayServiceTest {
     private LoadBalancerFactory loadBalancerFactory;
     private ObjectMapper objectMapper;
     private MessageTransformer messageTransformer;
+    private StreamContentManager streamContentManager;
 
     private RelayService relayService;
 
@@ -47,10 +50,11 @@ class RelayServiceTest {
         loadBalancerFactory = mock(LoadBalancerFactory.class);
         objectMapper = new ObjectMapper();
         messageTransformer = mock(MessageTransformer.class);
+        streamContentManager = new StreamContentManager();
 
         relayService = new RelayService(channelService, channelApiKeyService, modelService,
                 circuitBreakerService, requestLogService, loadBalancerFactory,
-                objectMapper, messageTransformer);
+                objectMapper, messageTransformer, streamContentManager);
 
         when(loadBalancerFactory.getBalancer(anyString())).thenReturn(new FailoverBalancer());
         when(requestLogService.startTrace()).thenReturn("trace-1");
@@ -593,5 +597,180 @@ class RelayServiceTest {
         key.setKeyName(keyName);
         key.setEnabled(1);
         return key;
+    }
+
+    // ========== 流式内容上下文传递测试 ==========
+
+    @Test
+    void buildRequestWithContext_appendsAssistantMessageWithAccumulatedContent() {
+        InternalRequest originalReq = new InternalRequest();
+        originalReq.setModel("x");
+        originalReq.setClientApiFormat("openai");
+        originalReq.setStream(true);
+        originalReq.setMaxTokens(2048);
+        originalReq.setTemperature(0.7);
+        originalReq.setSystemPrompt("You are a helpful assistant.");
+
+        // 添加原始用户消息
+        List<InternalMessage> messages = new ArrayList<>();
+        messages.add(new InternalMessage("user", "Hello"));
+        originalReq.setMessages(messages);
+
+        String accumulatedContent = "Hello! I'm AI model";
+        InternalRequest contextReq = relayService.buildRequestWithContext(originalReq, accumulatedContent);
+
+        // 验证模型名和参数不变
+        assertThat(contextReq.getModel()).isEqualTo("x");
+        assertThat(contextReq.isStream()).isTrue();
+        assertThat(contextReq.getMaxTokens()).isEqualTo(2048);
+        assertThat(contextReq.getTemperature()).isEqualTo(0.7);
+        assertThat(contextReq.getSystemPrompt()).isEqualTo("You are a helpful assistant.");
+        assertThat(contextReq.getClientApiFormat()).isEqualTo("openai");
+
+        // 验证消息列表：原始消息 + 新追加的 assistant 消息
+        assertThat(contextReq.getMessages()).hasSize(2);
+        assertThat(contextReq.getMessages().get(0).getRole()).isEqualTo("user");
+        assertThat(contextReq.getMessages().get(0).getContent()).isEqualTo("Hello");
+        assertThat(contextReq.getMessages().get(1).getRole()).isEqualTo("assistant");
+        assertThat(contextReq.getMessages().get(1).getContent()).isEqualTo("Hello! I'm AI model");
+    }
+
+    @Test
+    void buildRequestWithContext_preservesToolAndContentPartsInMessages() {
+        InternalRequest originalReq = new InternalRequest();
+        originalReq.setModel("x");
+        originalReq.setClientApiFormat("openai");
+
+        // 添加含 tool_calls 的消息
+        InternalMessage msgWithTools = new InternalMessage("assistant", "");
+        msgWithTools.setToolCalls(List.of(Map.of("type", "function", "function", Map.of("name", "getWeather"))));
+        originalReq.setMessages(new ArrayList<>(List.of(new InternalMessage("user", "What's the weather?"), msgWithTools)));
+
+        String accumulatedContent = "Let me check the weather for you.";
+        InternalRequest contextReq = relayService.buildRequestWithContext(originalReq, accumulatedContent);
+
+        assertThat(contextReq.getMessages()).hasSize(3);
+        assertThat(contextReq.getMessages().get(1).getToolCalls()).isNotNull();
+        assertThat(contextReq.getMessages().get(2).getRole()).isEqualTo("assistant");
+        assertThat(contextReq.getMessages().get(2).getContent()).isEqualTo("Let me check the weather for you.");
+    }
+
+    @Test
+    void buildRequestWithContext_originalRequestUnchanged() {
+        InternalRequest originalReq = new InternalRequest();
+        originalReq.setModel("x");
+        originalReq.setClientApiFormat("openai");
+        originalReq.setMessages(new ArrayList<>(List.of(new InternalMessage("user", "Hello"))));
+
+        relayService.buildRequestWithContext(originalReq, "Some content");
+
+        // 原始请求不应被修改
+        assertThat(originalReq.getMessages()).hasSize(1);
+        assertThat(originalReq.getMessages().get(0).getRole()).isEqualTo("user");
+    }
+
+    @Test
+    void buildRequestWithContext_emptyMessages_stillAddsAssistantMessage() {
+        InternalRequest originalReq = new InternalRequest();
+        originalReq.setModel("x");
+        originalReq.setClientApiFormat("openai");
+        originalReq.setMessages(new ArrayList<>());
+
+        String accumulatedContent = "Response content";
+        InternalRequest contextReq = relayService.buildRequestWithContext(originalReq, accumulatedContent);
+
+        assertThat(contextReq.getMessages()).hasSize(1);
+        assertThat(contextReq.getMessages().get(0).getRole()).isEqualTo("assistant");
+        assertThat(contextReq.getMessages().get(0).getContent()).isEqualTo("Response content");
+    }
+
+    @Test
+    void extractTextContentFromRawData_openaiDeltaContent() {
+        String rawData = "{\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}";
+        String content = relayService.extractTextContentFromRawData(rawData, "openai");
+        assertThat(content).isEqualTo("Hello");
+    }
+
+    @Test
+    void extractTextContentFromRawData_openaiEmptyDelta_returnsNull() {
+        String rawData = "{\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":null}]}";
+        String content = relayService.extractTextContentFromRawData(rawData, "openai");
+        assertThat(content).isNull();
+    }
+
+    @Test
+    void extractTextContentFromRawData_openaiNoDelta_returnsNull() {
+        String rawData = "{\"id\":\"chatcmpl-123\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}";
+        String content = relayService.extractTextContentFromRawData(rawData, "openai");
+        assertThat(content).isNull();
+    }
+
+    @Test
+    void extractTextContentFromRawData_anthropicDeltaText() {
+        String rawData = "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello from Anthropic\"}}";
+        String content = relayService.extractTextContentFromRawData(rawData, "anthropic");
+        assertThat(content).isEqualTo("Hello from Anthropic");
+    }
+
+    @Test
+    void extractTextContentFromRawData_anthropicNoText_returnsNull() {
+        String rawData = "{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\"}}";
+        String content = relayService.extractTextContentFromRawData(rawData, "anthropic");
+        assertThat(content).isNull();
+    }
+
+    @Test
+    void extractTextContentFromRawData_invalidJson_returnsNull() {
+        String rawData = "not json";
+        String content = relayService.extractTextContentFromRawData(rawData, "openai");
+        assertThat(content).isNull();
+    }
+
+    @Test
+    void extractTextContentFromRawData_gatewayMetaEvent_returnsNull() {
+        String rawData = "{\"_gateway_meta\":true,\"channel\":\"A\"}";
+        String content = relayService.extractTextContentFromRawData(rawData, "openai");
+        assertThat(content).isNull();
+    }
+
+    @Test
+    void extractTextContentFromRawData_routingProgress_returnsNull() {
+        String rawData = "{\"_routing_progress\":true,\"phase\":\"trying\"}";
+        String content = relayService.extractTextContentFromRawData(rawData, "openai");
+        assertThat(content).isNull();
+    }
+
+    @Test
+    void streamContentManager_isInjectedAndUsable() {
+        // 验证 StreamContentManager 注入正常
+        assertThat(streamContentManager).isNotNull();
+        streamContentManager.appendContent("test-trace", "Hello");
+        assertThat(streamContentManager.getContent("test-trace")).isEqualTo("Hello");
+        streamContentManager.clearContent("test-trace");
+    }
+
+    private RoutingCandidate createMockCandidate() {
+        Channel channel = new Channel();
+        channel.setId(10L);
+        channel.setName("A");
+        channel.setEnabled(1);
+
+        ChannelModel cm = new ChannelModel();
+        cm.setId(100L);
+        cm.setChannelId(10L);
+        cm.setModelName("a1");
+        cm.setEnabled(1);
+
+        ChannelApiKey key = new ChannelApiKey();
+        key.setId(1000L);
+        key.setChannelId(10L);
+        key.setKeyName("ak1");
+        key.setEnabled(1);
+
+        ModelChannelRel rel = new ModelChannelRel(1L, 100L);
+        rel.setSortOrder(0);
+        rel.setEnabled(1);
+
+        return new RoutingCandidate(rel, channel, cm, key);
     }
 }

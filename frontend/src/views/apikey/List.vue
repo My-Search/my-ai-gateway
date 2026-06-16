@@ -15,6 +15,7 @@
             <th>密钥名称</th>
             <th>密钥值</th>
             <th>状态</th>
+            <th>分享</th>
             <th>最后使用</th>
             <th>创建时间</th>
             <th>操作</th>
@@ -40,17 +41,24 @@
                 <span class="status-dot inactive"></span>禁用
               </span>
             </td>
+            <td>
+              <span v-if="key.shared === 1" class="share-badge on">已分享</span>
+              <span v-else class="share-badge off">未分享</span>
+            </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ key.lastUsedAt || '从未使用' }}</td>
             <td style="font-size:12px;color:var(--text-muted);">{{ key.createdAt }}</td>
             <td>
-              <div style="display:flex;gap:6px;">
+              <div style="display:flex;gap:6px;align-items:center;">
+                <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)" title="复制分享链接">分享</button>
+                <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)" title="开启分享并复制链接">分享</button>
+                <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)">撤销</button>
                 <button class="btn btn-sm btn-secondary" @click="openForm(key)">编辑</button>
                 <button class="btn btn-sm btn-danger" @click="confirmDelete(key)">删除</button>
               </div>
             </td>
           </tr>
           <tr v-if="!apiKeys.length">
-            <td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;">
+            <td colspan="8" style="text-align:center;color:var(--text-muted);padding:40px;">
               暂无 API 密钥，点击右上角「添加密钥」创建
             </td>
           </tr>
@@ -86,6 +94,9 @@
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
+          <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)">分享</button>
+          <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)">分享</button>
+          <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)">撤销</button>
           <button class="btn btn-sm btn-secondary" @click="copyKey(key.keyValue)">复制</button>
           <button class="btn btn-sm btn-secondary" @click="openForm(key)">编辑</button>
           <button class="btn btn-sm btn-danger" @click="confirmDelete(key)">删除</button>
@@ -144,8 +155,12 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
+import { shareApi } from '@/api/share'
 import Dialog from '@/components/common/Dialog.vue'
+
+const router = useRouter()
 
 const apiKeys = ref<ApiKey[]>([])
 
@@ -263,6 +278,86 @@ async function copyKey(val: string) {
   }
 }
 
+/**
+ * 复制分享链接（新格式：/apikey/{keyValue}）
+ */
+function shareKey(key: ApiKey) {
+  const shareUrl = `${window.location.origin}/apikey/${encodeURIComponent(key.keyValue)}`
+  navigator.clipboard.writeText(shareUrl).then(() => {
+    showToastMsg('分享链接已复制')
+  }).catch(() => {
+    openDialog({ message: '分享链接复制失败' })
+  })
+}
+
+/**
+ * 先开启分享，再复制链接
+ */
+async function enableShare(key: ApiKey) {
+  if (!key.id) return
+  try {
+    const res = await shareApi.toggleShare(key.id, true)
+    if (!res.data.success) {
+      openDialog({ title: '操作失败', message: res.data.error || '开启分享失败' })
+      return
+    }
+    key.shared = 1
+    shareKey(key)
+    // 刷新列表更新状态
+    loadKeys()
+  } catch (e: any) {
+    openDialog({ title: '操作失败', message: e.message })
+  }
+}
+
+/**
+ * 确认撤销分享
+ */
+function confirmRevoke(key: ApiKey) {
+  openDialog({
+    title: '确认撤销分享',
+    message: `确定要撤销密钥「${key.keyName}」的分享吗？撤销后原有的分享链接将立即失效，无法再访问。`,
+    type: 'confirm',
+    confirmClass: 'btn-warning',
+    confirmText: '确认撤销',
+    onConfirm: () => revokeShare(key)
+  })
+}
+
+/**
+ * 执行撤销分享
+ */
+async function revokeShare(key: ApiKey) {
+  if (!key.id) return
+  try {
+    const res = await shareApi.toggleShare(key.id, false)
+    if (!res.data.success) {
+      openDialog({ title: '操作失败', message: res.data.error || '撤销分享失败' })
+      return
+    }
+    key.shared = 0
+    showToastMsg('已撤销分享，链接已失效')
+    loadKeys()
+  } catch (e: any) {
+    openDialog({ title: '操作失败', message: e.message })
+  }
+}
+
+/**
+ * 显示 Toast 消息
+ */
+function showToastMsg(text: string) {
+  const toast = document.createElement('div')
+  toast.textContent = text
+  Object.assign(toast.style, {
+    position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+    background: '#10b981', color: '#fff', padding: '8px 20px', borderRadius: '8px',
+    fontSize: '14px', zIndex: '9999', transition: 'opacity .3s'
+  })
+  document.body.appendChild(toast)
+  setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300) }, 1500)
+}
+
 function confirmDelete(key: ApiKey) {
   openDialog({
     title: '确认删除',
@@ -297,6 +392,22 @@ onMounted(loadKeys)
   border-radius: 4px; padding: 0; margin-left: 8px; vertical-align: middle;
 }
 .copy-btn:hover { color: var(--accent-blue); border-color: var(--accent-blue); }
+
+/* 警告按钮（撤销分享） */
+:deep(.btn-warning) {
+  background: #f59e0b; color: #fff; border-color: #d97706;
+}
+:deep(.btn-warning:hover) {
+  background: #d97706;
+}
+
+/* 分享状态徽标 */
+.share-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; padding: 2px 8px; border-radius: 4px;
+}
+.share-badge.on { background: #d1fae5; color: #065f46; }
+.share-badge.off { background: #fef3c7; color: #92400e; }
 
 /* Mobile card list */
 .mobile-card-list {

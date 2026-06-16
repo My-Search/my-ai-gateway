@@ -696,6 +696,22 @@ public class AdminApiController {
         return ResponseEntity.ok(result);
     }
 
+    @PostMapping(value = "/api-keys/{id}/toggle-share", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> toggleShare(@PathVariable Long id,
+                                                            @RequestBody Map<String, Object> body) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            boolean shared = body.containsKey("shared") && Boolean.TRUE.equals(body.get("shared"));
+            apiKeyService.toggleShare(id, shared);
+            result.put("success", true);
+            result.put("shared", shared);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
     // ==================== Logs ====================
 
     @GetMapping(value = "/logs", produces = "application/json;charset=UTF-8")

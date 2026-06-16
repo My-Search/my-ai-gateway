@@ -69,7 +69,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
         registry.addInterceptor(adminAuthInterceptor)
                 .addPathPatterns("/admin/**")
                 .addPathPatterns("/")
-                .excludePathPatterns("/admin/api/auth/**", "/static/**", "/assets/**", "/index.html");
+                .excludePathPatterns("/admin/api/auth/**", "/static/**", "/assets/**", "/index.html", "/api/share/**");
     }
 
     /**

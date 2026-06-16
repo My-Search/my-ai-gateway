@@ -7,6 +7,7 @@ import com.myai.gateway.entity.*;
 import com.myai.gateway.relay.balancer.LoadBalancer;
 import com.myai.gateway.relay.balancer.LoadBalancerFactory;
 import com.myai.gateway.relay.balancer.RoutingCandidate;
+import com.myai.gateway.relay.transformer.InternalMessage;
 import com.myai.gateway.relay.transformer.InternalRequest;
 import com.myai.gateway.relay.transformer.MessageTransformer;
 import com.myai.gateway.service.*;
@@ -45,6 +46,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *       该 API Key 下的所有模型均不可用。</li>
  * </ul>
  * </p>
+ *
+ * <p>流式上下文传递：当流式请求中途失败时，已返回的内容会被累积并作为下一个候选的上下文，
+ * 使下一个候选能够基于已输出的内容继续生成，实现客户端无感切换。</p>
  */
 @Service
 public class RelayService {
@@ -60,6 +64,7 @@ public class RelayService {
     private final ObjectMapper objectMapper;
     private final WebClient webClient;
     private final MessageTransformer messageTransformer;
+    private final StreamContentManager streamContentManager;
 
     /** 流式请求 token 用量累积器：traceId -> [promptTokens, completionTokens, totalTokens] */
     private final ConcurrentHashMap<String, int[]> streamUsageMap = new ConcurrentHashMap<>();
@@ -71,7 +76,8 @@ public class RelayService {
                         RequestLogService requestLogService,
                         LoadBalancerFactory loadBalancerFactory,
                         ObjectMapper objectMapper,
-                        MessageTransformer messageTransformer) {
+                        MessageTransformer messageTransformer,
+                        StreamContentManager streamContentManager) {
         this.channelService = channelService;
         this.channelApiKeyService = channelApiKeyService;
         this.modelService = modelService;
@@ -80,6 +86,7 @@ public class RelayService {
         this.loadBalancerFactory = loadBalancerFactory;
         this.objectMapper = objectMapper;
         this.messageTransformer = messageTransformer;
+        this.streamContentManager = streamContentManager;
         this.webClient = WebClient.builder()
                 .codecs(config -> config.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
                 .build();
@@ -313,6 +320,8 @@ public class RelayService {
                                                 String provider, int retryIndex, long startTime,
                                                 boolean internalClient) {
         if (remaining.isEmpty()) {
+            // 清理流式内容累积
+            streamContentManager.clearContent(traceId);
             requestLogService.logComplete(traceId, null, req.getModel(), null, null,
                     "fail", "error", "所有流式候选均失败", System.currentTimeMillis() - startTime, retryIndex);
             log.warn("所有流式候选均失败 - traceId={}", traceId);
@@ -327,12 +336,13 @@ public class RelayService {
             return Flux.error(new RuntimeException("没有可用的路由候选"));
         }
 
-        log.info("流式路由决策 - traceId={} retryIndex={} 选中候选: channel={} model={} key={} (剩余{}个候选)",
+        log.info("流式路由决策 - traceId={} retryIndex={} 选中候选: channel={} model={} key={} (剩余{}个候选){}",
                 traceId, retryIndex,
                 candidate.getChannel().getName(),
                 candidate.getChannelModel().getModelName(),
                 candidate.getChannelApiKey().getKeyName(),
-                remaining.size());
+                remaining.size(),
+                req.isContextRetry() ? " [已拼接]" : "");
 
         logPhase(traceId, candidate, req, "start",
                 "流式路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
@@ -351,6 +361,8 @@ public class RelayService {
                     }
                 })
                 .doOnComplete(() -> {
+                    // 清理流式内容累积
+                    streamContentManager.clearContent(traceId);
                     int[] usage = streamUsageMap.remove(traceId);
                     int pt = usage != null ? usage[0] : 0;
                     int ct = usage != null ? usage[1] : 0;
@@ -381,7 +393,22 @@ public class RelayService {
                             candidate.getChannelModel().getModelName(),
                             maxAttempts - 1,
                             err.getMessage());
-                    handleFailure(candidate, req);
+
+                    // 获取已累积的流式内容，作为下一个候选的上下文
+                    String accumulatedContent = streamContentManager.getAndClearContent(traceId);
+                    InternalRequest contextReq = req;
+                    if (accumulatedContent != null && !accumulatedContent.isEmpty()) {
+                        contextReq = buildRequestWithContext(req, accumulatedContent);
+                        log.warn("请求路径：中途失败 - traceId={} 失败候选=[{}]{} 已累积内容长度={} 拼接后将重试下一个候选",
+                                traceId,
+                                candidate.getChannel().getName(),
+                                candidate.getChannelModel().getModelName(),
+                                accumulatedContent.length());
+                    } else {
+                        log.info("无可累积的流式内容，直接切换候选 - traceId={}", traceId);
+                    }
+
+                    handleFailure(candidate, contextReq);
                     balancer.markFailed(candidate);
                     remaining.remove(candidate);
                     log.info("流式候选失败已移除，准备重路由 - traceId={} 剩余候选数={}", traceId, remaining.size());
@@ -398,7 +425,7 @@ public class RelayService {
                                 "switching", candidate, retryIndex + 1, failReason)));
                     }
                     return Flux.concat(routingSwitch,
-                            tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient));
+                            tryStreamCandidates(traceId, remaining, authHeader, contextReq, provider, retryIndex + 1, startTime, internalClient));
                 });
     }
 
@@ -416,7 +443,7 @@ public class RelayService {
                 candidate.getChannel().getName(),
                 candidate.getChannelModel().getModelName(),
                 candidate.getChannelApiKey().getKeyName());
-        return callProviderStream(authHeader, req, candidate, provider, internalClient)
+        return callProviderStream(authHeader, req, candidate, provider, internalClient, traceId)
                 .timeout(Duration.ofSeconds(60))
                 .doOnError(err -> log.warn("流式候选尝试 {}/{} 失败 channel={} key={} model={}: {}",
                         attempt, maxAttempts,
@@ -478,6 +505,18 @@ public class RelayService {
     Flux<SseEvent> callProviderStream(String authHeader, InternalRequest req,
                                        RoutingCandidate candidate, String provider,
                                        boolean internalClient) {
+        return callProviderStream(authHeader, req, candidate, provider, internalClient, null);
+    }
+
+    /**
+     * 调用上游流式接口
+     *
+     * @param internalClient 是否为内部客户端，true 时在流开头注入 _gateway_meta 事件
+     * @param traceId        链路追踪ID，不为null时启用内容累积
+     */
+    Flux<SseEvent> callProviderStream(String authHeader, InternalRequest req,
+                                       RoutingCandidate candidate, String provider,
+                                       boolean internalClient, String traceId) {
         String endpoint = buildEndpoint(candidate, provider);
         String apiKey = candidate.getChannelApiKey().getApiKey();
         Map<String, String> headers = buildProviderHeaders(provider, apiKey, authHeader);
@@ -505,7 +544,7 @@ public class RelayService {
                             ? Flux.just(buildGatewayMetaEvent(candidate))
                             : Flux.empty();
                     return metaFlux.concatWith(extractCompleteEvents(resp.bodyToFlux(DataBuffer.class))
-                            .concatMap(block -> Flux.fromIterable(parseSseEventBlock(block, candidate, provider, req))));
+                            .concatMap(block -> Flux.fromIterable(parseSseEventBlock(block, candidate, provider, req, traceId))));
                 });
     }
 
@@ -535,6 +574,56 @@ public class RelayService {
         } finally {
             req.setModel(originalModel);
         }
+    }
+
+    /**
+     * 构建带有历史上下文的新内部请求
+     * 将前一个候选已输出的流式内容作为 assistant 消息添加到消息列表末尾，
+     * 使下一个候选能够基于已输出的内容继续生成，实现客户端无感切换
+     *
+     * @param originalReq        原始请求
+     * @param accumulatedContent 前一个候选已输出的文本内容
+     * @return 新的内部请求（包含历史上下文）
+     */
+    InternalRequest buildRequestWithContext(InternalRequest originalReq, String accumulatedContent) {
+        InternalRequest contextReq = new InternalRequest();
+        contextReq.setModel(originalReq.getModel());
+        contextReq.setStream(originalReq.isStream());
+        contextReq.setMaxTokens(originalReq.getMaxTokens());
+        contextReq.setTemperature(originalReq.getTemperature());
+        contextReq.setTopP(originalReq.getTopP());
+        contextReq.setStop(originalReq.getStop());
+        contextReq.setTools(originalReq.getTools());
+        contextReq.setToolChoice(originalReq.getToolChoice());
+        contextReq.setSystemPrompt(originalReq.getSystemPrompt());
+        contextReq.setOriginalRequestJson(originalReq.getOriginalRequestJson());
+        contextReq.setClientApiFormat(originalReq.getClientApiFormat());
+        contextReq.setExtraParams(originalReq.getExtraParams());
+
+        // 标记为上下文重试请求（中途失败后拼接）
+        contextReq.setContextRetry(true);
+
+        // 复制原始消息列表
+        List<InternalMessage> newMessages = new ArrayList<>();
+        if (originalReq.getMessages() != null) {
+            for (InternalMessage msg : originalReq.getMessages()) {
+                InternalMessage copy = new InternalMessage(msg.getRole(), msg.getContent());
+                copy.setContentParts(msg.getContentParts());
+                copy.setToolCalls(msg.getToolCalls());
+                copy.setToolCallId(msg.getToolCallId());
+                copy.setName(msg.getName());
+                newMessages.add(copy);
+            }
+        }
+
+        // 追加前一个候选已输出的内容作为 assistant 消息
+        newMessages.add(new InternalMessage("assistant", accumulatedContent));
+
+        contextReq.setMessages(newMessages);
+        log.debug("构建带上下文请求完成 - 原始消息数={}, 添加assistant消息长度={}",
+                originalReq.getMessages() != null ? originalReq.getMessages().size() : 0,
+                accumulatedContent.length());
+        return contextReq;
     }
 
     /**
@@ -597,6 +686,15 @@ public class RelayService {
      * 解析 SSE 事件块为 SseEvent 列表
      */
     private List<SseEvent> parseSseEventBlock(String block, RoutingCandidate candidate, String provider, InternalRequest req) {
+        return parseSseEventBlock(block, candidate, provider, req, null);
+    }
+
+    /**
+     * 解析 SSE 事件块为 SseEvent 列表，并累积内容
+     *
+     * @param traceId 链路追踪ID，不为null时启用内容累积
+     */
+    private List<SseEvent> parseSseEventBlock(String block, RoutingCandidate candidate, String provider, InternalRequest req, String traceId) {
         log.debug("解析SSE事件块 - block长度={}, block内容前100字符={}", block.length(), block.length() > 100 ? block.substring(0, 100) : block);
         List<SseEvent> events = new ArrayList<>();
         String[] lines = block.split("\n");
@@ -605,7 +703,7 @@ public class RelayService {
         for (String line : lines) {
             if (line.startsWith("event:")) {
                 if (dataBuilder.length() > 0) {
-                    flushEvent(events, currentEvent, dataBuilder.toString(), candidate, provider, req);
+                    flushEvent(events, currentEvent, dataBuilder.toString(), candidate, provider, req, traceId);
                     dataBuilder.setLength(0);
                 }
                 currentEvent = line.substring("event:".length()).trim();
@@ -617,7 +715,7 @@ public class RelayService {
             }
         }
         if (dataBuilder.length() > 0) {
-            flushEvent(events, currentEvent, dataBuilder.toString(), candidate, provider, req);
+            flushEvent(events, currentEvent, dataBuilder.toString(), candidate, provider, req, traceId);
         }
         log.debug("解析SSE事件块完成 - 生成{}个事件", events.size());
         return events;
@@ -625,6 +723,11 @@ public class RelayService {
 
     private void flushEvent(List<SseEvent> events, String event, String data,
                             RoutingCandidate candidate, String provider, InternalRequest req) {
+        flushEvent(events, event, data, candidate, provider, req, null);
+    }
+
+    private void flushEvent(List<SseEvent> events, String event, String data,
+                            RoutingCandidate candidate, String provider, InternalRequest req, String traceId) {
         if ("[DONE]".equals(data)) {
             events.add(new SseEvent(null, "[DONE]"));
             return;
@@ -641,7 +744,47 @@ public class RelayService {
             log.debug("SSE事件被丢弃 - event={}, data={}, provider={}, clientFormat={}", event, data, provider, clientFormat);
             return;
         }
+        // 累积流式内容，用于候选切换时的上下文传递
+        if (traceId != null) {
+            String content = extractTextContentFromRawData(data, provider);
+            if (content != null && !content.isEmpty()) {
+                streamContentManager.appendContent(traceId, content);
+            }
+        }
         events.add(new SseEvent(event, transformed));
+    }
+
+    /**
+     * 从原始 SSE 数据中提取文本内容
+     * OpenAI 格式：choices[0].delta.content
+     * Anthropic 格式：delta.text（content_block_delta 事件）
+     */
+    String extractTextContentFromRawData(String rawData, String provider) {
+        try {
+            JsonNode json = objectMapper.readTree(rawData);
+            if ("anthropic".equals(provider)) {
+                JsonNode delta = json.get("delta");
+                if (delta != null && delta.has("text")) {
+                    return delta.get("text").asText();
+                }
+                // Anthropic content_block_start 也可能包含文本
+                JsonNode contentBlock = json.get("content_block");
+                if (contentBlock != null && contentBlock.has("text")) {
+                    return contentBlock.get("text").asText();
+                }
+            } else {
+                JsonNode choices = json.get("choices");
+                if (choices != null && choices.isArray() && choices.size() > 0) {
+                    JsonNode delta = choices.get(0).get("delta");
+                    if (delta != null && delta.has("content")) {
+                        return delta.get("content").asText();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("从原始SSE数据提取文本内容失败: {}", e.getMessage());
+        }
+        return null;
     }
 
     /**

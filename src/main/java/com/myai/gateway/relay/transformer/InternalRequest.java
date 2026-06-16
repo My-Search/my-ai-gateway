@@ -50,6 +50,9 @@ public class InternalRequest {
     /** 额外参数（转换时无法映射到标准字段的参数） */
     private Map<String, Object> extraParams;
 
+    /** 是否由中途失败的流式内容拼接而成的上下文重试请求（用于日志标记） */
+    private boolean contextRetry;
+
     public String getModel() { return model; }
     public void setModel(String model) { this.model = model; }
 
@@ -88,4 +91,7 @@ public class InternalRequest {
 
     public Map<String, Object> getExtraParams() { return extraParams; }
     public void setExtraParams(Map<String, Object> extraParams) { this.extraParams = extraParams; }
+
+    public boolean isContextRetry() { return contextRetry; }
+    public void setContextRetry(boolean contextRetry) { this.contextRetry = contextRetry; }
 }
