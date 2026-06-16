@@ -23,9 +23,11 @@ public class RequestLogService {
     private static final Logger log = LoggerFactory.getLogger(RequestLogService.class);
 
     private final RequestLogMapper requestLogMapper;
+    private final LogSseService logSseService;
 
-    public RequestLogService(RequestLogMapper requestLogMapper) {
+    public RequestLogService(RequestLogMapper requestLogMapper, LogSseService logSseService) {
         this.requestLogMapper = requestLogMapper;
+        this.logSseService = logSseService;
     }
 
     /**
@@ -64,6 +66,7 @@ public class RequestLogService {
         record.setRetryIndex(retryIndex);
         record.setCreatedAt(LocalDateTime.now());
         requestLogMapper.insert(record);
+        logSseService.publish(record);
 
         String indent = "  ".repeat(retryIndex);
         String logMsg = "[{}] {}[{}] {} -> {} -> {}: {}";
@@ -84,12 +87,12 @@ public class RequestLogService {
     }
 
     /**
-     * 记录请求完成（成功或最终失败）
+     * 记录请求完成（成功或最终失败），包含 token 用量
      */
     public void logComplete(String traceId, String apiKeyName, String modelName,
                             String channelModelName, String channelName,
                             String phase, String status, String message, long responseTimeMs,
-                            int retryIndex) {
+                            int retryIndex, int promptTokens, int completionTokens, int totalTokens) {
         RequestLog record = new RequestLog();
         record.setTraceId(traceId);
         record.setApiKeyName(apiKeyName);
@@ -101,25 +104,39 @@ public class RequestLogService {
         record.setMessage(message);
         record.setResponseTimeMs((int) responseTimeMs);
         record.setRetryIndex(retryIndex);
+        record.setPromptTokens(promptTokens);
+        record.setCompletionTokens(completionTokens);
+        record.setTotalTokens(totalTokens);
         record.setCreatedAt(LocalDateTime.now());
         requestLogMapper.insert(record);
+        logSseService.publish(record);
 
         String indent = "  ".repeat(retryIndex);
-        String logMsg = "[{}] {}[{}] {} -> {} -> {}: {} ({}ms)";
+        String logMsg = "[{}] {}[{}] {} -> {} -> {}: {} ({}ms, tokens={})";
         if ("error".equals(status)) {
-            log.warn(logMsg, traceId, indent, phase, modelName, channelModelName, channelName, message, responseTimeMs);
+            log.warn(logMsg, traceId, indent, phase, modelName, channelModelName, channelName, message, responseTimeMs, totalTokens);
         } else {
-            log.info(logMsg, traceId, indent, phase, modelName, channelModelName, channelName, message, responseTimeMs);
+            log.info(logMsg, traceId, indent, phase, modelName, channelModelName, channelName, message, responseTimeMs, totalTokens);
         }
     }
 
     /**
-     * 记录请求完成（默认 retryIndex=0）
+     * 记录请求完成（默认 retryIndex=0，无 token 用量）
      */
     public void logComplete(String traceId, String apiKeyName, String modelName,
                             String channelModelName, String channelName,
                             String phase, String status, String message, long responseTimeMs) {
-        logComplete(traceId, apiKeyName, modelName, channelModelName, channelName, phase, status, message, responseTimeMs, 0);
+        logComplete(traceId, apiKeyName, modelName, channelModelName, channelName, phase, status, message, responseTimeMs, 0, 0, 0, 0);
+    }
+
+    /**
+     * 记录请求完成（无 token 用量，指定 retryIndex）
+     */
+    public void logComplete(String traceId, String apiKeyName, String modelName,
+                            String channelModelName, String channelName,
+                            String phase, String status, String message, long responseTimeMs,
+                            int retryIndex) {
+        logComplete(traceId, apiKeyName, modelName, channelModelName, channelName, phase, status, message, responseTimeMs, retryIndex, 0, 0, 0);
     }
 
     /**

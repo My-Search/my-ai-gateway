@@ -17,6 +17,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.IOException;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -38,6 +39,7 @@ public class AdminApiController {
     private final ModelService modelService;
     private final ApiKeyService apiKeyService;
     private final RequestLogService requestLogService;
+    private final LogSseService logSseService;
     private final AdminConfigService adminConfigService;
     private final RelayService relayService;
     private final ObjectMapper objectMapper;
@@ -45,14 +47,15 @@ public class AdminApiController {
     public AdminApiController(StatsService statsService, ChannelService channelService,
                               ChannelApiKeyService channelApiKeyService, ModelService modelService,
                               ApiKeyService apiKeyService, RequestLogService requestLogService,
-                              AdminConfigService adminConfigService, RelayService relayService,
-                              ObjectMapper objectMapper) {
+                              LogSseService logSseService, AdminConfigService adminConfigService,
+                              RelayService relayService, ObjectMapper objectMapper) {
         this.statsService = statsService;
         this.channelService = channelService;
         this.channelApiKeyService = channelApiKeyService;
         this.modelService = modelService;
         this.apiKeyService = apiKeyService;
         this.requestLogService = requestLogService;
+        this.logSseService = logSseService;
         this.adminConfigService = adminConfigService;
         this.relayService = relayService;
         this.objectMapper = objectMapper;
@@ -154,8 +157,38 @@ public class AdminApiController {
     // ==================== Channels ====================
 
     @GetMapping(value = "/channels", produces = "application/json;charset=UTF-8")
-    public ResponseEntity<List<Channel>> listChannels() {
-        return ResponseEntity.ok(channelService.listAll());
+    public ResponseEntity<List<Map<String, Object>>> listChannels() {
+        List<Channel> channels = channelService.listAll();
+        Map<String, Map<String, Object>> usageStats = statsService.getChannelSummaryStats();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Channel ch : channels) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", ch.getId());
+            item.put("name", ch.getName());
+            item.put("channelType", ch.getChannelType());
+            item.put("baseUrl", ch.getBaseUrl());
+            item.put("enabled", ch.getEnabled());
+            item.put("sortOrder", ch.getSortOrder());
+            item.put("createdAt", ch.getCreatedAt());
+            item.put("updatedAt", ch.getUpdatedAt());
+            item.put("apiKeys", ch.getApiKeys());
+            item.put("models", ch.getModels());
+            // 附加用量统计
+            Map<String, Object> usage = usageStats.get(ch.getName());
+            if (usage != null) {
+                item.put("requestCount", usage.get("requestCount"));
+                item.put("promptTokens", usage.get("promptTokens"));
+                item.put("completionTokens", usage.get("completionTokens"));
+                item.put("totalTokens", usage.get("totalTokens"));
+            } else {
+                item.put("requestCount", 0L);
+                item.put("promptTokens", 0L);
+                item.put("completionTokens", 0L);
+                item.put("totalTokens", 0L);
+            }
+            result.add(item);
+        }
+        return ResponseEntity.ok(result);
     }
 
     @GetMapping(value = "/channels/{id}", produces = "application/json;charset=UTF-8")
@@ -266,6 +299,27 @@ public class AdminApiController {
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("channel", channel);
             result.put("models", channelModels);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return ResponseEntity.ok(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * 获取指定渠道的模型用量统计
+     * 返回该渠道下每个模型的 token 用量和请求次数
+     */
+    @GetMapping(value = "/channels/{id}/usage-stats", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<?> getChannelUsageStats(@PathVariable Long id) {
+        try {
+            Channel channel = channelService.getById(id);
+            if (channel == null) {
+                return ResponseEntity.status(404).body(Map.of("error", "渠道不存在"));
+            }
+            List<Map<String, Object>> modelStats = statsService.getChannelModelUsageStats(channel.getName());
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("channel", channel);
+            result.put("modelStats", modelStats);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return ResponseEntity.ok(Map.of("error", e.getMessage()));
@@ -704,6 +758,46 @@ public class AdminApiController {
             result.put("error", e.getMessage());
         }
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 日志实时推送 SSE 端点
+     * GET /admin/api/logs/stream
+     * <p>
+     * 前端通过 EventSource 连接后，每次有新日志写入时服务端主动推送
+     * event: log / data: {...RequestLog JSON...}
+     * </p>
+     */
+    @GetMapping(value = "/logs/stream", produces = "text/event-stream;charset=UTF-8")
+    public SseEmitter streamLogs(HttpServletResponse response) {
+        response.setContentType("text/event-stream;charset=UTF-8");
+        response.setCharacterEncoding("UTF-8");
+
+        // 不设超时，由前端断开时清理
+        SseEmitter emitter = new SseEmitter(0L);
+
+        // 订阅日志流
+        var subscription = logSseService.subscribe().subscribe(
+                log -> {
+                    try {
+                        String json = objectMapper.writeValueAsString(log);
+                        emitter.send(SseEmitter.event()
+                                .name("log")
+                                .data(json, MediaType.APPLICATION_JSON));
+                    } catch (IOException e) {
+                        emitter.completeWithError(e);
+                    }
+                },
+                emitter::completeWithError,
+                emitter::complete
+        );
+
+        // 连接断开/超时/异常时取消订阅
+        emitter.onCompletion(subscription::dispose);
+        emitter.onTimeout(subscription::dispose);
+        emitter.onError(e -> subscription.dispose());
+
+        return emitter;
     }
 
     // ==================== Helpers ====================

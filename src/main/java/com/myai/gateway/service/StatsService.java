@@ -101,6 +101,85 @@ public class StatsService {
         return stats;
     }
 
+    /**
+     * 获取所有渠道的汇总用量统计（用于渠道列表页展示）
+     * 按 channel_name 聚合成功请求的 token 用量和请求次数
+     *
+     * @return Map: channelName -> { requestCount, promptTokens, completionTokens, totalTokens }
+     */
+    public Map<String, Map<String, Object>> getChannelSummaryStats() {
+        List<RequestLog> successLogs = requestLogMapper.selectList(
+                new LambdaQueryWrapper<RequestLog>()
+                        .eq(RequestLog::getPhase, "success")
+                        .isNotNull(RequestLog::getChannelName)
+                        .ne(RequestLog::getChannelName, ""));
+
+        Map<String, Map<String, Object>> result = new LinkedHashMap<>();
+        Map<String, Long> requestCounts = successLogs.stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelName, Collectors.counting()));
+        Map<String, Long> promptSums = successLogs.stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelName,
+                        Collectors.summingLong(l -> l.getPromptTokens() != null ? l.getPromptTokens() : 0)));
+        Map<String, Long> completionSums = successLogs.stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelName,
+                        Collectors.summingLong(l -> l.getCompletionTokens() != null ? l.getCompletionTokens() : 0)));
+        Map<String, Long> totalSums = successLogs.stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelName,
+                        Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
+
+        for (String channelName : requestCounts.keySet()) {
+            Map<String, Object> stats = new LinkedHashMap<>();
+            stats.put("requestCount", requestCounts.get(channelName));
+            stats.put("promptTokens", promptSums.getOrDefault(channelName, 0L));
+            stats.put("completionTokens", completionSums.getOrDefault(channelName, 0L));
+            stats.put("totalTokens", totalSums.getOrDefault(channelName, 0L));
+            result.put(channelName, stats);
+        }
+        return result;
+    }
+
+    /**
+     * 获取指定渠道下各模型的用量统计（用于渠道模型详情页展示）
+     * 按 channel_model_name 聚合成功请求的 token 用量和请求次数
+     *
+     * @param channelId 渠道 ID（用于过滤，通过 channel_name 关联）
+     * @param channelName 渠道名称
+     * @return List: [{ modelName, requestCount, promptTokens, completionTokens, totalTokens }]
+     */
+    public List<Map<String, Object>> getChannelModelUsageStats(String channelName) {
+        List<RequestLog> successLogs = requestLogMapper.selectList(
+                new LambdaQueryWrapper<RequestLog>()
+                        .eq(RequestLog::getPhase, "success")
+                        .eq(RequestLog::getChannelName, channelName)
+                        .isNotNull(RequestLog::getChannelModelName)
+                        .ne(RequestLog::getChannelModelName, ""));
+
+        Map<String, Long> requestCounts = successLogs.stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelModelName, Collectors.counting()));
+        Map<String, Long> promptSums = successLogs.stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
+                        Collectors.summingLong(l -> l.getPromptTokens() != null ? l.getPromptTokens() : 0)));
+        Map<String, Long> completionSums = successLogs.stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
+                        Collectors.summingLong(l -> l.getCompletionTokens() != null ? l.getCompletionTokens() : 0)));
+        Map<String, Long> totalSums = successLogs.stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
+                        Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
+
+        return requestCounts.entrySet().stream()
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                .map(e -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("modelName", e.getKey());
+                    item.put("requestCount", e.getValue());
+                    item.put("promptTokens", promptSums.getOrDefault(e.getKey(), 0L));
+                    item.put("completionTokens", completionSums.getOrDefault(e.getKey(), 0L));
+                    item.put("totalTokens", totalSums.getOrDefault(e.getKey(), 0L));
+                    return item;
+                })
+                .collect(Collectors.toList());
+    }
+
     private List<Map<String, Object>> buildChannelRank(List<RequestLog> todayLogs) {
         Map<String, Long> channelCounts = todayLogs.stream()
                 .filter(l -> "start".equals(l.getPhase()) && l.getChannelName() != null)

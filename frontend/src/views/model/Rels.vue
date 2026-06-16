@@ -158,6 +158,7 @@ async function saveOrder() {
       modelApi.updateRelSort(rel.id, index + 1)
     )
     await Promise.all(updates)
+    isDirty.value = false // 保存成功后隐藏保存按钮
     await loadData()
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e)

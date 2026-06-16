@@ -14,6 +14,8 @@
             <th>接口地址</th>
             <th>状态</th>
             <th>模型数</th>
+            <th>请求次数</th>
+            <th>Token 用量</th>
             <th>创建时间</th>
             <th>操作</th>
           </tr>
@@ -37,6 +39,22 @@
             <td>
               <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary">查看</router-link>
             </td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;">
+              <span style="font-weight:600;">{{ formatNumber(ch.requestCount) }}</span>
+            </td>
+            <td style="font-size:12px;font-variant-numeric:tabular-nums;">
+              <template v-if="ch.totalTokens && ch.totalTokens > 0">
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                  <span :title="`输入: ${formatNumber(ch.promptTokens)} | 输出: ${formatNumber(ch.completionTokens)}`">
+                    {{ formatTokens(ch.totalTokens) }}
+                  </span>
+                  <span style="color:var(--text-muted);font-size:11px;">
+                    入 {{ formatTokens(ch.promptTokens) }} / 出 {{ formatTokens(ch.completionTokens) }}
+                  </span>
+                </div>
+              </template>
+              <span v-else style="color:var(--text-muted);">-</span>
+            </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ ch.createdAt }}</td>
             <td>
               <div style="display:flex;gap:6px;flex-wrap:nowrap;">
@@ -49,7 +67,7 @@
             </td>
           </tr>
           <tr v-if="!channels.length">
-            <td colspan="8" style="text-align:center;color:var(--text-muted);padding:40px;">
+            <td colspan="10" style="text-align:center;color:var(--text-muted);padding:40px;">
               暂无渠道数据，点击右上角「添加渠道」开始
             </td>
           </tr>
@@ -152,6 +170,20 @@ async function reloadModels(id: number) {
 function confirmDelete(ch: Channel) {
   if (!confirm(`确认删除渠道「${ch.name}」？关联数据将被清除。`)) return
   channelApi.delete(ch.id!).then(() => loadChannels()).catch(e => alert('删除失败: ' + e.message))
+}
+
+/** 格式化数字，千分位 */
+function formatNumber(n: number | undefined): string {
+  if (n == null) return '0'
+  return n.toLocaleString()
+}
+
+/** 格式化 token 数量，大数字用 K/M 缩写 */
+function formatTokens(n: number | undefined): string {
+  if (n == null || n === 0) return '0'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return n.toString()
 }
 
 onMounted(loadChannels)

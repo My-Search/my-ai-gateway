@@ -296,6 +296,7 @@ async function handleSave() {
     const activeModels = models.value.filter(m => !m._deleted)
     const payload: any = {
       ...form.value,
+      baseUrl: (form.value.baseUrl || '').trim(),
       manualModels: JSON.stringify(activeModels.map(m => ({
         id: m.id,
         modelName: m.modelName,

@@ -9,6 +9,11 @@ export interface Channel {
   enabled: number
   createdAt?: string
   updatedAt?: string
+  // 用量统计字段（列表接口返回）
+  requestCount?: number
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
 }
 
 export interface ChannelModel {
@@ -25,6 +30,14 @@ export interface ChannelApiKey {
   apiKey: string
   enabled: number
   sortOrder: number
+}
+
+export interface ModelUsageStat {
+  modelName: string
+  requestCount: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
 }
 
 export const channelApi = {
@@ -67,5 +80,8 @@ export const channelApi = {
     return http.post<{ success: boolean; response?: string; responseTime?: number; model?: string; error?: string }>(
       `/channels/${id}/quick-test`, { message }
     )
+  },
+  getUsageStats(id: number) {
+    return http.get<{ channel: Channel; modelStats: ModelUsageStat[] }>(`/channels/${id}/usage-stats`)
   }
 }

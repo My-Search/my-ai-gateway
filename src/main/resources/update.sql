@@ -217,3 +217,16 @@ WHERE channel_id IS NULL AND channel_api_key_id IS NOT NULL;
 -- 3. 添加联合索引以加速新的两级熔断查询
 CREATE INDEX IF NOT EXISTS idx_circuit_breaker_states_channel_key_model
     ON circuit_breaker_states(channel_id, channel_api_key_id, channel_model_id);
+
+-- ========================================
+-- VERSION:v1.7.0
+-- 请求日志添加 token 用量字段，用于统计渠道/模型的 token 消耗
+-- ========================================
+
+ALTER TABLE request_logs ADD COLUMN prompt_tokens INTEGER DEFAULT 0;
+ALTER TABLE request_logs ADD COLUMN completion_tokens INTEGER DEFAULT 0;
+ALTER TABLE request_logs ADD COLUMN total_tokens INTEGER DEFAULT 0;
+
+-- 为 token 统计查询添加索引
+CREATE INDEX IF NOT EXISTS idx_request_logs_channel_name ON request_logs(channel_name);
+CREATE INDEX IF NOT EXISTS idx_request_logs_channel_model ON request_logs(channel_model_name);

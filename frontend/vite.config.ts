@@ -31,9 +31,13 @@ export default defineConfig({
   },
   server: {
     port: 3990,
-    // 只有 /admin/api/ 走代理到后端，其他 /admin/* 由 Vite SPA fallback 处理
     proxy: {
       '/admin/api': {
+        target: 'http://localhost:1399',
+        changeOrigin: true
+      },
+      // 对外 AI 接口（OpenAI / Anthropic 兼容），本地开发时直接通过前端代理调用
+      '/v1': {
         target: 'http://localhost:1399',
         changeOrigin: true
       }

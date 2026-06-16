@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 核心中继服务
@@ -59,6 +60,9 @@ public class RelayService {
     private final ObjectMapper objectMapper;
     private final WebClient webClient;
     private final MessageTransformer messageTransformer;
+
+    /** 流式请求 token 用量累积器：traceId -> [promptTokens, completionTokens, totalTokens] */
+    private final ConcurrentHashMap<String, int[]> streamUsageMap = new ConcurrentHashMap<>();
 
     public RelayService(ChannelService channelService,
                         ChannelApiKeyService channelApiKeyService,
@@ -221,11 +225,13 @@ public class RelayService {
                 .flatMap(body -> {
                     balancer.markSuccess(candidate);
                     String transformed = transformResponse(body, candidate, req, provider, false);
+                    int[] usage = extractUsageFromProviderResponse(body);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(),
                             req.getModel(), candidate.getChannelModel().getModelName(),
                             candidate.getChannel().getName(),
                             "success", "success", "请求成功",
-                            System.currentTimeMillis() - startTime, retryIndex);
+                            System.currentTimeMillis() - startTime, retryIndex,
+                            usage[0], usage[1], usage[2]);
                     log.info("候选请求成功 - traceId={} channel={} model={} key={}",
                             traceId, candidate.getChannel().getName(),
                             candidate.getChannelModel().getModelName(),
@@ -338,12 +344,23 @@ public class RelayService {
                 : Flux.empty();
         return Flux.concat(routingStart,
                 invokeStreamCandidateWithRetries(traceId, authHeader, req, candidate, provider, retryIndex, 1, maxAttempts, internalClient))
+                .doOnNext(event -> {
+                    int[] usage = extractUsageFromSseData(event.data());
+                    if (usage != null) {
+                        streamUsageMap.put(traceId, usage);
+                    }
+                })
                 .doOnComplete(() -> {
+                    int[] usage = streamUsageMap.remove(traceId);
+                    int pt = usage != null ? usage[0] : 0;
+                    int ct = usage != null ? usage[1] : 0;
+                    int tt = usage != null ? usage[2] : 0;
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(),
                             req.getModel(), candidate.getChannelModel().getModelName(),
                             candidate.getChannel().getName(),
                             "success", "success", "流式请求成功",
-                            System.currentTimeMillis() - startTime, retryIndex);
+                            System.currentTimeMillis() - startTime, retryIndex,
+                            pt, ct, tt);
                     log.info("流式候选调用完成 - traceId={} channel={} model={} key={}",
                             traceId, candidate.getChannel().getName(),
                             candidate.getChannelModel().getModelName(),
@@ -880,6 +897,56 @@ public class RelayService {
                 }
             }
         }
+    }
+
+    /**
+     * 从上游非流式响应体中提取 token 用量
+     * 支持 OpenAI 格式 (prompt_tokens/completion_tokens) 和 Anthropic 格式 (input_tokens/output_tokens)
+     *
+     * @return [promptTokens, completionTokens, totalTokens]，无 usage 时返回 [0, 0, 0]
+     */
+    private int[] extractUsageFromProviderResponse(String providerBody) {
+        try {
+            JsonNode root = objectMapper.readTree(providerBody);
+            JsonNode usage = root.get("usage");
+            if (usage != null && usage.isObject()) {
+                int pt = usage.has("prompt_tokens") ? usage.get("prompt_tokens").asInt()
+                        : usage.has("input_tokens") ? usage.get("input_tokens").asInt() : 0;
+                int ct = usage.has("completion_tokens") ? usage.get("completion_tokens").asInt()
+                        : usage.has("output_tokens") ? usage.get("output_tokens").asInt() : 0;
+                int tt = usage.has("total_tokens") ? usage.get("total_tokens").asInt() : pt + ct;
+                return new int[]{pt, ct, tt};
+            }
+        } catch (Exception e) {
+            log.debug("提取响应 token 用量失败: {}", e.getMessage());
+        }
+        return new int[]{0, 0, 0};
+    }
+
+    /**
+     * 从 SSE 事件数据中提取 token 用量（流式响应的最后一个含 usage 的 chunk）
+     *
+     * @return [promptTokens, completionTokens, totalTokens]，无 usage 时返回 null
+     */
+    private int[] extractUsageFromSseData(String data) {
+        if (data == null || data.isEmpty() || "[DONE]".equals(data)) return null;
+        try {
+            JsonNode json = objectMapper.readTree(data);
+            JsonNode usage = json.get("usage");
+            if (usage != null && usage.isObject()) {
+                int pt = usage.has("prompt_tokens") ? usage.get("prompt_tokens").asInt()
+                        : usage.has("input_tokens") ? usage.get("input_tokens").asInt() : 0;
+                int ct = usage.has("completion_tokens") ? usage.get("completion_tokens").asInt()
+                        : usage.has("output_tokens") ? usage.get("output_tokens").asInt() : 0;
+                int tt = usage.has("total_tokens") ? usage.get("total_tokens").asInt() : pt + ct;
+                if (pt > 0 || ct > 0 || tt > 0) {
+                    return new int[]{pt, ct, tt};
+                }
+            }
+        } catch (Exception e) {
+            log.debug("提取 SSE token 用量失败: {}", e.getMessage());
+        }
+        return null;
     }
 
     public record SseEvent(String event, String data) {}

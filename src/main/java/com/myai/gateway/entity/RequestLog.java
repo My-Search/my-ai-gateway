@@ -44,6 +44,15 @@ public class RequestLog {
     /** 响应时间（毫秒） */
     private Integer responseTimeMs;
 
+    /** 输入 token 数 */
+    private Integer promptTokens;
+
+    /** 输出 token 数 */
+    private Integer completionTokens;
+
+    /** 总 token 数 */
+    private Integer totalTokens;
+
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createdAt;
 
@@ -80,6 +89,15 @@ public class RequestLog {
 
     public Integer getResponseTimeMs() { return responseTimeMs; }
     public void setResponseTimeMs(Integer responseTimeMs) { this.responseTimeMs = responseTimeMs; }
+
+    public Integer getPromptTokens() { return promptTokens; }
+    public void setPromptTokens(Integer promptTokens) { this.promptTokens = promptTokens; }
+
+    public Integer getCompletionTokens() { return completionTokens; }
+    public void setCompletionTokens(Integer completionTokens) { this.completionTokens = completionTokens; }
+
+    public Integer getTotalTokens() { return totalTokens; }
+    public void setTotalTokens(Integer totalTokens) { this.totalTokens = totalTokens; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

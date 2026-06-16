@@ -67,6 +67,10 @@ public class ChannelService {
 
     @Transactional
     public Channel create(Channel channel) {
+        // 保存前 trim baseUrl，防止前后空白字符导致 URL 解析失败
+        if (channel.getBaseUrl() != null) {
+            channel.setBaseUrl(channel.getBaseUrl().trim());
+        }
         channelMapper.insert(channel);
         // 修复 SQLite 下 MyBatis Plus 无法正确获取自增 ID 的问题
         if (channel.getId() == null) {
@@ -80,6 +84,10 @@ public class ChannelService {
 
     @Transactional
     public Channel update(Channel channel) {
+        // 保存前 trim baseUrl，防止前后空白字符导致 URL 解析失败
+        if (channel.getBaseUrl() != null) {
+            channel.setBaseUrl(channel.getBaseUrl().trim());
+        }
         channelMapper.updateById(channel);
         return channel;
     }
@@ -92,6 +100,10 @@ public class ChannelService {
      */
     @Transactional
     public Channel updateWithModels(Channel channel, String modelsJson) {
+        // 保存前 trim baseUrl，防止前后空白字符导致 URL 解析失败
+        if (channel.getBaseUrl() != null) {
+            channel.setBaseUrl(channel.getBaseUrl().trim());
+        }
         // 1. 更新渠道基本信息
         channelMapper.updateById(channel);
 
@@ -258,6 +270,10 @@ public class ChannelService {
      */
     String buildModelsUrl(Channel channel) {
         String baseUrl = channel.getBaseUrl();
+        // 防御性处理：trim 掉可能存在的前后空白字符（数据库中可能存了带空格的 URL）
+        if (baseUrl != null) {
+            baseUrl = baseUrl.trim();
+        }
         if (baseUrl == null || baseUrl.isEmpty()) {
             baseUrl = switch (channel.getChannelType()) {
                 case "anthropic" -> "https://api.anthropic.com/v1";
