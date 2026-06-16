@@ -1,0 +1,75 @@
+### Java / Maven ###
+target/
+*.class
+*.jar
+*.war
+*.nar
+*.ear
+*.zip
+*.tar.gz
+*.rar
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+### Spring Boot ###
+*.db
+*.log
+*.err
+logs/
+**/application-local.yml
+**/application-dev.yml
+**/application-*.properties
+!.mvn/wrapper/maven-wrapper.jar
+
+### Frontend / Node ###
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.local
+frontend/.env.local
+frontend/.env.*.local
+
+### IDE - IntelliJ IDEA ###
+.idea/
+*.iml
+*.iws
+*.ipr
+.settings/
+.project
+.classpath
+.factorypath
+
+### VS Code ###
+.vscode/
+*.swp
+*.swo
+
+### OS ###
+.DS_Store
+Thumbs.db
+*.~
+
+### Docker ###
+.docker/
+
+### Runtime / Temp ###
+data/
+tmpcookie.txt
+*.tmp
+
+### OpenCode / Agent workspace ###
+.omo/
+.playwright-mcp/
+
+### Environment files ###
+.env
+.env.*
+!.env.example
+!.env.compose.example

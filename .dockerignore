@@ -1,0 +1,46 @@
+# IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+
+# Build output
+target/
+frontend/node_modules/
+frontend/dist/
+
+# Data & runtime
+data/
+*.db
+*.log
+
+# Git & CI
+.git/
+.github/
+.gitignore
+
+# Agent workspace
+.omo/
+.playwright-mcp/
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.dockerignore
+docker-compose.yml
+Dockerfile
+frontend/Dockerfile
+frontend/nginx.conf
+
+# Environment
+.env
+.env.compose
+.env.compose.example
+
+# Docs & misc
+*.md
+*.tmp
