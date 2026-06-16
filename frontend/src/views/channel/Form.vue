@@ -42,7 +42,7 @@
             暂无 API Key，点击下方按钮添加
           </div>
         </div>
-        <button type="button" class="btn btn-sm btn-primary" style="margin-top:8px;" @click="addApiKey">
+        <button type="button" class="btn btn-sm btn-primary" style="margin-top:8px;" @click="openApiKeyDialog">
           <SvgIcon name="plus" :size="14" /> 添加 API Key
         </button>
       </div>
@@ -112,12 +112,44 @@
       </div>
     </div>
   </div>
+
+  <!-- 通用弹框 -->
+  <Dialog
+    v-model="dialogVisible"
+    :title="dialogTitle"
+    :type="dialogType"
+    :confirm-class="dialogConfirmClass"
+    @confirm="onDialogConfirm"
+  >
+    {{ dialogMessage }}
+  </Dialog>
+
+  <!-- API Key 输入弹框 -->
+  <Dialog
+    v-model="apiKeyDialogVisible"
+    title="添加 API Key"
+    type="confirm"
+    confirm-text="添加"
+    width="480px"
+    @confirm="confirmAddApiKey"
+    @cancel="closeApiKeyDialog"
+  >
+    <div class="form-group">
+      <label>API Key 名称 *</label>
+      <input v-model="newApiKeyName" class="form-control" placeholder="如：主Key、备用Key1" @keydown.enter.prevent="confirmAddApiKey" />
+    </div>
+    <div class="form-group" style="margin-bottom:0;">
+      <label>API Key *</label>
+      <input v-model="newApiKeyValue" class="form-control" placeholder="请输入 API Key" @keydown.enter.prevent="confirmAddApiKey" />
+    </div>
+  </Dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { channelApi, type Channel, type ChannelApiKey, type ChannelModel } from '@/api/channel'
+import Dialog from '@/components/common/Dialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -128,6 +160,75 @@ const fetchLoading = ref(false)
 const showAddModel = ref(false)
 const newModelName = ref('')
 const newDisplayName = ref('')
+
+/* ---------- 通用弹框状态 ---------- */
+const dialogVisible = ref(false)
+const dialogTitle = ref('提示')
+const dialogMessage = ref('')
+const dialogType = ref<'alert' | 'confirm'>('alert')
+const dialogConfirmClass = ref('btn-primary')
+let dialogOnConfirm: (() => void) | null = null
+
+function openDialog(opts: {
+  title?: string
+  message: string
+  type?: 'alert' | 'confirm'
+  confirmClass?: string
+  onConfirm?: () => void
+}) {
+  dialogTitle.value = opts.title ?? '提示'
+  dialogMessage.value = opts.message
+  dialogType.value = opts.type ?? 'alert'
+  dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
+  dialogOnConfirm = opts.onConfirm ?? null
+  dialogVisible.value = true
+}
+
+function onDialogConfirm() {
+  dialogOnConfirm?.()
+  dialogOnConfirm = null
+}
+/* ------------------------------ */
+
+/* ---------- API Key 弹框状态 ---------- */
+const apiKeyDialogVisible = ref(false)
+const newApiKeyName = ref('')
+const newApiKeyValue = ref('')
+
+function openApiKeyDialog() {
+  newApiKeyName.value = ''
+  newApiKeyValue.value = ''
+  apiKeyDialogVisible.value = true
+}
+
+function closeApiKeyDialog() {
+  apiKeyDialogVisible.value = false
+}
+
+function confirmAddApiKey() {
+  const keyName = newApiKeyName.value.trim()
+  const apiKey = newApiKeyValue.value.trim()
+  if (!keyName) {
+    openDialog({ title: '提示', message: '请输入 API Key 名称' })
+    return
+  }
+  if (!apiKey) {
+    openDialog({ title: '提示', message: '请输入 API Key' })
+    return
+  }
+  if (apiKeys.value.some(k => k.keyName === keyName)) {
+    openDialog({ title: '提示', message: 'API Key 名称已存在' })
+    return
+  }
+  apiKeys.value.push({
+    keyName: keyName,
+    apiKey: apiKey,
+    enabled: 1,
+    sortOrder: apiKeys.value.length
+  })
+  apiKeyDialogVisible.value = false
+}
+/* ------------------------------ */
 
 interface ModelItem {
   id?: number
@@ -159,7 +260,7 @@ onMounted(async () => {
         displayName: m.displayName || m.modelName
       }))
     } catch (e: any) {
-      alert('加载渠道信息失败: ' + e.message)
+      openDialog({ title: '加载失败', message: '加载渠道信息失败: ' + e.message })
       router.push('/admin/channel/list')
     }
   }
@@ -169,26 +270,16 @@ function maskKey(key: string) {
   return key ? '•'.repeat(Math.min(key.length, 20)) : ''
 }
 
-function addApiKey() {
-  const keyName = prompt('请输入 API Key 名称（如：主Key、备用Key1）:')
-  if (!keyName?.trim()) return
-  const apiKey = prompt('请输入 API Key:')
-  if (!apiKey?.trim()) return
-  if (apiKeys.value.some(k => k.keyName === keyName.trim())) {
-    alert('API Key 名称已存在')
-    return
-  }
-  apiKeys.value.push({
-    keyName: keyName.trim(),
-    apiKey: apiKey.trim(),
-    enabled: 1,
-    sortOrder: apiKeys.value.length
-  })
-}
-
 function removeApiKey(index: number) {
-  if (!confirm('确认删除该 API Key？')) return
-  apiKeys.value.splice(index, 1)
+  openDialog({
+    title: '确认删除',
+    message: '确认删除该 API Key？',
+    type: 'confirm',
+    confirmClass: 'btn-danger',
+    onConfirm: () => {
+      apiKeys.value.splice(index, 1)
+    }
+  })
 }
 
 function toggleModel(index: number) {
@@ -215,8 +306,8 @@ function removeModel(index: number) {
 
 function confirmAddModel() {
   const name = newModelName.value.trim()
-  if (!name) { alert('请输入模型名称'); return }
-  if (models.value.some(m => m.modelName === name)) { alert('模型已存在'); return }
+  if (!name) { openDialog({ title: '提示', message: '请输入模型名称' }); return }
+  if (models.value.some(m => m.modelName === name)) { openDialog({ title: '提示', message: '模型已存在' }); return }
   models.value.push({
     modelName: name,
     displayName: newDisplayName.value.trim() || name
@@ -242,19 +333,19 @@ async function doFetchModels() {
             added++
           }
         }
-        alert(`新增 ${added} 个模型`)
+        openDialog({ message: `新增 ${added} 个模型` })
       } else {
-        alert(res.data.error || '刷新失败')
+        openDialog({ title: '刷新失败', message: res.data.error || '刷新失败' })
       }
     } catch (e: any) {
-      alert('刷新失败: ' + e.message)
+      openDialog({ title: '刷新失败', message: e.message })
     } finally {
       fetchLoading.value = false
     }
   } else {
     // Preview fetch
-    if (!form.value.channelType) { alert('请先选择渠道类型'); return }
-    if (!apiKeys.value.length) { alert('请先添加至少一个 API Key'); return }
+    if (!form.value.channelType) { openDialog({ title: '提示', message: '请先选择渠道类型' }); return }
+    if (!apiKeys.value.length) { openDialog({ title: '提示', message: '请先添加至少一个 API Key' }); return }
     fetchLoading.value = true
     try {
       const res = await channelApi.fetchModels(
@@ -271,12 +362,12 @@ async function doFetchModels() {
             added++
           }
         }
-        alert(`获取到 ${res.data.count} 个模型，新增 ${added} 个`)
+        openDialog({ message: `获取到 ${res.data.count} 个模型，新增 ${added} 个` })
       } else {
-        alert(res.data.error || '获取模型列表失败')
+        openDialog({ title: '获取失败', message: res.data.error || '获取模型列表失败' })
       }
     } catch (e: any) {
-      alert('请求失败: ' + e.message)
+      openDialog({ title: '请求失败', message: e.message })
     } finally {
       fetchLoading.value = false
     }
@@ -285,8 +376,15 @@ async function doFetchModels() {
 
 function clearAllModels() {
   if (!models.value.length) return
-  if (!confirm(`确认清理全部 ${models.value.length} 个模型？此操作不可恢复`)) return
-  models.value.forEach(m => { m._deleted = true })
+  openDialog({
+    title: '确认清理',
+    message: `确认清理全部 ${models.value.length} 个模型？此操作不可恢复`,
+    type: 'confirm',
+    confirmClass: 'btn-danger',
+    onConfirm: () => {
+      models.value.forEach(m => { m._deleted = true })
+    }
+  })
 }
 
 async function handleSave() {
@@ -314,14 +412,13 @@ async function handleSave() {
     if (isEdit.value) {
       const id = Number(route.params.id)
       await channelApi.update(id, payload)
-      alert('渠道更新成功')
+      openDialog({ title: '成功', message: '渠道更新成功', onConfirm: () => router.push('/admin/channel/list') })
     } else {
       await channelApi.create(payload)
-      alert('渠道创建成功')
+      openDialog({ title: '成功', message: '渠道创建成功', onConfirm: () => router.push('/admin/channel/list') })
     }
-    router.push('/admin/channel/list')
   } catch (e: any) {
-    alert('保存失败: ' + e.message)
+    openDialog({ title: '保存失败', message: e.message })
   } finally {
     saving.value = false
   }

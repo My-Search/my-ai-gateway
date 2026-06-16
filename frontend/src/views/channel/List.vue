@@ -75,6 +75,57 @@
       </table>
     </div>
 
+    <!-- Mobile card list (shown on ≤768px) -->
+    <div class="mobile-card-list">
+      <div v-for="ch in channels" :key="'m-' + ch.id" class="mobile-card">
+        <div class="mobile-card-header">
+          <strong class="mobile-card-title">{{ ch.name }}</strong>
+          <span v-if="ch.enabled === 1" class="badge badge-success">
+            <span class="status-dot active"></span>启用
+          </span>
+          <span v-else class="badge badge-danger">
+            <span class="status-dot inactive"></span>禁用
+          </span>
+        </div>
+        <div class="mobile-card-body">
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">类型</span>
+            <span class="badge badge-info">{{ ch.channelType }}</span>
+          </div>
+          <div class="mobile-card-row">
+            <span class="mobile-card-label">地址</span>
+            <span class="mobile-card-value mobile-card-url">{{ ch.baseUrl }}</span>
+          </div>
+        </div>
+        <div class="mobile-card-divider"></div>
+        <div class="mobile-card-stats">
+          <div class="mobile-card-stat">
+            <span class="mobile-card-stat-label">请求</span>
+            <span class="mobile-card-stat-value">{{ formatNumber(ch.requestCount) }}</span>
+          </div>
+          <div class="mobile-card-stat">
+            <span class="mobile-card-stat-label">Token</span>
+            <span class="mobile-card-stat-value">{{ formatTokens(ch.totalTokens) }}</span>
+          </div>
+          <div class="mobile-card-stat">
+            <span class="mobile-card-stat-label">创建时间</span>
+            <span class="mobile-card-stat-value">{{ ch.createdAt }}</span>
+          </div>
+        </div>
+        <div class="mobile-card-divider"></div>
+        <div class="mobile-card-actions">
+          <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary">编辑</router-link>
+          <button class="btn btn-sm btn-success" @click="quickTest(ch)">测试</button>
+          <router-link :to="`/admin/channel/reload/${ch.id}`" class="btn btn-sm btn-secondary"
+            @click.prevent="reloadModels(ch.id!)">刷新</router-link>
+          <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)">删除</button>
+        </div>
+      </div>
+      <div v-if="!channels.length" class="mobile-card-empty">
+        暂无渠道数据，点击右上角「添加渠道」开始
+      </div>
+    </div>
+
     <!-- Quick Test Modal -->
     <div v-if="showTestModal" class="modal-overlay" @click.self="closeTestModal">
       <div class="modal-box">
@@ -108,12 +159,24 @@
       </div>
     </div>
   </div>
+
+  <!-- 通用弹框 -->
+  <Dialog
+    v-model="dialogVisible"
+    :title="dialogTitle"
+    :type="dialogType"
+    :confirm-class="dialogConfirmClass"
+    @confirm="onDialogConfirm"
+  >
+    {{ dialogMessage }}
+  </Dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { channelApi, type Channel } from '@/api/channel'
+import Dialog from '@/components/common/Dialog.vue'
 
 const router = useRouter()
 const channels = ref<Channel[]>([])
@@ -123,12 +186,41 @@ const testMessage = ref('Hello, this is a test message.')
 const testResult = ref<{ success: boolean; response?: string; responseTime?: number; error?: string } | null>(null)
 const testLoading = ref(false)
 
+/* ---------- 弹框状态 ---------- */
+const dialogVisible = ref(false)
+const dialogTitle = ref('提示')
+const dialogMessage = ref('')
+const dialogType = ref<'alert' | 'confirm'>('alert')
+const dialogConfirmClass = ref('btn-primary')
+let dialogOnConfirm: (() => void) | null = null
+
+function openDialog(opts: {
+  title?: string
+  message: string
+  type?: 'alert' | 'confirm'
+  confirmClass?: string
+  onConfirm?: () => void
+}) {
+  dialogTitle.value = opts.title ?? '提示'
+  dialogMessage.value = opts.message
+  dialogType.value = opts.type ?? 'alert'
+  dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
+  dialogOnConfirm = opts.onConfirm ?? null
+  dialogVisible.value = true
+}
+
+function onDialogConfirm() {
+  dialogOnConfirm?.()
+  dialogOnConfirm = null
+}
+/* ------------------------------ */
+
 async function loadChannels() {
   try {
     const res = await channelApi.list()
     channels.value = res.data
   } catch (e: any) {
-    alert('加载渠道列表失败: ' + e.message)
+    openDialog({ title: '加载失败', message: '加载渠道列表失败: ' + e.message })
   }
 }
 
@@ -157,19 +249,35 @@ async function sendTestRequest() {
   }
 }
 
-async function reloadModels(id: number) {
-  if (!confirm('确认重新加载模型？将清除当前所有模型。')) return
-  try {
-    const res = await channelApi.reloadModels(id)
-    alert(res.data.success ? '模型重新加载成功' : '加载失败: ' + res.data.error)
-  } catch (e: any) {
-    alert('请求失败: ' + e.message)
-  }
+function reloadModels(id: number) {
+  openDialog({
+    title: '确认重新加载',
+    message: '确认重新加载模型？将清除当前所有模型。',
+    type: 'confirm',
+    confirmClass: 'btn-danger',
+    onConfirm: async () => {
+      try {
+        const res = await channelApi.reloadModels(id)
+        openDialog({ message: res.data.success ? '模型重新加载成功' : '加载失败: ' + res.data.error })
+      } catch (e: any) {
+        openDialog({ title: '请求失败', message: e.message })
+      }
+    }
+  })
 }
 
 function confirmDelete(ch: Channel) {
-  if (!confirm(`确认删除渠道「${ch.name}」？关联数据将被清除。`)) return
-  channelApi.delete(ch.id!).then(() => loadChannels()).catch(e => alert('删除失败: ' + e.message))
+  openDialog({
+    title: '确认删除',
+    message: `确认删除渠道「${ch.name}」？关联数据将被清除。`,
+    type: 'confirm',
+    confirmClass: 'btn-danger',
+    onConfirm: () => {
+      channelApi.delete(ch.id!).then(() => loadChannels()).catch(e =>
+        openDialog({ title: '删除失败', message: e.message })
+      )
+    }
+  })
 }
 
 /** 格式化数字，千分位 */
@@ -215,4 +323,126 @@ onMounted(loadChannels)
 .test-result.success { background: rgba(63,185,80,0.1); color: var(--accent-green); }
 .test-result.error { background: rgba(248,81,73,0.1); color: var(--accent-red); }
 .test-result pre { margin-top: 8px; white-space: pre-wrap; word-break: break-all; font-size: 12px; }
+
+/* ── Mobile card list ── */
+.mobile-card-list { display: none; }
+
+.mobile-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.mobile-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mobile-card-title {
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mobile-card-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.mobile-card-label {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.mobile-card-label::after {
+  content: ':';
+}
+
+.mobile-card-value {
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.mobile-card-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.mobile-card-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 12px 0;
+}
+
+.mobile-card-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mobile-card-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-card-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.mobile-card-stat-value {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.mobile-card-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.mobile-card-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 40px 16px;
+  font-size: 14px;
+}
+
+/* Responsive: mobile shows cards, desktop shows table */
+@media (max-width: 768px) {
+  .table-container table { display: none; }
+  .mobile-card-list { display: flex; flex-direction: column; gap: 12px; }
+}
+
+@media (min-width: 769px) {
+  .mobile-card-list { display: none; }
+}
 </style>

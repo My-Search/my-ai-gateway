@@ -36,12 +36,23 @@
       </div>
     </form>
   </div>
+
+  <!-- 通用弹框 -->
+  <Dialog
+    v-model="dialogVisible"
+    :title="dialogTitle"
+    :type="dialogType"
+    @confirm="onDialogConfirm"
+  >
+    {{ dialogMessage }}
+  </Dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { modelApi, type CustomModel } from '@/api/model'
+import Dialog from '@/components/common/Dialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -49,13 +60,39 @@ const isEdit = computed(() => !!route.params.id)
 const saving = ref(false)
 const form = ref<Partial<CustomModel>>({ modelName: '', description: '', strategy: '', enabled: 1 })
 
+/* ---------- 弹框状态 ---------- */
+const dialogVisible = ref(false)
+const dialogTitle = ref('提示')
+const dialogMessage = ref('')
+const dialogType = ref<'alert' | 'confirm'>('alert')
+let dialogOnConfirm: (() => void) | null = null
+
+function openDialog(opts: {
+  title?: string
+  message: string
+  type?: 'alert' | 'confirm'
+  onConfirm?: () => void
+}) {
+  dialogTitle.value = opts.title ?? '提示'
+  dialogMessage.value = opts.message
+  dialogType.value = opts.type ?? 'alert'
+  dialogOnConfirm = opts.onConfirm ?? null
+  dialogVisible.value = true
+}
+
+function onDialogConfirm() {
+  dialogOnConfirm?.()
+  dialogOnConfirm = null
+}
+/* ------------------------------ */
+
 onMounted(async () => {
   if (isEdit.value) {
     try {
       const res = await modelApi.get(Number(route.params.id))
       form.value = { ...res.data }
     } catch (e: any) {
-      alert('加载失败: ' + e.message)
+      openDialog({ title: '加载失败', message: e.message })
       router.push('/admin/model/list')
     }
   }
@@ -66,14 +103,13 @@ async function handleSave() {
   try {
     if (isEdit.value) {
       await modelApi.update(Number(route.params.id), form.value)
-      alert('模型更新成功')
+      openDialog({ title: '成功', message: '模型更新成功', onConfirm: () => router.push('/admin/model/list') })
     } else {
       await modelApi.create(form.value)
-      alert('模型创建成功')
+      openDialog({ title: '成功', message: '模型创建成功', onConfirm: () => router.push('/admin/model/list') })
     }
-    router.push('/admin/model/list')
   } catch (e: any) {
-    alert('保存失败: ' + e.message)
+    openDialog({ title: '保存失败', message: e.message })
   } finally {
     saving.value = false
   }

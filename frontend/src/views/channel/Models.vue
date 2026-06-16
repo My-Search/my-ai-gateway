@@ -31,7 +31,8 @@
 
     <div v-if="!models.length" class="empty-state">暂无模型数据</div>
     <div class="table-container" v-else>
-      <table>
+      <!-- Desktop table view -->
+      <table class="desktop-table">
         <thead>
           <tr>
             <th>模型名称</th>
@@ -72,14 +73,53 @@
           </tr>
         </tbody>
       </table>
+
+      <!-- Mobile card list view -->
+      <div class="mobile-card-list">
+        <div v-for="m in models" :key="m.id" class="mobile-model-card">
+          <div class="mobile-card-header">
+            <span class="mobile-card-title">{{ m.displayName || m.modelName }}</span>
+            <span class="badge badge-success">已关联</span>
+          </div>
+          <div class="mobile-card-model-name">
+            模型: <code class="model-tag">{{ m.modelName }}</code>
+          </div>
+          <div class="mobile-card-divider"></div>
+          <div class="mobile-card-stats">
+            <div class="mobile-stat">
+              <span class="mobile-stat-label">请求</span>
+              <span class="mobile-stat-value">{{ formatNumber(getModelStat(m.modelName)?.requestCount) }}</span>
+            </div>
+            <div class="mobile-stat">
+              <span class="mobile-stat-label">Token</span>
+              <span class="mobile-stat-value">{{ formatTokens(getModelStat(m.modelName)?.totalTokens) }}</span>
+            </div>
+            <div class="mobile-stat">
+              <span class="mobile-stat-label">响应</span>
+              <span class="mobile-stat-value">{{ formatResponseTime(getModelStat(m.modelName)?.avgResponseTimeRecent30) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
+
+  <!-- 通用弹框 -->
+  <Dialog
+    v-model="dialogVisible"
+    :title="dialogTitle"
+    :type="dialogType"
+    @confirm="onDialogConfirm"
+  >
+    {{ dialogMessage }}
+  </Dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { channelApi, type Channel, type ChannelModel, type ModelUsageStat } from '@/api/channel'
+import Dialog from '@/components/common/Dialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -87,6 +127,32 @@ const channel = ref<Channel | null>(null)
 const models = ref<ChannelModel[]>([])
 const modelStats = ref<ModelUsageStat[]>([])
 const channelAvgResponseTimeRecent30 = ref<number>(0)
+
+/* ---------- 弹框状态 ---------- */
+const dialogVisible = ref(false)
+const dialogTitle = ref('提示')
+const dialogMessage = ref('')
+const dialogType = ref<'alert' | 'confirm'>('alert')
+let dialogOnConfirm: (() => void) | null = null
+
+function openDialog(opts: {
+  title?: string
+  message: string
+  type?: 'alert' | 'confirm'
+  onConfirm?: () => void
+}) {
+  dialogTitle.value = opts.title ?? '提示'
+  dialogMessage.value = opts.message
+  dialogType.value = opts.type ?? 'alert'
+  dialogOnConfirm = opts.onConfirm ?? null
+  dialogVisible.value = true
+}
+
+function onDialogConfirm() {
+  dialogOnConfirm?.()
+  dialogOnConfirm = null
+}
+/* ------------------------------ */
 
 /** 按模型名查找用量统计 */
 function getModelStat(modelName: string): ModelUsageStat | undefined {
@@ -143,7 +209,7 @@ onMounted(async () => {
     modelStats.value = statsRes.data.modelStats
     channelAvgResponseTimeRecent30.value = statsRes.data.channelAvgResponseTimeRecent30 ?? 0
   } catch (e: any) {
-    alert('加载失败: ' + e.message)
+    openDialog({ title: '加载失败', message: e.message })
     router.push('/admin/channel/list')
   }
 })
@@ -170,5 +236,83 @@ onMounted(async () => {
   font-size: 20px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+/* Table / Card toggle */
+.mobile-card-list {
+  display: none;
+}
+
+/* Mobile card styling */
+.mobile-model-card {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 12px 16px;
+  background: var(--bg-card, #fff);
+}
+.mobile-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.mobile-card-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.mobile-card-model-name {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.mobile-card-model-name .model-tag {
+  font-size: 12px;
+}
+.mobile-card-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 8px 0;
+}
+.mobile-card-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mobile-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  gap: 2px;
+}
+.mobile-stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.mobile-stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Responsive breakpoints */
+@media (max-width: 768px) {
+  .usage-summary {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .desktop-table {
+    display: none;
+  }
+  .mobile-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+
+@media (max-width: 480px) {
+  .usage-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 </style>

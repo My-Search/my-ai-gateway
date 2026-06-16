@@ -35,12 +35,23 @@
       </div>
     </form>
   </div>
+
+  <!-- 通用弹框 -->
+  <Dialog
+    v-model="dialogVisible"
+    :title="dialogTitle"
+    :type="dialogType"
+    @confirm="onDialogConfirm"
+  >
+    {{ dialogMessage }}
+  </Dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { modelApi, type CustomModel, type CircuitBreakerConfig } from '@/api/model'
+import Dialog from '@/components/common/Dialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -50,6 +61,32 @@ const config = ref<CircuitBreakerConfig>({
   modelId: 0, enabled: 0, retryCount: 3,
   circuitBreakDuration: 60, circuitBreakScope: 'model'
 })
+
+/* ---------- 弹框状态 ---------- */
+const dialogVisible = ref(false)
+const dialogTitle = ref('提示')
+const dialogMessage = ref('')
+const dialogType = ref<'alert' | 'confirm'>('alert')
+let dialogOnConfirm: (() => void) | null = null
+
+function openDialog(opts: {
+  title?: string
+  message: string
+  type?: 'alert' | 'confirm'
+  onConfirm?: () => void
+}) {
+  dialogTitle.value = opts.title ?? '提示'
+  dialogMessage.value = opts.message
+  dialogType.value = opts.type ?? 'alert'
+  dialogOnConfirm = opts.onConfirm ?? null
+  dialogVisible.value = true
+}
+
+function onDialogConfirm() {
+  dialogOnConfirm?.()
+  dialogOnConfirm = null
+}
+/* ------------------------------ */
 
 onMounted(async () => {
   const id = Number(route.params.id)
@@ -62,7 +99,7 @@ onMounted(async () => {
       config.value.modelId = id
     }
   } catch (e: any) {
-    alert('加载失败: ' + e.message)
+    openDialog({ title: '加载失败', message: e.message })
     router.push('/admin/model/list')
   }
 })
@@ -71,10 +108,9 @@ async function handleSave() {
   saving.value = true
   try {
     await modelApi.saveCircuitBreaker(Number(route.params.id), config.value)
-    alert('熔断配置保存成功')
-    router.push('/admin/model/list')
+    openDialog({ title: '成功', message: '熔断配置保存成功', onConfirm: () => router.push('/admin/model/list') })
   } catch (e: any) {
-    alert('保存失败: ' + e.message)
+    openDialog({ title: '保存失败', message: e.message })
   } finally {
     saving.value = false
   }

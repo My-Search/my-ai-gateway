@@ -8,11 +8,14 @@
     <div class="action-bar">
       <div class="left">
         <SearchableSelect
-          v-model="selectedModelId"
+          v-model="selectedModelIds"
           :options="selectOptions"
           placeholder="-- 选择渠道模型 --"
+          :multiple="true"
+          :width="300"
+          :dropdown-width="500"
         />
-        <button class="btn btn-primary btn-sm" :disabled="!selectedModelId" @click="addRel">添加关联</button>
+        <button class="btn btn-primary btn-sm" :disabled="selectedModelIds.length === 0" @click="addRel">添加关联</button>
         <button v-if="isDirty" class="btn btn-primary btn-sm" :disabled="isSaving" @click="saveOrder">
           {{ isSaving ? '保存中...' : '保存顺序' }}
         </button>
@@ -54,6 +57,17 @@
       </table>
     </div>
   </div>
+
+  <!-- 通用弹框 -->
+  <Dialog
+    v-model="dialogVisible"
+    :title="dialogTitle"
+    :type="dialogType"
+    :confirm-class="dialogConfirmClass"
+    @confirm="onDialogConfirm"
+  >
+    {{ dialogMessage }}
+  </Dialog>
 </template>
 
 <script setup lang="ts">
@@ -61,13 +75,14 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { modelApi, type CustomModel, type ModelChannelRel } from '@/api/model'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
+import Dialog from '@/components/common/Dialog.vue'
 
 const route = useRoute()
 const router = useRouter()
 const model = ref<CustomModel | null>(null)
 const rels = ref<ModelChannelRel[]>([])
 const availableModels = ref<any[]>([])
-const selectedModelId = ref(0)
+const selectedModelIds = ref<number[]>([])
 
 // 拖拽排序状态
 const draggingIndex = ref<number | null>(null)
@@ -76,11 +91,44 @@ const isDirty = ref(false)
 const originalRelIds = ref<number[]>([])
 const isSaving = ref(false)
 
+/* ---------- 弹框状态 ---------- */
+const dialogVisible = ref(false)
+const dialogTitle = ref('提示')
+const dialogMessage = ref('')
+const dialogType = ref<'alert' | 'confirm'>('alert')
+const dialogConfirmClass = ref('btn-primary')
+let dialogOnConfirm: (() => void) | null = null
+
+function openDialog(opts: {
+  title?: string
+  message: string
+  type?: 'alert' | 'confirm'
+  confirmClass?: string
+  onConfirm?: () => void
+}) {
+  dialogTitle.value = opts.title ?? '提示'
+  dialogMessage.value = opts.message
+  dialogType.value = opts.type ?? 'alert'
+  dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
+  dialogOnConfirm = opts.onConfirm ?? null
+  dialogVisible.value = true
+}
+
+function onDialogConfirm() {
+  dialogOnConfirm?.()
+  dialogOnConfirm = null
+}
+/* ------------------------------ */
+
 const selectOptions = computed(() => {
-  return availableModels.value.map(am => ({
-    value: am.id,
-    label: `${am.modelName} (${am.channelName || ''})`
-  }))
+  // 过滤已关联的模型
+  const existingIds = new Set(rels.value.map(r => r.channelModelId))
+  return availableModels.value
+    .filter(am => !existingIds.has(am.id))
+    .map(am => ({
+      value: am.id,
+      label: `${am.modelName} (${am.channelName || ''})`
+    }))
 })
 
 async function loadData() {
@@ -93,33 +141,40 @@ async function loadData() {
     isDirty.value = false
     availableModels.value = res.data.availableModels
   } catch (e: any) {
-    alert('加载失败: ' + e.message)
+    openDialog({ title: '加载失败', message: e.message })
     router.push('/admin/model/list')
   }
 }
 
 async function addRel() {
-  if (!selectedModelId.value) return
+  if (selectedModelIds.value.length === 0) return
   const id = Number(route.params.id)
   try {
-    const res = await modelApi.batchAddRels(id, [selectedModelId.value])
+    const res = await modelApi.batchAddRels(id, selectedModelIds.value)
     if (res.data.success) {
-      selectedModelId.value = 0
+      selectedModelIds.value = []
       await loadData()
     }
   } catch (e: any) {
-    alert('添加失败: ' + e.message)
+    openDialog({ title: '添加失败', message: e.message })
   }
 }
 
-async function removeRel(rel: ModelChannelRel) {
-  if (!confirm('确认删除此关联？')) return
-  try {
-    await modelApi.removeRel(rel.id)
-    await loadData()
-  } catch (e: any) {
-    alert('删除失败: ' + e.message)
-  }
+function removeRel(rel: ModelChannelRel) {
+  openDialog({
+    title: '确认删除',
+    message: '确认删除此关联？',
+    type: 'confirm',
+    confirmClass: 'btn-danger',
+    onConfirm: async () => {
+      try {
+        await modelApi.removeRel(rel.id)
+        await loadData()
+      } catch (e: any) {
+        openDialog({ title: '删除失败', message: e.message })
+      }
+    }
+  })
 }
 
 function onDragStart(index: number) {
@@ -162,7 +217,7 @@ async function saveOrder() {
     await loadData()
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e)
-    alert('保存失败: ' + message)
+    openDialog({ title: '保存失败', message })
   } finally {
     isSaving.value = false
   }

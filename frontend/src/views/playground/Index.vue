@@ -1,7 +1,13 @@
 <template>
   <div class="playground-container">
+    <!-- 移动端配置栏切换按钮 -->
+    <button class="mobile-sidebar-toggle" @click="showSidebar = !showSidebar">
+      <SvgIcon name="settings" :size="14" />
+      {{ showSidebar ? '收起配置' : '展开配置' }}
+    </button>
+
     <!-- 左侧配置栏 -->
-    <div class="playground-sidebar">
+    <div class="playground-sidebar" :class="{ 'mobile-hidden': !showSidebar }">
       <div class="card">
         <div class="card-title mb-3">测试配置</div>
 
@@ -121,7 +127,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted } from 'vue'
+import { ref, nextTick, onMounted, watch } from 'vue'
 import { modelApi, type CustomModel } from '@/api/model'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 
@@ -145,16 +151,31 @@ const messages = ref<ChatMessage[]>([])
 const streaming = ref(false)
 const tokenUsage = ref('')
 const routingProgress = ref<{ phase: string; channel: string; channel_model: string; message?: string } | null>(null)
+const showSidebar = ref(false) // 移动端配置栏默认收起
 
 async function loadOptions() {
   try {
     const [mRes, kRes] = await Promise.all([modelApi.list(), apikeyApi.list()])
     models.value = mRes.data
     apiKeys.value = kRes.data
+    // 恢复上次选择的模型
+    const savedModel = localStorage.getItem('playground_selected_model')
+    if (savedModel && mRes.data.some(m => m.modelName === savedModel)) {
+      selectedModel.value = savedModel
+    }
   } catch {
     // ignore
   }
 }
+
+// 监听模型选择变化，保存到 localStorage
+watch(selectedModel, (val) => {
+  if (val) {
+    localStorage.setItem('playground_selected_model', val)
+  } else {
+    localStorage.removeItem('playground_selected_model')
+  }
+})
 
 async function scrollToBottom() {
   await nextTick()
@@ -481,8 +502,45 @@ onMounted(loadOptions)
 .cursor-blink::after { content: '▋'; animation: blink 1s infinite; color: var(--accent-purple); }
 @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
 
+/* 移动端配置栏切换按钮 - 默认隐藏 */
+.mobile-sidebar-toggle {
+  display: none;
+  width: 100%;
+  padding: 10px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.mobile-sidebar-toggle:active {
+  background: var(--bg-tertiary);
+}
+
 @media (max-width: 768px) {
-  .playground-container { flex-direction: column; height: auto; }
-  .playground-sidebar { width: 100%; }
+  .playground-container {
+    flex-direction: column;
+    height: calc(100vh - 130px);
+  }
+  .mobile-sidebar-toggle {
+    display: flex;
+  }
+  .playground-sidebar {
+    width: 100%;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+  .playground-sidebar.mobile-hidden {
+    display: none;
+  }
+  .playground-main {
+    flex: 1;
+    min-height: 0;
+  }
 }
 </style>

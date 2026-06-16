@@ -1,15 +1,26 @@
 <template>
   <div class="searchable-select" ref="containerRef">
     <div class="searchable-select-input-wrapper">
+      <!-- 多选模式：有选中项时显示勾选数量 -->
       <input
+        v-if="multiple && selectedCount > 0 && !isOpen"
         type="text"
         class="form-control"
-        :placeholder="placeholder"
+        :value="`已勾选 ${selectedCount} 个模型待添加`"
+        readonly
+        @focus="onFocusMulti"
+        style="cursor: pointer;"
+      />
+      <!-- 单选模式 / 多选无选中 / 多选展开搜索时 -->
+      <input
+        v-else
+        type="text"
+        class="form-control"
+        :placeholder="multiple && selectedCount > 0 ? '搜索更多...' : placeholder"
         :value="searchText"
         @input="onSearchInput"
         @focus="isOpen = true"
         @blur="onBlur"
-        style="width: 300px;"
       />
       <span v-if="isOpen" class="dropdown-arrow">▼</span>
     </div>
@@ -17,9 +28,10 @@
       <li
         v-for="option in filteredOptions"
         :key="option.value"
-        :class="{ active: option.value === modelValue }"
-        @mousedown="selectOption(option)"
+        :class="{ active: isSelected(option.value), checked: isSelected(option.value) }"
+        @mousedown.prevent="onOptionClick(option)"
       >
+        <span v-if="multiple" class="checkbox-icon">{{ isSelected(option.value) ? '☑' : '☐' }}</span>
         {{ option.label }}
       </li>
     </ul>
@@ -37,19 +49,31 @@ interface SelectOption {
   label: string
 }
 
-const props = defineProps<{
-  modelValue: number
+const props = withDefaults(defineProps<{
+  modelValue: number | number[]
   options: SelectOption[]
   placeholder?: string
-}>()
+  multiple?: boolean
+  width?: number
+  dropdownWidth?: number
+}>(), {
+  width: 300,
+  dropdownWidth: 400
+})
 
 const emit = defineEmits<{
-  'update:modelValue': [value: number]
+  'update:modelValue': [value: number | number[]]
 }>()
 
 const searchText = ref('')
 const isOpen = ref(false)
 const containerRef = ref<HTMLElement | null>(null)
+
+// 多选模式下已选数量
+const selectedCount = computed(() => {
+  if (!props.multiple) return 0
+  return Array.isArray(props.modelValue) ? props.modelValue.length : 0
+})
 
 const filteredOptions = computed(() => {
   if (!searchText.value) return props.options
@@ -57,13 +81,28 @@ const filteredOptions = computed(() => {
   return props.options.filter(opt => opt.label.toLowerCase().includes(keyword))
 })
 
+// 判断选项是否被选中
+function isSelected(value: number): boolean {
+  if (props.multiple) {
+    return Array.isArray(props.modelValue) && props.modelValue.includes(value)
+  }
+  return props.modelValue === value
+}
+
 // 同步外部 modelValue 变化到输入框显示（如父组件重置为 0 时清空）
 watch(() => props.modelValue, (newVal) => {
-  if (newVal === 0) {
-    searchText.value = ''
+  if (props.multiple) {
+    // 多选模式：清空搜索框
+    if (Array.isArray(newVal) && newVal.length === 0) {
+      searchText.value = ''
+    }
   } else {
-    const match = props.options.find(o => o.value === newVal)
-    if (match) searchText.value = match.label
+    if (newVal === 0) {
+      searchText.value = ''
+    } else {
+      const match = props.options.find(o => o.value === newVal)
+      if (match) searchText.value = match.label
+    }
   }
 })
 
@@ -73,11 +112,30 @@ function onSearchInput(e: Event) {
   isOpen.value = true
 }
 
-// 选中选项：更新父组件值，显示选中项标签
-function selectOption(option: SelectOption) {
-  emit('update:modelValue', option.value)
-  searchText.value = option.label
-  isOpen.value = false
+// 多选模式下点击输入框展开
+function onFocusMulti() {
+  isOpen.value = true
+}
+
+// 选项点击处理
+function onOptionClick(option: SelectOption) {
+  if (props.multiple) {
+    // 多选模式：切换选中状态
+    const current = Array.isArray(props.modelValue) ? [...props.modelValue] : []
+    const idx = current.indexOf(option.value)
+    if (idx >= 0) {
+      current.splice(idx, 1)
+    } else {
+      current.push(option.value)
+    }
+    emit('update:modelValue', current)
+    // 保持下拉打开，不清空搜索
+  } else {
+    // 单选模式
+    emit('update:modelValue', option.value)
+    searchText.value = option.label
+    isOpen.value = false
+  }
 }
 
 function onBlur() {
@@ -106,11 +164,18 @@ onUnmounted(() => {
 .searchable-select {
   position: relative;
   display: inline-block;
+  width: 100%;
+  max-width: 300px;
 }
 
 .searchable-select-input-wrapper {
   position: relative;
-  display: inline-block;
+  display: block;
+  width: 100%;
+}
+
+.searchable-select-input-wrapper .form-control {
+  width: 100%;
 }
 
 .dropdown-arrow {
@@ -127,7 +192,6 @@ onUnmounted(() => {
   position: absolute;
   top: 100%;
   left: 0;
-  right: 0;
   margin: 4px 0 0 0;
   padding: 0;
   list-style: none;
@@ -138,6 +202,8 @@ onUnmounted(() => {
   overflow-y: auto;
   z-index: 100;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  min-width: v-bind(dropdownWidth + 'px');
+  max-width: calc(100vw - 32px);
 }
 
 .searchable-select-dropdown li {
@@ -147,6 +213,15 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-icon {
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
 }
 
 .searchable-select-dropdown li:hover {

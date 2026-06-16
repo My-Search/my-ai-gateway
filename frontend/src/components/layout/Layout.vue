@@ -42,24 +42,6 @@
       </div>
     </div>
 
-    <!-- Mobile bottom nav -->
-    <nav class="mobile-bottom-nav">
-      <router-link to="/admin/dashboard" @click="sidebarOpen = false">
-        <SvgIcon name="home" :size="18" /><span>首页</span>
-      </router-link>
-      <router-link to="/admin/channel/list" @click="sidebarOpen = false">
-        <SvgIcon name="channel" :size="18" /><span>渠道</span>
-      </router-link>
-      <router-link to="/admin/model/list" @click="sidebarOpen = false">
-        <SvgIcon name="model" :size="18" /><span>模型</span>
-      </router-link>
-      <router-link to="/admin/log/list" @click="sidebarOpen = false">
-        <SvgIcon name="log" :size="18" /><span>日志</span>
-      </router-link>
-      <router-link to="/admin/playground" @click="sidebarOpen = false">
-        <SvgIcon name="chat" :size="18" /><span>测试</span>
-      </router-link>
-    </nav>
   </div>
 </template>
 
@@ -239,15 +221,9 @@ async function handleLogout() {
   color: var(--accent-red);
 }
 
-/* Mobile bottom nav */
-.mobile-bottom-nav {
-  display: none;
-}
-
 @media (max-width: 768px) {
   .main-content {
     margin-left: 0;
-    padding-bottom: 64px;
   }
   .top-header {
     display: none;
@@ -265,34 +241,6 @@ async function handleLogout() {
   }
   .content-area {
     padding: 16px;
-  }
-  .mobile-bottom-nav {
-    display: flex;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: var(--bg-secondary);
-    border-top: 1px solid var(--border-color);
-    z-index: 100;
-    justify-content: space-around;
-    padding: 6px 0;
-    padding-bottom: max(6px, env(safe-area-inset-bottom));
-  }
-  .mobile-bottom-nav a {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 2px;
-    font-size: 10px;
-    color: var(--text-muted);
-    text-decoration: none;
-    padding: 4px 8px;
-    transition: color 0.15s;
-  }
-  .mobile-bottom-nav a.router-link-exact-active,
-  .mobile-bottom-nav a.router-link-active {
-    color: var(--accent-blue);
   }
 }
 </style>

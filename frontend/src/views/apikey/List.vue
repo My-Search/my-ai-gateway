@@ -2,7 +2,7 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">API 密钥列表</div>
-      <router-link to="/admin/apikey/form" class="btn btn-primary">+ 添加密钥</router-link>
+      <button class="btn btn-primary" @click="openForm()">+ 添加密钥</button>
     </div>
     <div class="alert alert-info">
       API 密钥用于调用网关的 API。用户请求时需要在 Header 中携带密钥。
@@ -44,7 +44,7 @@
             <td style="font-size:12px;color:var(--text-muted);">{{ key.createdAt }}</td>
             <td>
               <div style="display:flex;gap:6px;">
-                <router-link :to="`/admin/apikey/form/${key.id}`" class="btn btn-sm btn-secondary">编辑</router-link>
+                <button class="btn btn-sm btn-secondary" @click="openForm(key)">编辑</button>
                 <button class="btn btn-sm btn-danger" @click="confirmDelete(key)">删除</button>
               </div>
             </td>
@@ -57,14 +57,188 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Mobile card list -->
+    <div class="mobile-card-list">
+      <div v-for="key in apiKeys" :key="key.id" class="mobile-card">
+        <div class="mobile-card-header">
+          <strong class="mobile-card-title">{{ key.keyName }}</strong>
+          <span v-if="key.enabled === 1" class="badge badge-success">
+            <span class="status-dot active"></span>启用
+          </span>
+          <span v-else class="badge badge-danger">
+            <span class="status-dot inactive"></span>禁用
+          </span>
+        </div>
+        <div class="mobile-card-row">
+          <span class="mobile-card-label">密钥</span>
+          <code class="model-tag" style="user-select:all;cursor:pointer;" @click="copyKey(key.keyValue)">
+            {{ maskKey(key.keyValue) }}
+          </code>
+        </div>
+        <div class="mobile-card-row">
+          <span class="mobile-card-label">最后使用</span>
+          <span class="mobile-card-value">{{ key.lastUsedAt || '从未使用' }}</span>
+        </div>
+        <div class="mobile-card-row">
+          <span class="mobile-card-label">创建时间</span>
+          <span class="mobile-card-value">{{ key.createdAt }}</span>
+        </div>
+        <div class="mobile-card-divider"></div>
+        <div class="mobile-card-actions">
+          <button class="btn btn-sm btn-secondary" @click="copyKey(key.keyValue)">复制</button>
+          <button class="btn btn-sm btn-secondary" @click="openForm(key)">编辑</button>
+          <button class="btn btn-sm btn-danger" @click="confirmDelete(key)">删除</button>
+        </div>
+      </div>
+      <div v-if="!apiKeys.length" class="mobile-card-empty">
+        暂无 API 密钥，点击右上角「添加密钥」创建
+      </div>
+    </div>
   </div>
+
+  <!-- 通用弹框 -->
+  <Dialog
+    v-model="dialogVisible"
+    :title="dialogTitle"
+    :type="dialogType"
+    :confirm-class="dialogConfirmClass"
+    :confirm-text="dialogConfirmText"
+    @confirm="onDialogConfirm"
+  >
+    <template v-if="dialogType === 'confirm'">
+      {{ dialogMessage }}
+    </template>
+  </Dialog>
+
+  <!-- 表单弹框 -->
+  <Dialog
+    v-model="formDialogVisible"
+    :title="formDialogTitle"
+    type="confirm"
+    confirm-text="保存"
+    width="520px"
+    @confirm="handleSave"
+    @cancel="closeForm"
+  >
+    <form @submit.prevent="handleSave" style="margin-top:8px;">
+      <div class="form-group">
+        <label for="keyName">密钥名称 *</label>
+        <input id="keyName" v-model="form.keyName" class="form-control" placeholder="如：生产密钥" required />
+      </div>
+      <div class="form-group">
+        <label for="keyValue">密钥值 *</label>
+        <input id="keyValue" v-model="form.keyValue" class="form-control" :placeholder="isEdit ? '留空则不修改' : '请输入密钥值'" :required="!isEdit" />
+        <div class="form-hint">调用 API 时在 Authorization 头部使用 Bearer 此值</div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label for="enabled">状态</label>
+        <select id="enabled" v-model.number="form.enabled" class="form-control">
+          <option :value="1">启用</option>
+          <option :value="0">禁用</option>
+        </select>
+      </div>
+    </form>
+  </Dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
+import Dialog from '@/components/common/Dialog.vue'
 
 const apiKeys = ref<ApiKey[]>([])
+
+/* ---------- 通用弹框状态 ---------- */
+const dialogVisible = ref(false)
+const dialogTitle = ref('提示')
+const dialogMessage = ref('')
+const dialogType = ref<'alert' | 'confirm'>('alert')
+const dialogConfirmClass = ref('btn-primary')
+const dialogConfirmText = ref('确定')
+let dialogOnConfirm: (() => void) | null = null
+
+function openDialog(opts: {
+  title?: string
+  message: string
+  type?: 'alert' | 'confirm'
+  confirmClass?: string
+  confirmText?: string
+  onConfirm?: () => void
+}) {
+  dialogTitle.value = opts.title ?? '提示'
+  dialogMessage.value = opts.message
+  dialogType.value = opts.type ?? 'alert'
+  dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
+  dialogConfirmText.value = opts.confirmText ?? '确定'
+  dialogOnConfirm = opts.onConfirm ?? null
+  dialogVisible.value = true
+}
+
+function onDialogConfirm() {
+  dialogOnConfirm?.()
+  dialogOnConfirm = null
+}
+/* ------------------------------ */
+
+/* ---------- 表单弹框状态 ---------- */
+const formDialogVisible = ref(false)
+const formDialogTitle = ref('添加密钥')
+const isEdit = ref(false)
+const editId = ref<number | null>(null)
+const saving = ref(false)
+const form = ref<Partial<ApiKey>>({ keyName: '', keyValue: '', enabled: 1 })
+
+/** 打开表单弹框 */
+function openForm(key?: ApiKey) {
+  if (key?.id) {
+    isEdit.value = true
+    editId.value = key.id
+    formDialogTitle.value = '编辑密钥'
+    form.value = { keyName: key.keyName, keyValue: '', enabled: key.enabled }
+  } else {
+    isEdit.value = false
+    editId.value = null
+    formDialogTitle.value = '添加密钥'
+    form.value = { keyName: '', keyValue: '', enabled: 1 }
+  }
+  formDialogVisible.value = true
+}
+
+function closeForm() {
+  formDialogVisible.value = false
+}
+
+async function handleSave() {
+  if (!form.value.keyName) {
+    openDialog({ title: '提示', message: '请输入密钥名称' })
+    return
+  }
+  if (!isEdit.value && !form.value.keyValue) {
+    openDialog({ title: '提示', message: '请输入密钥值' })
+    return
+  }
+
+  saving.value = true
+  try {
+    const payload = { ...form.value }
+    if (isEdit.value && !payload.keyValue) {
+      delete payload.keyValue
+    }
+    if (isEdit.value && editId.value) {
+      await apikeyApi.update(editId.value, payload)
+    } else {
+      await apikeyApi.create(payload)
+    }
+    formDialogVisible.value = false
+    loadKeys()
+  } catch (e: any) {
+    openDialog({ title: '保存失败', message: e.message })
+  } finally {
+    saving.value = false
+  }
+}
+/* ------------------------------ */
 
 function maskKey(key: string) {
   if (!key) return ''
@@ -85,13 +259,22 @@ async function copyKey(val: string) {
     document.body.appendChild(toast)
     setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300) }, 1500)
   } catch {
-    alert('复制失败，请手动复制')
+    openDialog({ message: '复制失败，请手动复制' })
   }
 }
 
 function confirmDelete(key: ApiKey) {
-  if (!confirm(`确认删除密钥「${key.keyName}」？`)) return
-  apikeyApi.delete(key.id!).then(() => loadKeys()).catch(e => alert('删除失败: ' + e.message))
+  openDialog({
+    title: '确认删除',
+    message: `确定要删除密钥「${key.keyName}」吗？此操作不可恢复。`,
+    type: 'confirm',
+    confirmClass: 'btn-danger',
+    onConfirm: () => {
+      apikeyApi.delete(key.id!).then(() => loadKeys()).catch(e =>
+        openDialog({ title: '删除失败', message: e.message })
+      )
+    }
+  })
 }
 
 async function loadKeys() {
@@ -99,7 +282,7 @@ async function loadKeys() {
     const res = await apikeyApi.list()
     apiKeys.value = res.data
   } catch (e: any) {
-    alert('加载失败: ' + e.message)
+    openDialog({ title: '加载失败', message: e.message })
   }
 }
 
@@ -114,4 +297,83 @@ onMounted(loadKeys)
   border-radius: 4px; padding: 0; margin-left: 8px; vertical-align: middle;
 }
 .copy-btn:hover { color: var(--accent-blue); border-color: var(--accent-blue); }
+
+/* Mobile card list */
+.mobile-card-list {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mobile-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.mobile-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.mobile-card-title {
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.mobile-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.mobile-card-label {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  min-width: 56px;
+}
+
+.mobile-card-value {
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.mobile-card-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 10px 0;
+}
+
+.mobile-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.mobile-card-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 40px 16px;
+  font-size: 14px;
+}
+
+@media (max-width: 768px) {
+  .table-container table {
+    display: none;
+  }
+  .mobile-card-list {
+    display: flex;
+  }
+}
+
+@media (min-width: 769px) {
+  .mobile-card-list {
+    display: none;
+  }
+}
 </style>

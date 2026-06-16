@@ -32,7 +32,7 @@
         </div>
       </div>
       <div v-if="expandedTraces.has(trace.traceId)" class="trace-detail">
-        <div v-for="(group, gIdx) in groupedTraceLogs.get(trace.traceId) || []" :key="group.key + '-' + gIdx" class="log-entry" :style="{ paddingLeft: `${12 + gIdx * 16}px` }">
+        <div v-for="(group, gIdx) in groupedTraceLogs.get(trace.traceId) || []" :key="group.key + '-' + gIdx" class="log-entry" :style="{ paddingLeft: `calc(var(--indent-base, 12px) + ${gIdx} * var(--indent-step, 16px))` }">
           <span class="phase" :class="'phase-' + group.logs[0].phase">
             {{ group.logs[0].phase }}<span v-if="group.logs.length > 1" class="retry-count">（x{{ group.logs.length }}）</span>
           </span>
@@ -50,16 +50,57 @@
 
     <div v-if="!loading && !traces.length" class="empty-state">暂无日志数据</div>
   </div>
+
+  <!-- 通用弹框 -->
+  <Dialog
+    v-model="dialogVisible"
+    :title="dialogTitle"
+    :type="dialogType"
+    :confirm-class="dialogConfirmClass"
+    @confirm="onDialogConfirm"
+  >
+    {{ dialogMessage }}
+  </Dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { logApi, subscribeLogStream, type LogTrace, type RequestLog } from '@/api/log'
+import Dialog from '@/components/common/Dialog.vue'
 
 const traces = ref<LogTrace[]>([])
 const expandedTraces = ref(new Set<string>())
 const loading = ref(false)
 const sseConnected = ref(false)
+
+/* ---------- 弹框状态 ---------- */
+const dialogVisible = ref(false)
+const dialogTitle = ref('提示')
+const dialogMessage = ref('')
+const dialogType = ref<'alert' | 'confirm'>('alert')
+const dialogConfirmClass = ref('btn-primary')
+let dialogOnConfirm: (() => void) | null = null
+
+function openDialog(opts: {
+  title?: string
+  message: string
+  type?: 'alert' | 'confirm'
+  confirmClass?: string
+  onConfirm?: () => void
+}) {
+  dialogTitle.value = opts.title ?? '提示'
+  dialogMessage.value = opts.message
+  dialogType.value = opts.type ?? 'alert'
+  dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
+  dialogOnConfirm = opts.onConfirm ?? null
+  dialogVisible.value = true
+}
+
+function onDialogConfirm() {
+  dialogOnConfirm?.()
+  dialogOnConfirm = null
+}
+/* ------------------------------ */
 
 /* ========== EventSource / SSE 管理 ========== */
 
@@ -216,21 +257,28 @@ async function loadLogs() {
       }
     }
   } catch (e: any) {
-    alert('加载失败: ' + e.message)
+    openDialog({ title: '加载失败', message: e.message })
   } finally {
     loading.value = false
   }
 }
 
-async function cleanLogs() {
-  if (!confirm('确认清理 30 天前的日志？')) return
-  try {
-    const res = await logApi.clean()
-    alert(res.data.message || '清理成功')
-    await loadLogs()
-  } catch (e: any) {
-    alert('清理失败: ' + e.message)
-  }
+function cleanLogs() {
+  openDialog({
+    title: '确认清理',
+    message: '确认清理 30 天前的日志？',
+    type: 'confirm',
+    confirmClass: 'btn-danger',
+    onConfirm: async () => {
+      try {
+        const res = await logApi.clean()
+        openDialog({ message: res.data.message || '清理成功' })
+        await loadLogs()
+      } catch (e: any) {
+        openDialog({ title: '清理失败', message: e.message })
+      }
+    }
+  })
 }
 
 onMounted(() => {
@@ -274,6 +322,8 @@ onUnmounted(() => {
   border-bottom: 1px solid var(--border-color);
   border-left: 2px solid var(--border-color);
   margin-left: 20px;
+  --indent-base: 12px;
+  --indent-step: 16px;
 }
 .log-entry {
   padding: 8px 12px;
@@ -313,5 +363,40 @@ onUnmounted(() => {
 @keyframes pulse-badge {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }
+}
+
+/* ========== 移动端适配 ========== */
+@media (max-width: 768px) {
+  .trace-header {
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .model-tag {
+    max-width: 120px;
+  }
+  .trace-detail {
+    margin-left: 8px;
+    --indent-base: 8px;
+    --indent-step: 12px;
+  }
+  .log-entry {
+    padding: 6px 8px;
+    gap: 6px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 480px) {
+  .trace-header {
+    gap: 4px;
+  }
+  .model-tag {
+    max-width: 80px;
+  }
+  .log-entry {
+    padding: 4px 6px;
+    gap: 4px;
+    font-size: 10px;
+  }
 }
 </style>
