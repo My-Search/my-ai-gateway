@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.myai.gateway.entity.*;
 import com.myai.gateway.relay.RelayService;
 import com.myai.gateway.service.*;
+import com.myai.gateway.config.JwtTokenProvider;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
@@ -43,12 +44,14 @@ public class AdminApiController {
     private final AdminConfigService adminConfigService;
     private final RelayService relayService;
     private final ObjectMapper objectMapper;
+    private final JwtTokenProvider jwtTokenProvider;
 
     public AdminApiController(StatsService statsService, ChannelService channelService,
                               ChannelApiKeyService channelApiKeyService, ModelService modelService,
                               ApiKeyService apiKeyService, RequestLogService requestLogService,
                               LogSseService logSseService, AdminConfigService adminConfigService,
-                              RelayService relayService, ObjectMapper objectMapper) {
+                              RelayService relayService, ObjectMapper objectMapper,
+                              JwtTokenProvider jwtTokenProvider) {
         this.statsService = statsService;
         this.channelService = channelService;
         this.channelApiKeyService = channelApiKeyService;
@@ -59,14 +62,28 @@ public class AdminApiController {
         this.adminConfigService = adminConfigService;
         this.relayService = relayService;
         this.objectMapper = objectMapper;
+        this.jwtTokenProvider = jwtTokenProvider;
     }
 
     // ==================== Auth ====================
 
     @GetMapping(value = "/auth/check", produces = "application/json;charset=UTF-8")
     public ResponseEntity<Map<String, Object>> checkAuth(HttpServletRequest request) {
-        HttpSession session = request.getSession(false);
-        boolean authenticated = session != null && session.getAttribute("adminUser") != null;
+        boolean authenticated = false;
+
+        // 方式1：JWT Token 认证
+        String authHeader = request.getHeader("Authorization");
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            authenticated = jwtTokenProvider.validateToken(token);
+        }
+
+        // 方式2：Session 认证（向后兼容）
+        if (!authenticated) {
+            HttpSession session = request.getSession(false);
+            authenticated = session != null && session.getAttribute("adminUser") != null;
+        }
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("authenticated", authenticated);
         result.put("hasAdminAccount", adminConfigService.hasAdminAccount());
@@ -87,11 +104,14 @@ public class AdminApiController {
         }
 
         if (adminConfigService.verify(username, password)) {
+            // 生成 JWT Token
+            String token = jwtTokenProvider.generateToken(username);
             HttpSession session = request.getSession(true);
             session.setAttribute("adminUser", username);
             session.setMaxInactiveInterval(8 * 60 * 60);
             result.put("success", true);
             result.put("username", username);
+            result.put("token", token);
         } else {
             result.put("success", false);
             result.put("error", "用户名或密码错误");
@@ -125,10 +145,13 @@ public class AdminApiController {
             return ResponseEntity.ok(result);
         }
 
+        // 生成 JWT Token
+        String token = jwtTokenProvider.generateToken(username);
         HttpSession session = request.getSession(true);
         session.setAttribute("adminUser", username);
         session.setMaxInactiveInterval(8 * 60 * 60);
         result.put("success", true);
+        result.put("token", token);
         return ResponseEntity.ok(result);
     }
 
@@ -715,8 +738,14 @@ public class AdminApiController {
     // ==================== Logs ====================
 
     @GetMapping(value = "/logs", produces = "application/json;charset=UTF-8")
-    public ResponseEntity<List<Map<String, Object>>> listLogs(@RequestParam(defaultValue = "200") int limit) {
-        List<RequestLog> logs = requestLogService.getRecentLogs(limit);
+    public ResponseEntity<Map<String, Object>> listLogs(
+            @RequestParam(defaultValue = "0") int offset,
+            @RequestParam(defaultValue = "50") int limit) {
+        // 获取总数
+        long totalTraces = requestLogService.getTraceCount();
+        
+        // 分页查询日志
+        List<RequestLog> logs = requestLogService.getLogsByPage(offset, limit);
         Map<String, List<RequestLog>> grouped = logs.stream()
                 .collect(Collectors.groupingBy(RequestLog::getTraceId));
         List<Map<String, Object>> treeData = new ArrayList<>();
@@ -761,7 +790,15 @@ public class AdminApiController {
             return timeB.compareTo(timeA);
         });
 
-        return ResponseEntity.ok(treeData);
+        // 返回分页数据
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("data", treeData);
+        result.put("total", totalTraces);
+        result.put("offset", offset);
+        result.put("limit", limit);
+        result.put("hasMore", offset + treeData.size() < totalTraces);
+
+        return ResponseEntity.ok(result);
     }
 
     @PostMapping(value = "/logs/clean", produces = "application/json;charset=UTF-8")

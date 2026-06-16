@@ -27,9 +27,17 @@ export interface LogTrace {
   endTime?: string
 }
 
+export interface LogsResponse {
+  data: LogTrace[]
+  total: number
+  offset: number
+  limit: number
+  hasMore: boolean
+}
+
 export const logApi = {
-  list(limit = 200) {
-    return http.get<LogTrace[]>('/logs', { params: { limit } })
+  list(offset = 0, limit = 50) {
+    return http.get<LogsResponse>('/logs', { params: { offset, limit } })
   },
   clean() {
     return http.post<{ success: boolean; message: string }>('/logs/clean')

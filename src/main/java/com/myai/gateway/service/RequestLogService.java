@@ -140,13 +140,30 @@ public class RequestLogService {
     }
 
     /**
-     * 获取最近的日志
+     * 分页获取日志（按 traceId 级别分页，保证每组 trace 的日志完整）
+     * @param offset 跳过的 traceId 数量
+     * @param limit 返回的 traceId 数量
+     * @return 完整的日志列表（trace 内按 createdAt 升序）
      */
-    public List<RequestLog> getRecentLogs(int limit) {
+    public List<RequestLog> getLogsByPage(int offset, int limit) {
+        // 1. 获取分页后的 traceId 列表
+        List<String> traceIds = requestLogMapper.selectTraceIdsByPage(offset, limit);
+        if (traceIds.isEmpty()) {
+            return List.of();
+        }
+
+        // 2. 获取这些 traceId 的所有日志
         return requestLogMapper.selectList(
                 new LambdaQueryWrapper<RequestLog>()
-                        .orderByDesc(RequestLog::getCreatedAt)
-                        .last("LIMIT " + limit));
+                        .in(RequestLog::getTraceId, traceIds)
+                        .orderByAsc(RequestLog::getCreatedAt));
+    }
+
+    /**
+     * 获取去重后的 traceId 总数
+     */
+    public long getTraceCount() {
+        return requestLogMapper.countDistinctTraces();
     }
 
     /**

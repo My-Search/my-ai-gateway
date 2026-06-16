@@ -49,6 +49,15 @@
     </template>
 
     <div v-if="!loading && !traces.length" class="empty-state">暂无日志数据</div>
+
+    <!-- 分页加载更多 -->
+    <div v-if="hasMore" ref="loadMoreTrigger" class="load-more">
+      <span v-if="loadingMore">加载中...</span>
+      <span v-else>上滑加载更多</span>
+    </div>
+    <div v-if="!hasMore && traces.length > 0" class="load-more">
+      已加载全部 {{ total }} 条记录
+    </div>
   </div>
 
   <!-- 通用弹框 -->
@@ -71,7 +80,16 @@ import Dialog from '@/components/common/Dialog.vue'
 const traces = ref<LogTrace[]>([])
 const expandedTraces = ref(new Set<string>())
 const loading = ref(false)
+const loadingMore = ref(false)
 const sseConnected = ref(false)
+
+// 分页状态
+const offset = ref(0)
+const limit = 50
+const hasMore = ref(true)
+const total = ref(0)
+const loadMoreTrigger = ref<HTMLElement | null>(null)
+let observer: IntersectionObserver | null = null
 
 /* ---------- 弹框状态 ---------- */
 const dialogVisible = ref(false)
@@ -247,9 +265,14 @@ function toggleTrace(id: string) {
 
 async function loadLogs() {
   loading.value = true
+  offset.value = 0
+  hasMore.value = true
   try {
-    const res = await logApi.list()
-    traces.value = res.data
+    const res = await logApi.list(0, limit)
+    traces.value = res.data.data
+    total.value = res.data.total
+    hasMore.value = res.data.hasMore
+    offset.value = res.data.data.length
     // 初始加载时，进行中的 trace 默认展开
     for (const t of traces.value) {
       if (isTraceInProgress(t)) {
@@ -260,6 +283,26 @@ async function loadLogs() {
     openDialog({ title: '加载失败', message: e.message })
   } finally {
     loading.value = false
+  }
+}
+
+async function loadMoreLogs() {
+  if (loadingMore.value || !hasMore.value) return
+  loadingMore.value = true
+  try {
+    const res = await logApi.list(offset.value, limit)
+    const newTraces = res.data.data
+    // 避免重复添加（SSE 可能已提前插入相同 trace）
+    const existingIds = new Set(traces.value.map(t => t.traceId))
+    const uniqueNewTraces = newTraces.filter(t => !existingIds.has(t.traceId))
+    traces.value.push(...uniqueNewTraces)
+    hasMore.value = res.data.hasMore
+    // offset 按 backend 返回总数递增（与后端分页语义对齐）
+    offset.value += newTraces.length
+  } catch (e: any) {
+    console.error('加载更多日志失败:', e)
+  } finally {
+    loadingMore.value = false
   }
 }
 
@@ -284,10 +327,25 @@ function cleanLogs() {
 onMounted(() => {
   loadLogs()
   startSse()
+  
+  // 设置无限滚动观察器
+  observer = new IntersectionObserver((entries) => {
+    if (entries[0].isIntersecting && hasMore.value && !loadingMore.value) {
+      loadMoreLogs()
+    }
+  }, { threshold: 0.1 })
+  
+  // 等待 DOM 更新后绑定观察器
+  setTimeout(() => {
+    if (loadMoreTrigger.value) {
+      observer?.observe(loadMoreTrigger.value)
+    }
+  }, 100)
 })
 
 onUnmounted(() => {
   stopSse()
+  observer?.disconnect()
 })
 </script>
 
@@ -398,5 +456,13 @@ onUnmounted(() => {
     gap: 4px;
     font-size: 10px;
   }
+}
+
+.load-more {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+  border-top: 1px solid var(--border-color);
 }
 </style>

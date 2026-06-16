@@ -50,6 +50,11 @@ logging:
 
 # App config (管理员账号从数据库读取)
 app:
+  jwt:
+    # JWT 签名密钥，生产环境请修改为更复杂的密钥
+    secret: my-ai-gateway-jwt-secret-key-2024-change-in-production
+    # Token 过期时间（毫秒），365 天，实现持久登录
+    expiration: 31536000000
   relay:
     connect-timeout: 60000
     read-timeout: 120000

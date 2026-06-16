@@ -322,9 +322,10 @@ public class RelayService {
         if (remaining.isEmpty()) {
             // 清理流式内容累积
             streamContentManager.clearContent(traceId);
+            String extraInfo = req.isContextRetry() ? "（已拼接上下文但无剩余候选）" : "";
             requestLogService.logComplete(traceId, null, req.getModel(), null, null,
-                    "fail", "error", "所有流式候选均失败", System.currentTimeMillis() - startTime, retryIndex);
-            log.warn("所有流式候选均失败 - traceId={}", traceId);
+                    "fail", "error", "所有流式候选均失败" + extraInfo, System.currentTimeMillis() - startTime, retryIndex);
+            log.warn("所有流式候选均失败 - traceId={}{}", traceId, extraInfo);
             return Flux.error(new RuntimeException("所有流式候选均失败"));
         }
 
@@ -453,7 +454,15 @@ public class RelayService {
                         err.getMessage()))
                 .onErrorResume(err -> {
                     if (attempt < maxAttempts) {
-                        logPhase(traceId, candidate, req, "retry",
+                        // 获取已累积的流式内容，携带到重试请求中
+                        String accumulatedContent = streamContentManager.getContent(traceId);
+                        InternalRequest retryReq = req;
+                        if (accumulatedContent != null && !accumulatedContent.isEmpty()) {
+                            retryReq = buildRequestWithContext(req, accumulatedContent);
+                            log.warn("同一候选重试携带已累积内容 - traceId={} attempt={}/{} 累积长度={}",
+                                    traceId, attempt, maxAttempts, accumulatedContent.length());
+                        }
+                        logPhase(traceId, candidate, retryReq, "retry",
                                 "同一流式候选第 " + attempt + " 次失败，准备第 " + (attempt + 1) + " 次重试", retryIndex);
                         // 仅内部客户端发送路由进度事件：候选内重试
                         Flux<SseEvent> routingRetry = internalClient
@@ -462,7 +471,7 @@ public class RelayService {
                                         "第" + attempt + "次失败，第" + (attempt + 1) + "次重试")))
                                 : Flux.empty();
                         return Flux.concat(routingRetry,
-                                invokeStreamCandidateWithRetries(traceId, authHeader, req, candidate, provider,
+                                invokeStreamCandidateWithRetries(traceId, authHeader, retryReq, candidate, provider,
                                         retryIndex, attempt + 1, maxAttempts, internalClient));
                     }
                     return Flux.error(err);

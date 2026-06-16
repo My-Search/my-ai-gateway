@@ -169,6 +169,8 @@ router.beforeEach(async (to, _from, next) => {
  */
 export function navigateToLogin() {
   if (window.location.pathname !== '/login') {
+    // 清除 token，确保回到登录状态
+    localStorage.removeItem('admin_token')
     router.replace('/login')
   }
 }

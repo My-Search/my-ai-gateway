@@ -63,6 +63,8 @@ async function handleLogout() {
   } catch {
     // ignore
   }
+  // 清除 JWT Token，确保下次 checkAuth 不会因旧 token 再跳回来
+  localStorage.removeItem('admin_token')
   router.push('/login')
 }
 </script>
