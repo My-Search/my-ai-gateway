@@ -2,16 +2,16 @@
 
 set -Eeuo pipefail
 
-APP_DIR="/opt/my-ai-api"
 BRANCH="master"
 REMOTE="origin"
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "${SCRIPT_DIR}"
+
 echo "======================================"
-echo "开始更新项目：${APP_DIR}"
+echo "开始更新项目：${SCRIPT_DIR}"
 echo "分支：${REMOTE}/${BRANCH}"
 echo "======================================"
-
-cd "${APP_DIR}"
 
 echo ""
 echo "1. 检查 Git 仓库状态..."
