@@ -38,6 +38,8 @@ export interface ModelUsageStat {
   promptTokens: number
   completionTokens: number
   totalTokens: number
+  /** 最近30次请求的平均响应时间（毫秒） */
+  avgResponseTimeRecent30: number
 }
 
 export const channelApi = {
@@ -82,6 +84,6 @@ export const channelApi = {
     )
   },
   getUsageStats(id: number) {
-    return http.get<{ channel: Channel; modelStats: ModelUsageStat[] }>(`/channels/${id}/usage-stats`)
+    return http.get<{ channel: Channel; modelStats: ModelUsageStat[]; channelAvgResponseTimeRecent30: number }>(`/channels/${id}/usage-stats`)
   }
 }

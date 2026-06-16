@@ -23,6 +23,10 @@
         <div class="stat-label">输出 Token</div>
         <div class="stat-value">{{ formatTokens(totalCompletionTokens) }}</div>
       </div>
+      <div class="stat-item">
+        <div class="stat-label">近 30 次平均响应</div>
+        <div class="stat-value">{{ formatResponseTime(channelAvgResponseTimeRecent30) }}</div>
+      </div>
     </div>
 
     <div v-if="!models.length" class="empty-state">暂无模型数据</div>
@@ -35,6 +39,7 @@
             <th>状态</th>
             <th>请求次数</th>
             <th>Token 用量</th>
+            <th>近30次平均响应</th>
           </tr>
         </thead>
         <tbody>
@@ -58,6 +63,12 @@
               </template>
               <span v-else style="color:var(--text-muted);">-</span>
             </td>
+            <td style="text-align:right;font-variant-numeric:tabular-nums;">
+              <span v-if="getModelStat(m.modelName)?.avgResponseTimeRecent30" style="font-weight:600;">
+                {{ formatResponseTime(getModelStat(m.modelName)?.avgResponseTimeRecent30) }}
+              </span>
+              <span v-else style="color:var(--text-muted);">-</span>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -75,6 +86,7 @@ const router = useRouter()
 const channel = ref<Channel | null>(null)
 const models = ref<ChannelModel[]>([])
 const modelStats = ref<ModelUsageStat[]>([])
+const channelAvgResponseTimeRecent30 = ref<number>(0)
 
 /** 按模型名查找用量统计 */
 function getModelStat(modelName: string): ModelUsageStat | undefined {
@@ -112,6 +124,13 @@ function formatTokens(n: number | undefined): string {
   return n.toString()
 }
 
+/** 格式化响应时间：>=1000ms 显示秒，否则显示毫秒 */
+function formatResponseTime(ms: number | undefined): string {
+  if (ms == null || ms === 0) return '-'
+  if (ms >= 1000) return (ms / 1000).toFixed(2) + 's'
+  return Math.round(ms) + 'ms'
+}
+
 onMounted(async () => {
   const id = Number(route.params.id)
   try {
@@ -122,6 +141,7 @@ onMounted(async () => {
     channel.value = modelsRes.data.channel
     models.value = modelsRes.data.models
     modelStats.value = statsRes.data.modelStats
+    channelAvgResponseTimeRecent30.value = statsRes.data.channelAvgResponseTimeRecent30 ?? 0
   } catch (e: any) {
     alert('加载失败: ' + e.message)
     router.push('/admin/channel/list')
@@ -132,7 +152,7 @@ onMounted(async () => {
 <style scoped>
 .usage-summary {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 16px;
   padding: 16px 0;
   margin-bottom: 16px;

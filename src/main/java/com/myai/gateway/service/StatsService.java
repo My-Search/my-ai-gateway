@@ -76,11 +76,32 @@ public class StatsService {
         stats.put("avgResponseTime", Math.round(avgResponseTime));
         stats.put("successRate", Math.round(successRate * 10) / 10.0);
 
+        // 今日 token 用量汇总
+        long todayPromptTokens = todayLogs.stream()
+                .filter(l -> "success".equals(l.getPhase()))
+                .mapToLong(l -> l.getPromptTokens() != null ? l.getPromptTokens() : 0)
+                .sum();
+        long todayCompletionTokens = todayLogs.stream()
+                .filter(l -> "success".equals(l.getPhase()))
+                .mapToLong(l -> l.getCompletionTokens() != null ? l.getCompletionTokens() : 0)
+                .sum();
+        long todayTotalTokens = todayLogs.stream()
+                .filter(l -> "success".equals(l.getPhase()))
+                .mapToLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)
+                .sum();
+        Map<String, Object> tokenStats = new LinkedHashMap<>();
+        tokenStats.put("promptTokens", todayPromptTokens);
+        tokenStats.put("completionTokens", todayCompletionTokens);
+        tokenStats.put("totalTokens", todayTotalTokens);
+        stats.put("todayTokenStats", tokenStats);
+
         // 渠道排行（按请求数）
         stats.put("channelRank", buildChannelRank(todayLogs));
 
-        // 模型排行（按请求数）
-        stats.put("modelRank", buildModelRank(todayLogs));
+        // 模型排行（按请求数）- 入口模型（自定义模型名）
+        stats.put("modelRank", buildModelRank(todayLogs, false));
+        // 模型排行（按请求数）- 渠道模型（实际调用的渠道模型名）
+        stats.put("channelModelRank", buildModelRank(todayLogs, true));
 
         // 最近7天趋势
         List<Map<String, Object>> dailyTrend = buildDailyTrend(7);
@@ -141,18 +162,31 @@ public class StatsService {
     /**
      * 获取指定渠道下各模型的用量统计（用于渠道模型详情页展示）
      * 按 channel_model_name 聚合成功请求的 token 用量和请求次数
+     * 同时计算每个模型最近30次请求的平均响应时间，以及渠道整体最近30次的平均响应时间
      *
-     * @param channelId 渠道 ID（用于过滤，通过 channel_name 关联）
      * @param channelName 渠道名称
-     * @return List: [{ modelName, requestCount, promptTokens, completionTokens, totalTokens }]
+     * @return Map: { modelStats: List[{ modelName, requestCount, promptTokens, completionTokens, totalTokens, avgResponseTimeRecent30 }],
+     *                channelAvgResponseTimeRecent30: long }
      */
-    public List<Map<String, Object>> getChannelModelUsageStats(String channelName) {
+    public Map<String, Object> getChannelModelUsageStats(String channelName) {
+        // Token 统计仅按 success 聚合
         List<RequestLog> successLogs = requestLogMapper.selectList(
                 new LambdaQueryWrapper<RequestLog>()
                         .eq(RequestLog::getPhase, "success")
                         .eq(RequestLog::getChannelName, channelName)
                         .isNotNull(RequestLog::getChannelModelName)
                         .ne(RequestLog::getChannelModelName, ""));
+
+        // 响应时间按 success+fail 聚合（失败请求也有响应时间），按时间倒序用于截取最近 N 条
+        List<RequestLog> responseTimeLogs = requestLogMapper.selectList(
+                new LambdaQueryWrapper<RequestLog>()
+                        .in(RequestLog::getPhase, "success", "fail")
+                        .eq(RequestLog::getChannelName, channelName)
+                        .isNotNull(RequestLog::getChannelModelName)
+                        .ne(RequestLog::getChannelModelName, "")
+                        .isNotNull(RequestLog::getResponseTimeMs)
+                        .gt(RequestLog::getResponseTimeMs, 0)
+                        .orderByDesc(RequestLog::getCreatedAt));
 
         Map<String, Long> requestCounts = successLogs.stream()
                 .collect(Collectors.groupingBy(RequestLog::getChannelModelName, Collectors.counting()));
@@ -166,7 +200,29 @@ public class StatsService {
                 .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
                         Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
 
-        return requestCounts.entrySet().stream()
+        // 按模型分组（已按时间倒序），每组取最近 30 条计算平均响应时间
+        Map<String, List<RequestLog>> logsByModel = responseTimeLogs.stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelModelName));
+
+        Map<String, Long> modelAvgResponseTimeRecent30 = new LinkedHashMap<>();
+        for (Map.Entry<String, List<RequestLog>> entry : logsByModel.entrySet()) {
+            double avg = entry.getValue().stream()
+                    .limit(30)
+                    .mapToInt(RequestLog::getResponseTimeMs)
+                    .average()
+                    .orElse(0.0);
+            modelAvgResponseTimeRecent30.put(entry.getKey(), Math.round(avg));
+        }
+
+        // 渠道级：所有模型合在一起取最近 30 条的平均响应时间
+        long channelAvgResponseTimeRecent30 = Math.round(
+                responseTimeLogs.stream()
+                        .limit(30)
+                        .mapToInt(RequestLog::getResponseTimeMs)
+                        .average()
+                        .orElse(0.0));
+
+        List<Map<String, Object>> modelStatsList = requestCounts.entrySet().stream()
                 .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
                 .map(e -> {
                     Map<String, Object> item = new LinkedHashMap<>();
@@ -175,9 +231,15 @@ public class StatsService {
                     item.put("promptTokens", promptSums.getOrDefault(e.getKey(), 0L));
                     item.put("completionTokens", completionSums.getOrDefault(e.getKey(), 0L));
                     item.put("totalTokens", totalSums.getOrDefault(e.getKey(), 0L));
+                    item.put("avgResponseTimeRecent30", modelAvgResponseTimeRecent30.getOrDefault(e.getKey(), 0L));
                     return item;
                 })
                 .collect(Collectors.toList());
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("modelStats", modelStatsList);
+        result.put("channelAvgResponseTimeRecent30", channelAvgResponseTimeRecent30);
+        return result;
     }
 
     private List<Map<String, Object>> buildChannelRank(List<RequestLog> todayLogs) {
@@ -194,6 +256,12 @@ public class StatsService {
                 .collect(Collectors.groupingBy(RequestLog::getChannelName,
                         Collectors.averagingInt(RequestLog::getResponseTimeMs)));
 
+        // Token 用量按渠道聚合
+        Map<String, Long> channelTotalTokens = todayLogs.stream()
+                .filter(l -> "success".equals(l.getPhase()) && l.getChannelName() != null)
+                .collect(Collectors.groupingBy(RequestLog::getChannelName,
+                        Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
+
         return channelCounts.entrySet().stream()
                 .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
                 .limit(10)
@@ -203,19 +271,39 @@ public class StatsService {
                     item.put("requests", e.getValue());
                     item.put("success", channelSuccess.getOrDefault(e.getKey(), 0L));
                     item.put("avgTime", Math.round(channelAvgTime.getOrDefault(e.getKey(), 0.0)));
+                    item.put("totalTokens", channelTotalTokens.getOrDefault(e.getKey(), 0L));
                     return item;
                 })
                 .collect(Collectors.toList());
     }
 
-    private List<Map<String, Object>> buildModelRank(List<RequestLog> todayLogs) {
+    /**
+     * 构建模型排行
+     * @param todayLogs 今日日志
+     * @param byChannelModel true=按渠道模型名聚合，false=按入口模型名聚合
+     */
+    private List<Map<String, Object>> buildModelRank(List<RequestLog> todayLogs, boolean byChannelModel) {
+        // 提取分组 key 的辅助方法
+        java.util.function.Function<RequestLog, String> getKey = byChannelModel
+                ? l -> l.getChannelModelName()
+                : l -> l.getModelName();
+
         Map<String, Long> modelCounts = todayLogs.stream()
-                .filter(l -> "start".equals(l.getPhase()) && l.getModelName() != null)
-                .collect(Collectors.groupingBy(RequestLog::getModelName, Collectors.counting()));
+                .filter(l -> "start".equals(l.getPhase()))
+                .filter(l -> getKey.apply(l) != null)
+                .collect(Collectors.groupingBy(l -> getKey.apply(l), Collectors.counting()));
 
         Map<String, Long> modelSuccess = todayLogs.stream()
-                .filter(l -> "success".equals(l.getPhase()) && l.getModelName() != null)
-                .collect(Collectors.groupingBy(RequestLog::getModelName, Collectors.counting()));
+                .filter(l -> "success".equals(l.getPhase()))
+                .filter(l -> getKey.apply(l) != null)
+                .collect(Collectors.groupingBy(l -> getKey.apply(l), Collectors.counting()));
+
+        // Token 用量按模型聚合
+        Map<String, Long> modelTotalTokens = todayLogs.stream()
+                .filter(l -> "success".equals(l.getPhase()))
+                .filter(l -> getKey.apply(l) != null)
+                .collect(Collectors.groupingBy(l -> getKey.apply(l),
+                        Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
 
         return modelCounts.entrySet().stream()
                 .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
@@ -225,6 +313,7 @@ public class StatsService {
                     item.put("name", e.getKey());
                     item.put("requests", e.getValue());
                     item.put("success", modelSuccess.getOrDefault(e.getKey(), 0L));
+                    item.put("totalTokens", modelTotalTokens.getOrDefault(e.getKey(), 0L));
                     return item;
                 })
                 .collect(Collectors.toList());

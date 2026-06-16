@@ -9,8 +9,16 @@
         <div class="stat-body">
           <div class="stat-label">今日请求</div>
           <div class="stat-value">{{ stats.todayRequests ?? '-' }}</div>
-          <div class="stat-hint" v-if="(stats.yesterdayRequests ?? 0) > 0">昨日 {{ stats.yesterdayRequests }}</div>
-          <div class="stat-hint" v-else>昨日无数据</div>
+          <div class="stat-hint" v-if="(stats.yesterdayRequests ?? 0) > 0">
+            昨日 {{ stats.yesterdayRequests }}
+            <span class="hint-sep">|</span>
+            <SvgIcon name="token" :size="11" />
+            {{ formatTokens(stats.todayTokenStats?.totalTokens) }} tokens
+          </div>
+          <div class="stat-hint" v-else>
+            <SvgIcon name="token" :size="11" />
+            {{ formatTokens(stats.todayTokenStats?.totalTokens) }} tokens
+          </div>
         </div>
       </div>
       <div class="stat-card">
@@ -92,6 +100,7 @@
                 <span>{{ ch.requests }} 请求</span>
                 <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ ch.success }}</span>
                 <span v-if="ch.avgTime > 0" class="rank-meta-time">{{ ch.avgTime }}ms</span>
+                <span v-if="ch.totalTokens > 0" class="rank-meta-tokens">{{ formatTokens(ch.totalTokens) }} tokens</span>
               </div>
             </div>
             <div class="rank-bar-bg">
@@ -107,10 +116,14 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title"><SvgIcon name="model" :size="18" /> 今日模型排行</div>
+          <div class="tab-switch">
+            <button :class="['tab-btn', modelRankTab === 'entry' ? 'active' : '']" @click="modelRankTab = 'entry'">入口模型</button>
+            <button :class="['tab-btn', modelRankTab === 'channel' ? 'active' : '']" @click="modelRankTab = 'channel'">渠道模型</button>
+          </div>
         </div>
-        <div v-if="!stats.modelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">暂无数据</div>
+        <div v-if="!currentModelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">暂无数据</div>
         <div class="rank-list" v-else>
-          <div class="rank-item" v-for="(m, idx) in stats.modelRank" :key="m.name">
+          <div class="rank-item" v-for="(m, idx) in currentModelRank" :key="m.name">
             <div class="rank-pos" :class="idx === 0 ? 'gold' : idx === 1 ? 'silver' : idx === 2 ? 'bronze' : ''">
               {{ idx + 1 }}
             </div>
@@ -119,6 +132,7 @@
               <div class="rank-meta">
                 <span>{{ m.requests }} 请求</span>
                 <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ m.success }}</span>
+                <span v-if="m.totalTokens > 0" class="rank-meta-tokens">{{ formatTokens(m.totalTokens) }} tokens</span>
               </div>
             </div>
           </div>
@@ -149,10 +163,15 @@ import { ref, computed, onMounted } from 'vue'
 import { dashboardApi, type DashboardStats } from '@/api/dashboard'
 
 const stats = ref<DashboardStats>({} as DashboardStats)
+const modelRankTab = ref<'entry' | 'channel'>('entry')
 
 const maxReq = computed(() => {
   if (!stats.value.dailyTrend?.length) return 1
   return Math.max(...stats.value.dailyTrend.map(d => d.requests), 1)
+})
+
+const currentModelRank = computed(() => {
+  return modelRankTab.value === 'entry' ? stats.value.modelRank : stats.value.channelModelRank
 })
 
 function phaseLabel(phase: string) {
@@ -163,6 +182,14 @@ function phaseLabel(phase: string) {
 function formatTime(dateStr: string) {
   if (!dateStr) return ''
   return dateStr.substring(11, 16)
+}
+
+/** 格式化 token 数量，大数字用 K/M 缩写 */
+function formatTokens(n: number | undefined | null): string {
+  if (n == null || n === 0) return '0'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return n.toLocaleString()
 }
 
 onMounted(async () => {
@@ -206,6 +233,7 @@ onMounted(async () => {
 .stat-value.resource-value { font-size: 16px; line-height: 1.6; }
 .dot-sep { color: var(--text-muted); margin: 0 6px; }
 .stat-hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+.hint-sep { color: var(--border-color); margin: 0 4px; }
 
 /* Trend chart */
 .trend-chart { padding: 8px 0; }
@@ -234,8 +262,15 @@ onMounted(async () => {
 .rank-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rank-meta { font-size: 12px; color: var(--text-muted); display: flex; gap: 8px; margin-top: 3px; align-items: center; }
 .rank-meta-time { color: var(--text-muted); font-size: 11px; }
+.rank-meta-tokens { color: #ec4899; font-size: 11px; font-weight: 600; }
 .rank-bar-bg { width: 80px; height: 6px; background: var(--bg-primary); border-radius: 3px; overflow: hidden; flex-shrink: 0; min-width: 20px; }
 .rank-bar { height: 100%; background: var(--accent-blue); border-radius: 3px; transition: width 0.3s; min-width: 4px; }
+
+/* Tab switch */
+.tab-switch { display: flex; gap: 4px; background: var(--bg-primary); border-radius: 6px; padding: 2px; }
+.tab-btn { padding: 4px 10px; border: none; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 500; border-radius: 4px; cursor: pointer; transition: all 0.15s; }
+.tab-btn:hover { color: var(--text-primary); }
+.tab-btn.active { background: var(--bg-secondary); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
 
 /* Activity */
 .activity-list { display: flex; flex-direction: column; gap: 6px; }
@@ -251,6 +286,7 @@ onMounted(async () => {
 .phase-success { background: rgba(63,185,80,0.2); color: var(--accent-green); }
 .phase-fail { background: rgba(248,81,73,0.2); color: var(--accent-red); }
 
-@media (max-width: 1200px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 1400px) { .stats-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 1000px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 768px) { .stats-grid { grid-template-columns: 1fr; } }
 </style>

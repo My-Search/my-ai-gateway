@@ -307,7 +307,8 @@ public class AdminApiController {
 
     /**
      * 获取指定渠道的模型用量统计
-     * 返回该渠道下每个模型的 token 用量和请求次数
+     * 返回该渠道下每个模型的 token 用量、请求次数、最近30次平均响应时间
+     * 以及渠道整体最近30次平均响应时间
      */
     @GetMapping(value = "/channels/{id}/usage-stats", produces = "application/json;charset=UTF-8")
     public ResponseEntity<?> getChannelUsageStats(@PathVariable Long id) {
@@ -316,10 +317,11 @@ public class AdminApiController {
             if (channel == null) {
                 return ResponseEntity.status(404).body(Map.of("error", "渠道不存在"));
             }
-            List<Map<String, Object>> modelStats = statsService.getChannelModelUsageStats(channel.getName());
+            Map<String, Object> usageData = statsService.getChannelModelUsageStats(channel.getName());
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("channel", channel);
-            result.put("modelStats", modelStats);
+            result.put("modelStats", usageData.get("modelStats"));
+            result.put("channelAvgResponseTimeRecent30", usageData.get("channelAvgResponseTimeRecent30"));
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return ResponseEntity.ok(Map.of("error", e.getMessage()));
