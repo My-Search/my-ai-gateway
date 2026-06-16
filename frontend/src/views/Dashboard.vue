@@ -66,7 +66,10 @@
         <div class="card-header">
           <div class="card-title"><SvgIcon name="chart" :size="18" /> 7日请求趋势</div>
         </div>
-        <div class="trend-chart" v-if="stats.dailyTrend?.length">
+        <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
+          <span class="loading-spinner"></span> 加载中...
+        </div>
+        <div class="trend-chart" v-else-if="stats.dailyTrend?.length">
           <div class="trend-bars">
             <div class="trend-bar-col" v-for="day in stats.dailyTrend" :key="day.label">
               <div class="trend-bar-wrap">
@@ -86,7 +89,10 @@
         <div class="card-header">
           <div class="card-title"><SvgIcon name="rank" :size="18" /> 今日渠道排行</div>
         </div>
-        <div v-if="!stats.channelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">
+        <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
+          <span class="loading-spinner"></span> 加载中...
+        </div>
+        <div v-else-if="!stats.channelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">
           暂无数据，发起请求后将显示在此处
         </div>
         <div class="rank-list" v-else>
@@ -121,7 +127,10 @@
             <button :class="['tab-btn', modelRankTab === 'channel' ? 'active' : '']" @click="modelRankTab = 'channel'">渠道模型</button>
           </div>
         </div>
-        <div v-if="!currentModelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">暂无数据</div>
+        <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
+          <span class="loading-spinner"></span> 加载中...
+        </div>
+        <div v-else-if="!currentModelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">暂无数据</div>
         <div class="rank-list" v-else>
           <div class="rank-item" v-for="(m, idx) in currentModelRank" :key="m.name">
             <div class="rank-pos" :class="idx === 0 ? 'gold' : idx === 1 ? 'silver' : idx === 2 ? 'bronze' : ''">
@@ -144,7 +153,10 @@
           <div class="card-title"><SvgIcon name="clock" :size="18" /> 最近活动</div>
           <router-link to="/admin/log/list" class="btn btn-sm btn-secondary">查看全部 →</router-link>
         </div>
-        <div v-if="!stats.recentLogs?.length" style="text-align:center;padding:30px;color:var(--text-muted);">暂无活动记录</div>
+        <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
+          <span class="loading-spinner"></span> 加载中...
+        </div>
+        <div v-else-if="!stats.recentLogs?.length" style="text-align:center;padding:30px;color:var(--text-muted);">暂无活动记录</div>
         <div class="activity-list" v-else>
           <div class="activity-item" v-for="log in stats.recentLogs" :key="log.id">
             <span :class="'phase phase-' + log.phase">{{ phaseLabel(log.phase) }}</span>
@@ -163,6 +175,7 @@ import { ref, computed, onMounted } from 'vue'
 import { dashboardApi, type DashboardStats } from '@/api/dashboard'
 
 const stats = ref<DashboardStats>({} as DashboardStats)
+const loading = ref(true)
 const modelRankTab = ref<'entry' | 'channel'>('entry')
 
 const maxReq = computed(() => {
@@ -198,6 +211,8 @@ onMounted(async () => {
     stats.value = res.data
   } catch {
     // stats will show empty values
+  } finally {
+    loading.value = false
   }
 })
 </script>
@@ -289,4 +304,20 @@ onMounted(async () => {
 @media (max-width: 1400px) { .stats-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 1000px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 768px) { .stats-grid { grid-template-columns: 1fr; } }
+
+/* Loading spinner */
+.loading-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 </style>

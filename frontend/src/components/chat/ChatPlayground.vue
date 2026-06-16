@@ -137,6 +137,7 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, watch } from 'vue'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
+import { chat, chatStream } from '@/api/chat'
 
 /** 模型选项 */
 interface ModelOption {
@@ -189,26 +190,80 @@ async function loadApiKeys() {
   }
 }
 
-/** 恢复上次选择的模型 */
-function restoreSelectedModel() {
-  const savedModel = localStorage.getItem('playground_selected_model')
-  if (savedModel && props.models.some(m => m.modelName === savedModel)) {
-    selectedModel.value = savedModel
+/** 保存所有测试配置到 localStorage */
+function saveConfig() {
+  const config = {
+    selectedModel: selectedModel.value,
+    selectedApiKey: selectedApiKey.value,
+    temperature: temperature.value,
+    maxTokens: maxTokens.value,
+    streamEnabled: streamEnabled.value,
+  }
+  localStorage.setItem('playground_config', JSON.stringify(config))
+}
+
+/** 从 localStorage 恢复所有测试配置 */
+function restoreConfig() {
+  try {
+    const saved = localStorage.getItem('playground_config')
+    if (!saved) return
+    const config = JSON.parse(saved)
+
+    // 恢复模型（需在 models 加载后验证）
+    if (config.selectedModel && props.models.some(m => m.modelName === config.selectedModel)) {
+      selectedModel.value = config.selectedModel
+    }
+    // 恢复 API 密钥（需在 apiKeys 加载后验证，见 apiKeys watcher）
+    if (config.selectedApiKey) {
+      selectedApiKey.value = config.selectedApiKey
+    }
+    if (typeof config.temperature === 'number' && config.temperature >= 0 && config.temperature <= 2) {
+      temperature.value = config.temperature
+    }
+    if (typeof config.maxTokens === 'number' && config.maxTokens >= 1) {
+      maxTokens.value = config.maxTokens
+    }
+    if (typeof config.streamEnabled === 'boolean') {
+      streamEnabled.value = config.streamEnabled
+    }
+  } catch {
+    // ignore parse errors
   }
 }
 
-watch(selectedModel, (val) => {
-  if (val) {
-    localStorage.setItem('playground_selected_model', val)
-  } else {
-    localStorage.removeItem('playground_selected_model')
+/** 任一配置字段变化时自动保存 */
+watch([selectedModel, selectedApiKey, temperature, maxTokens, streamEnabled], () => {
+  saveConfig()
+}, { deep: false })
+
+/** models 加载完成后重新尝试恢复保存的模型选择 */
+watch(() => props.models.length, (len) => {
+  if (len > 0) {
+    const saved = localStorage.getItem('playground_config')
+    if (!saved) return
+    try {
+      const config = JSON.parse(saved)
+      if (config.selectedModel && props.models.some(m => m.modelName === config.selectedModel)) {
+        selectedModel.value = config.selectedModel
+      }
+    } catch { /* ignore */ }
+  }
+})
+
+/** apiKeys 加载完成后校验保存的 apiKey 是否仍有效 */
+watch(() => apiKeys.value.length, (len) => {
+  if (len > 0 && selectedApiKey.value) {
+    const savedKeyId = selectedApiKey.value
+    if (!apiKeys.value.some(k => k.id === savedKeyId)) {
+      selectedApiKey.value = 0
+    }
   }
 })
 
 onMounted(() => {
   loadApiKeys()
   if (!isShareMode.value) {
-    restoreSelectedModel()
+    restoreConfig()
   }
 })
 
@@ -260,21 +315,6 @@ function buildRequestBody() {
   return body
 }
 
-/** 获取聊天端点 URL */
-function getStreamUrl(): string {
-  if (isShareMode.value) {
-    return `/api/share/chat/stream?shareCode=${props.fixedShareCode}`
-  }
-  return '/admin/api/chat/stream'
-}
-
-function getNonStreamUrl(): string {
-  if (isShareMode.value) {
-    return `/api/share/chat?shareCode=${props.fixedShareCode}`
-  }
-  return '/admin/api/chat'
-}
-
 async function sendMessage() {
   const content = userInput.value.trim()
   if (!content || streaming.value || !selectedModel.value) return
@@ -309,11 +349,11 @@ async function sendMessage() {
 }
 
 async function sendStreamRequest(targetMsg: ChatMessage) {
-  const response = await fetch(getStreamUrl(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify(buildRequestBody())
-  })
+  const response = await chatStream(
+    buildRequestBody(),
+    isShareMode.value,
+    props.fixedShareCode
+  )
 
   if (!response.ok) {
     throw new Error('HTTP ' + response.status)
@@ -382,28 +422,27 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
 }
 
 async function sendNonStreamRequest(targetMsg: ChatMessage) {
-  const response = await fetch(getNonStreamUrl(), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json; charset=utf-8' },
-    body: JSON.stringify(buildRequestBody())
-  })
+  const res = await chat(
+    buildRequestBody(),
+    isShareMode.value,
+    props.fixedShareCode
+  )
 
-  const text = await response.text()
-  try {
-    const json = JSON.parse(text)
-    if (json.error) {
-      targetMsg.content = '错误: ' + (json.error.message || JSON.stringify(json.error))
-      return
+  if (!res.ok) {
+    throw new Error('HTTP ' + res.status)
+  }
+
+  const data = res.data
+  if (data.error) {
+    targetMsg.content = '错误: ' + (data.error.message || JSON.stringify(data.error))
+    return
+  }
+  if (data.choices?.[0]?.message?.content) {
+    targetMsg.content = data.choices[0].message.content
+    const usage = data.usage
+    if (usage) {
+      tokenUsage.value = `本轮: ${usage.total_tokens} tokens (prompt: ${usage.prompt_tokens}, completion: ${usage.completion_tokens})`
     }
-    if (json.choices?.[0]?.message?.content) {
-      targetMsg.content = json.choices[0].message.content
-      const usage = json.usage
-      if (usage) {
-        tokenUsage.value = `本轮: ${usage.total_tokens} tokens (prompt: ${usage.prompt_tokens}, completion: ${usage.completion_tokens})`
-      }
-    }
-  } catch {
-    targetMsg.content = text
   }
 }
 </script>
