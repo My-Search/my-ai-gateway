@@ -41,7 +41,6 @@
               <span class="format-desc">兼容 OpenAI API 格式</span>
             </button>
             <button
-              v-if="hasAnthropic"
               class="format-btn"
               :class="{ active: selectedFormat === 'anthropic' }"
               @click="selectedFormat = 'anthropic'"
@@ -164,13 +163,8 @@ const baseUrl = computed(() => shareData.value.baseUrl)
 // Toast
 const toast = ref({ show: false, message: '', type: 'success' })
 
-// 计算属性
-const hasAnthropic = computed(() => models.value.some(m => m.channelTypes?.includes('anthropic')))
-
-// 根据选择的接口格式过滤模型
-const filteredModels = computed(() => {
-  return models.value.filter(m => m.channelTypes?.includes(selectedFormat.value))
-})
+// 所有模型两种接口格式都可用（网关支持协议互转）
+const filteredModels = computed(() => models.value)
 
 // 当前接口格式的 Base URL
 const currentBaseUrl = computed(() => {
