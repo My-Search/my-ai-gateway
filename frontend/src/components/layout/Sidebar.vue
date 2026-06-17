@@ -1,7 +1,7 @@
 <template>
   <aside class="sidebar" :class="{ 'sidebar-open': isOpen }">
     <div class="sidebar-header">
-      <h1>AI Gateway</h1>
+      <h1>My AI Gateway</h1>
       <div class="subtitle">个人统一网关</div>
     </div>
     <nav class="sidebar-nav">

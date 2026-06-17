@@ -10,9 +10,9 @@
         <input id="keyName" v-model="form.keyName" class="form-control" placeholder="如：生产密钥" required />
       </div>
       <div class="form-group">
-        <label for="keyValue">密钥值 *</label>
-        <input id="keyValue" v-model="form.keyValue" class="form-control" :placeholder="isEdit ? '留空则不修改' : '请输入密钥值'" :required="!isEdit" />
-        <div class="form-hint">调用 API 时在 Authorization 头部使用 Bearer 此值</div>
+        <label for="keyValue">密钥值</label>
+        <input id="keyValue" v-model="form.keyValue" class="form-control" :placeholder="isEdit ? '留空则不修改' : '留空则自动生成'" />
+        <div class="form-hint">调用 API 时在 Authorization 头部使用 Bearer 此值，留空将自动生成</div>
       </div>
       <div class="form-group">
         <label for="enabled">状态</label>

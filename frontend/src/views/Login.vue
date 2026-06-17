@@ -18,7 +18,7 @@
       <div class="corner corner-bl"></div>
       <div class="corner corner-br"></div>
 
-      <h1>AI Gateway</h1>
+      <h1>My AI Gateway</h1>
       <div class="subtitle">个人统一AI网关 · 管理后台</div>
 
       <div v-if="loading" class="loading-text">正在检查登录状态...</div>
