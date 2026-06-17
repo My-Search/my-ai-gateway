@@ -992,8 +992,10 @@ public class RelayService {
             ObjectNode err = objectMapper.createObjectNode();
             err.put("error", message != null ? message : "Unknown stream error");
             emitter.send(SseEmitter.event().name("error").data(err.toString()));
+            emitter.complete();
         } catch (IOException e) {
             log.warn("Failed to send SSE error", e);
+            emitter.completeWithError(e);
         }
     }
 
