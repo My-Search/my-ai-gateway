@@ -52,8 +52,9 @@ export interface LogSseCallbacks {
 
 /** 订阅 SSE 日志流，返回 EventSource（外部负责 close） */
 export function subscribeLogStream(callbacks: LogSseCallbacks): EventSource {
-  // 使用与 axios 相同的 baseURL 路径
-  const es = new EventSource('/admin/api/logs/stream')
+  // EventSource 不支持自定义请求头，通过 query param 传递 JWT Token 用于认证
+  const token = localStorage.getItem('admin_token') || ''
+  const es = new EventSource(`/admin/api/logs/stream?token=${encodeURIComponent(token)}`)
 
   es.addEventListener('log', (event: MessageEvent) => {
     try {

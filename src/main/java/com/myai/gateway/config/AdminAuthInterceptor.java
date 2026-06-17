@@ -45,6 +45,15 @@ public class AdminAuthInterceptor implements HandlerInterceptor {
 
         // 其他 API 请求需要认证
         if (uri.startsWith("/admin/api/")) {
+
+            // SSE 端点支持通过 query param 传递 token（EventSource 不支持自定义请求头）
+            String tokenParam = request.getParameter("token");
+            if (tokenParam != null && !tokenParam.isEmpty()
+                    && jwtTokenProvider.validateToken(tokenParam)) {
+                String username = jwtTokenProvider.getUsernameFromToken(tokenParam);
+                request.setAttribute("adminUser", username);
+                return true;
+            }
             // 方式1：JWT Token 认证（优先级高）
             String authHeader = request.getHeader("Authorization");
             if (authHeader != null && authHeader.startsWith("Bearer ")) {
