@@ -1,5 +1,13 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { checkAuth } from '@/composables/useAuth'
+import { useLoadingStore } from '@/stores/loading'
+
+// 延迟显示加载模态，避免快速导航时闪烁
+const LOADING_SHOW_DELAY = 300 // 延迟显示（毫秒）
+// 延迟隐藏加载模态，避免页面刚渲染就消失导致的闪烁
+const LOADING_MIN_DURATION = 200 // 最小显示时长（毫秒）
+let loadingStartTime = 0
+let showLoadingTimer: ReturnType<typeof setTimeout> | null = null
 
 const router = createRouter({
   history: createWebHistory(),
@@ -139,8 +147,26 @@ const router = createRouter({
  * 因为全页跳转会销毁 SPA 实例，重建后可能因 cookie 时序导致死循环。
  */
 router.beforeEach(async (to, _from, next) => {
+  // 清除之前的延迟显示定时器
+  if (showLoadingTimer) {
+    clearTimeout(showLoadingTimer)
+    showLoadingTimer = null
+  }
+
+  // 延迟显示加载模态，避免快速切换时的闪烁
+  showLoadingTimer = setTimeout(() => {
+    const loadingStore = useLoadingStore()
+    loadingStore.show('页面加载中...')
+    loadingStartTime = Date.now()
+  }, LOADING_SHOW_DELAY)
+
   // 登录页始终放行
   if (to.path === '/login') {
+    // 取消延迟显示
+    if (showLoadingTimer) {
+      clearTimeout(showLoadingTimer)
+      showLoadingTimer = null
+    }
     next()
     return
   }
@@ -150,17 +176,47 @@ router.beforeEach(async (to, _from, next) => {
     try {
       const auth = await checkAuth()
       if (!auth.authenticated) {
+        // 取消延迟显示
+        if (showLoadingTimer) {
+          clearTimeout(showLoadingTimer)
+          showLoadingTimer = null
+        }
         // 客户端导航到登录页，避免全页刷新
         next({ path: '/login', replace: true })
         return
       }
     } catch {
+      // 取消延迟显示
+      if (showLoadingTimer) {
+        clearTimeout(showLoadingTimer)
+        showLoadingTimer = null
+      }
       next({ path: '/login', replace: true })
       return
     }
   }
 
   next()
+})
+
+/**
+ * 全局后置守卫：导航完成后隐藏加载模态
+ */
+router.afterEach(() => {
+  // 清除延迟显示定时器，防止加载模态在延迟期间被触发
+  if (showLoadingTimer) {
+    clearTimeout(showLoadingTimer)
+    showLoadingTimer = null
+  }
+
+  // 延迟隐藏，避免页面刚渲染就消失导致的闪烁
+  const elapsed = Date.now() - loadingStartTime
+  const delay = Math.max(0, LOADING_MIN_DURATION - elapsed)
+
+  setTimeout(() => {
+    const loadingStore = useLoadingStore()
+    loadingStore.hide()
+  }, delay)
 })
 
 /**

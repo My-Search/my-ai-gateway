@@ -10,6 +10,7 @@ declare module 'vue' {
     ChatPlayground: typeof import('./components/chat/ChatPlayground.vue')['default']
     Dialog: typeof import('./components/common/Dialog.vue')['default']
     Layout: typeof import('./components/layout/Layout.vue')['default']
+    LoadingModal: typeof import('./components/common/LoadingModal.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SearchableSelect: typeof import('./components/common/SearchableSelect.vue')['default']
