@@ -57,8 +57,13 @@ public class WebMvcConfig implements WebMvcConfigurer {
                         if (resourcePath.startsWith("admin/api/")) {
                             return null;
                         }
-                        // 否则返回 index.html (SPA fallback)
-                        return new ClassPathResource("/static/index.html");
+                        // SPA fallback: 返回 index.html
+                        Resource indexResource = new ClassPathResource("/static/index.html");
+                        if (indexResource.exists()) {
+                            return indexResource;
+                        }
+                        // 开发模式下前端可能未构建到 classpath，返回 null 让 Spring 处理
+                        return null;
                     }
                 });
     }

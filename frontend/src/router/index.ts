@@ -29,7 +29,7 @@ const router = createRouter({
       meta: { title: 'API 密钥分享', requiresAuth: false }
     },
     {
-      path: '/apikey/:keyValue',
+      path: '/share/:code',
       name: 'apikey-share',
       component: () => import('@/views/share/Index.vue'),
       meta: { title: 'API 密钥分享', requiresAuth: false }

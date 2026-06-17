@@ -137,8 +137,8 @@
       </div>
       <div class="form-group">
         <label for="keyValue">密钥值</label>
-        <input id="keyValue" v-model="form.keyValue" class="form-control" :placeholder="isEdit ? '留空则不修改' : '留空则自动生成'" />
-        <div class="form-hint">调用 API 时在 Authorization 头部使用 Bearer 此值，留空将自动生成</div>
+        <input id="keyValue" v-model="form.keyValue" class="form-control" :disabled="isEdit" :placeholder="isEdit ? '编辑时不可修改' : '留空则自动生成'" />
+        <div class="form-hint">调用 API 时在 Authorization 头部使用 Bearer 此值，{{ isEdit ? '密钥值创建后不可修改' : '留空将自动生成' }}</div>
       </div>
       <div class="form-group" style="margin-bottom:0;">
         <label for="enabled">状态</label>
@@ -208,7 +208,7 @@ function openForm(key?: ApiKey) {
     isEdit.value = true
     editId.value = key.id
     formDialogTitle.value = '编辑密钥'
-    form.value = { keyName: key.keyName, keyValue: '', enabled: key.enabled }
+    form.value = { keyName: key.keyName, keyValue: key.keyValue, enabled: key.enabled }
   } else {
     isEdit.value = false
     editId.value = null
@@ -230,7 +230,8 @@ async function handleSave() {
   saving.value = true
   try {
     const payload = { ...form.value }
-    if (isEdit.value && !payload.keyValue) {
+    // 编辑模式下密钥值不可修改
+    if (isEdit.value) {
       delete payload.keyValue
     }
     if (isEdit.value && editId.value) {
@@ -272,10 +273,15 @@ async function copyKey(val: string) {
 }
 
 /**
- * 复制分享链接（新格式：/apikey/{keyValue}）
+ * 复制分享链接（使用 shareCode 而非密钥值，避免密钥在网络传输中暴露）
  */
 function shareKey(key: ApiKey) {
-  const shareUrl = `${window.location.origin}/apikey/${encodeURIComponent(key.keyValue)}`
+  const code = key.shareCode || ''
+  if (!code) {
+    openDialog({ title: '提示', message: '分享码不存在，请重新开启分享' })
+    return
+  }
+  const shareUrl = `${window.location.origin}/share/${encodeURIComponent(code)}`
   navigator.clipboard.writeText(shareUrl).then(() => {
     showToastMsg('分享链接已复制')
   }).catch(() => {
@@ -294,7 +300,9 @@ async function enableShare(key: ApiKey) {
       openDialog({ title: '操作失败', message: res.data.error || '开启分享失败' })
       return
     }
+    // 使用后端返回的 shareCode 更新本地数据
     key.shared = 1
+    key.shareCode = res.data.shareCode || key.shareCode
     shareKey(key)
     // 刷新列表更新状态
     loadKeys()

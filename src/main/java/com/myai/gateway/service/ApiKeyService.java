@@ -38,7 +38,7 @@ public class ApiKeyService {
     }
 
     /**
-     * 根据分享码查找
+     * 根据分享码查找（仅返回已启用分享的密钥）
      */
     public ApiKey findByShareCode(String shareCode) {
         if (shareCode == null || shareCode.isBlank()) {
@@ -47,7 +47,8 @@ public class ApiKeyService {
         return apiKeyMapper.selectOne(
                 new LambdaQueryWrapper<ApiKey>()
                         .eq(ApiKey::getShareCode, shareCode)
-                        .eq(ApiKey::getEnabled, 1));
+                        .eq(ApiKey::getEnabled, 1)
+                        .eq(ApiKey::getShared, 1));
     }
 
     /**
@@ -75,16 +76,21 @@ public class ApiKeyService {
     }
 
     /**
-     * 切换分享状态
+     * 切换分享状态，返回更新后的密钥
      */
     @Transactional
-    public void toggleShare(Long id, boolean shared) {
+    public ApiKey toggleShare(Long id, boolean shared) {
         ApiKey key = apiKeyMapper.selectById(id);
         if (key != null) {
             key.setShared(shared ? 1 : 0);
+            // 启用分享时，如果没有分享码则自动生成
+            if (shared && (key.getShareCode() == null || key.getShareCode().isBlank())) {
+                key.setShareCode(generateShareCode());
+            }
             key.setUpdatedAt(LocalDateTime.now());
             apiKeyMapper.updateById(key);
         }
+        return key;
     }
 
     @Transactional

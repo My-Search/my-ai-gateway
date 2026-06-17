@@ -11,8 +11,8 @@
       </div>
       <div class="form-group">
         <label for="keyValue">密钥值</label>
-        <input id="keyValue" v-model="form.keyValue" class="form-control" :placeholder="isEdit ? '留空则不修改' : '留空则自动生成'" />
-        <div class="form-hint">调用 API 时在 Authorization 头部使用 Bearer 此值，留空将自动生成</div>
+        <input id="keyValue" v-model="form.keyValue" class="form-control" :disabled="isEdit" :placeholder="isEdit ? '编辑时不可修改' : '留空则自动生成'" />
+        <div class="form-hint">调用 API 时在 Authorization 头部使用 Bearer 此值，{{ isEdit ? '密钥值创建后不可修改' : '留空将自动生成' }}</div>
       </div>
       <div class="form-group">
         <label for="enabled">状态</label>
@@ -93,8 +93,8 @@ async function handleSave() {
   saving.value = true
   try {
     const payload = { ...form.value }
-    // 编辑模式可以空着 keyValue 不修改
-    if (isEdit.value && !payload.keyValue) {
+    // 编辑模式下密钥值不可修改
+    if (isEdit.value) {
       delete payload.keyValue
     }
     if (isEdit.value) {

@@ -160,7 +160,6 @@ const shareData = ref<ShareData>({
 })
 const models = computed(() => shareData.value.models)
 const baseUrl = computed(() => shareData.value.baseUrl)
-const isByKeyRoute = computed(() => route.name === 'apikey-share')
 
 // Toast
 const toast = ref({ show: false, message: '', type: 'success' })
@@ -189,26 +188,18 @@ const windowLocationOrigin = window.location.origin
 
 // 生命周期
 onMounted(async () => {
-  const keyValue = route.params.keyValue as string
   const shareCode = route.params.code as string
 
-  if (!keyValue && !shareCode) {
+  if (!shareCode) {
     error.value = '无效的分享链接'
     loading.value = false
     return
   }
 
   try {
-    // 根据路由选择不同的 API 调用
-    if (keyValue) {
-      // 新路由 /apikey/:keyValue
-      const res = await shareApi.getShareInfoByKey(keyValue)
-      shareData.value = res.data
-    } else {
-      // 旧路由 /share/apikey/:code（兼容已有分享链接）
-      const res = await shareApi.getShareInfo(shareCode)
-      shareData.value = res.data
-    }
+    // 通过分享码获取密钥信息（分享码在 URL 中不暴露密钥值）
+    const res = await shareApi.getShareInfo(shareCode)
+    shareData.value = res.data
     loading.value = false
   } catch (e: any) {
     error.value = e.message || '加载失败'

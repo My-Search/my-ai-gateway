@@ -725,9 +725,12 @@ public class AdminApiController {
         Map<String, Object> result = new LinkedHashMap<>();
         try {
             boolean shared = body.containsKey("shared") && Boolean.TRUE.equals(body.get("shared"));
-            apiKeyService.toggleShare(id, shared);
+            ApiKey updated = apiKeyService.toggleShare(id, shared);
             result.put("success", true);
             result.put("shared", shared);
+            if (shared && updated != null) {
+                result.put("shareCode", updated.getShareCode());
+            }
         } catch (Exception e) {
             result.put("success", false);
             result.put("error", e.getMessage());
