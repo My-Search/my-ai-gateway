@@ -105,7 +105,8 @@
               <span v-else-if="routingProgress.phase === 'switching'">切换候选：{{ routingProgress.message }}，尝试下一渠道…</span>
             </div>
             <div class="chat-bubble" :class="{ 'cursor-blink': idx === messages.length - 1 && streaming }">
-              {{ msg.content }}
+              <div v-if="msg.role === 'assistant'" class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
+              <template v-else>{{ msg.content }}</template>
             </div>
             <div v-if="msg.meta" class="chat-meta" v-html="msg.meta"></div>
           </div>
@@ -119,16 +120,6 @@
       <div class="chat-input-area">
         <textarea v-model="userInput" class="form-control" placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
                   :rows="compact ? 2 : 3" @keydown="handleKeydown"></textarea>
-        <div class="input-actions">
-          <label class="stream-toggle">
-            <input type="checkbox" v-model="streamEnabled" /> 流式输出
-          </label>
-          <button class="btn btn-primary" :disabled="!userInput.trim() || streaming" @click="sendMessage">
-            <span>
-              <SvgIcon name="send" :size="14" /> {{ streaming ? '生成中...' : '发送' }}
-            </span>
-          </button>
-        </div>
       </div>
     </div>
   </div>
@@ -137,7 +128,8 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted, watch } from 'vue'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
-import { chat, chatStream } from '@/api/chat'
+import { chatStream } from '@/api/chat'
+import { marked } from 'marked'
 
 /** 模型选项 */
 interface ModelOption {
@@ -171,7 +163,6 @@ const selectedModel = ref('')
 const selectedApiKey = ref(0)
 const temperature = ref(0.7)
 const maxTokens = ref(2048)
-const streamEnabled = ref(true)
 const userInput = ref('')
 const messages = ref<ChatMessage[]>([])
 const streaming = ref(false)
@@ -197,7 +188,6 @@ function saveConfig() {
     selectedApiKey: selectedApiKey.value,
     temperature: temperature.value,
     maxTokens: maxTokens.value,
-    streamEnabled: streamEnabled.value,
   }
   localStorage.setItem('playground_config', JSON.stringify(config))
 }
@@ -223,16 +213,13 @@ function restoreConfig() {
     if (typeof config.maxTokens === 'number' && config.maxTokens >= 1) {
       maxTokens.value = config.maxTokens
     }
-    if (typeof config.streamEnabled === 'boolean') {
-      streamEnabled.value = config.streamEnabled
-    }
   } catch {
     // ignore parse errors
   }
 }
 
 /** 任一配置字段变化时自动保存 */
-watch([selectedModel, selectedApiKey, temperature, maxTokens, streamEnabled], () => {
+watch([selectedModel, selectedApiKey, temperature, maxTokens], () => {
   saveConfig()
 }, { deep: false })
 
@@ -333,11 +320,7 @@ async function sendMessage() {
   await scrollToBottom()
 
   try {
-    if (streamEnabled.value) {
-      await sendStreamRequest(assistantMsg)
-    } else {
-      await sendNonStreamRequest(assistantMsg)
-    }
+    await sendStreamRequest(assistantMsg)
   } catch (e: any) {
     assistantMsg.content = '请求失败: ' + e.message
     assistantMsg.role = 'system-msg'
@@ -421,28 +404,13 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
   tokenUsage.value = `本轮: ${tokenNum} tokens / ${elapsed}s`
 }
 
-async function sendNonStreamRequest(targetMsg: ChatMessage) {
-  const res = await chat(
-    buildRequestBody(),
-    isShareMode.value,
-    props.fixedShareCode
-  )
-
-  if (!res.ok) {
-    throw new Error('HTTP ' + res.status)
-  }
-
-  const data = res.data
-  if (data.error) {
-    targetMsg.content = '错误: ' + (data.error.message || JSON.stringify(data.error))
-    return
-  }
-  if (data.choices?.[0]?.message?.content) {
-    targetMsg.content = data.choices[0].message.content
-    const usage = data.usage
-    if (usage) {
-      tokenUsage.value = `本轮: ${usage.total_tokens} tokens (prompt: ${usage.prompt_tokens}, completion: ${usage.completion_tokens})`
-    }
+/** 将 Markdown 渲染为安全的 HTML */
+function renderMarkdown(text: string): string {
+  if (!text) return ''
+  try {
+    return (marked.parse(text, { async: false }) as string).trimEnd()
+  } catch {
+    return text
   }
 }
 </script>
@@ -561,14 +529,6 @@ async function sendNonStreamRequest(targetMsg: ChatMessage) {
 .chat-input-area { margin-top: 4px; }
 .chat-input-area textarea { resize: none; }
 
-.input-actions {
-  display: flex; gap: 8px; margin-top: 8px;
-  justify-content: flex-end; align-items: center;
-}
-.stream-toggle {
-  display: flex; align-items: center; gap: 4px;
-  font-size: 13px; color: var(--text-secondary); cursor: pointer;
-}
 .btn-quick {
   font-size: 12px; padding: 4px 12px;
   font-weight: 600; letter-spacing: 0.5px;
@@ -645,5 +605,116 @@ async function sendNonStreamRequest(targetMsg: ChatMessage) {
     flex: 1;
     min-height: 0;
   }
+}
+</style>
+
+<style>
+/* Markdown 渲染样式（v-html 注入内容，无法用 scoped，故使用全局 style block）
+ *
+ * 间距策略：块级元素用 margin-bottom 自然间隔，首尾清零，flow-root 防崩塌 */
+.chat-playground .markdown-body {
+  line-height: 1.6;
+  word-wrap: break-word;
+  white-space: normal;    /* 覆写父级 pre-wrap，防止 marked 输出的换行文本节点被渲染 */
+  display: flow-root;
+}
+/* —— 首尾清零 —— */
+.chat-playground .markdown-body > *:first-child { margin-top: 0; }
+.chat-playground .markdown-body > *:last-child  { margin-bottom: 0; }
+/* —— 段落 —— */
+.chat-playground .markdown-body p { margin: 0 0 10px; }
+/* —— 标题 —— */
+.chat-playground .markdown-body h1,
+.chat-playground .markdown-body h2,
+.chat-playground .markdown-body h3,
+.chat-playground .markdown-body h4 {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.chat-playground .markdown-body h1 { font-size: 18px; }
+.chat-playground .markdown-body h2 { font-size: 16px; }
+.chat-playground .markdown-body h3 { font-size: 15px; }
+.chat-playground .markdown-body h4 { font-size: 14px; }
+/* —— 列表 —— */
+.chat-playground .markdown-body ul,
+.chat-playground .markdown-body ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+.chat-playground .markdown-body li { margin-bottom: 4px; }
+.chat-playground .markdown-body li:last-child { margin-bottom: 0; }
+/* —— 代码块 —— */
+.chat-playground .markdown-body pre {
+  margin: 0 0 12px;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  border-radius: 8px;
+  padding: 12px 16px;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.chat-playground .markdown-body code {
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+}
+.chat-playground .markdown-body p > code,
+.chat-playground .markdown-body li > code {
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--accent-blue, #58a6ff);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12.5px;
+}
+.chat-playground .markdown-body pre code {
+  background: none;
+  padding: 0;
+  color: inherit;
+  font-size: 13px;
+}
+/* —— 引用 —— */
+.chat-playground .markdown-body blockquote {
+  margin: 0 0 10px;
+  padding: 4px 12px;
+  border-left: 3px solid var(--accent-purple, #a78bfa);
+  color: var(--text-muted, #888);
+  background: rgba(167, 139, 250, 0.06);
+  border-radius: 0 4px 4px 0;
+}
+/* —— 表格 —— */
+.chat-playground .markdown-body table {
+  margin: 0 0 10px;
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+.chat-playground .markdown-body th,
+.chat-playground .markdown-body td {
+  border: 1px solid var(--border-color, #333);
+  padding: 6px 10px;
+  text-align: left;
+}
+.chat-playground .markdown-body th {
+  background: rgba(88, 166, 255, 0.08);
+  font-weight: 600;
+}
+/* —— 分割线 —— */
+.chat-playground .markdown-body hr {
+  margin: 0 0 10px;
+  border: none;
+  border-top: 1px solid var(--border-color, #333);
+}
+/* —— 链接与图片 —— */
+.chat-playground .markdown-body a {
+  color: var(--accent-blue, #58a6ff);
+  text-decoration: underline;
+}
+.chat-playground .markdown-body img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+.chat-playground .markdown-body strong {
+  font-weight: 600;
 }
 </style>
