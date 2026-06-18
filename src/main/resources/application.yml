@@ -9,10 +9,6 @@ server:
   tomcat:
     socket:
       buffer: 1024
-  # SSE 流式优化：确保 data 不被缓冲，每次 flush 即时发送
-  compression:
-    enabled: true
-    mime-types: text/html,text/xml,text/plain,application/json,application/javascript,text/css
 
 spring:
   application:
