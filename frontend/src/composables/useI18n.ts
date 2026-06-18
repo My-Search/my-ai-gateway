@@ -15,14 +15,21 @@ const messages: Record<string, Record<string, string>> = {
  * ```ts
  * const { t } = useI18n()
  * t('nav.overview') // → '概览' / 'Overview'
+ * t('log.list.retry', { count: 3 }) // → '重试 3'
  * ```
  */
 export function useI18n() {
   const localeStore = useLocaleStore()
 
-  function t(key: string, fallback?: string): string {
+  function t(key: string, params?: Record<string, string | number>): string {
     const lang = localeStore.locale
-    return messages[lang]?.[key] ?? fallback ?? key
+    let text = messages[lang]?.[key] ?? key
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        text = text.replace(`{${k}}`, String(v))
+      }
+    }
+    return text
   }
 
   return { t }

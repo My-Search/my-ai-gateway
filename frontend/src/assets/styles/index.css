@@ -12,16 +12,16 @@
   --accent-cyan: #56b6c2;
 }
 
-/* ── Dark theme (fully dark) ── */
+/* ── Dark theme (pure deep black) ── */
 [data-theme="dark"] {
-  --bg-primary: #050508;
-  --bg-secondary: #111113;
-  --bg-tertiary: #1a1a1d;
-  --bg-hover: #232326;
-  --border-color: #2c2c2e;
-  --text-primary: #f5f5f7;
-  --text-secondary: #98989d;
-  --text-muted: #636366;
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-tertiary: #141414;
+  --bg-hover: #1e1e1e;
+  --border-color: #282828;
+  --text-primary: #f5f5f5;
+  --text-secondary: #a3a3a3;
+  --text-muted: #6b6b6b;
 }
 
 /* ── Light theme ── */
