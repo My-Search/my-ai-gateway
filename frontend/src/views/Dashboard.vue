@@ -253,14 +253,31 @@ onMounted(async () => {
 .stat-hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
 .hint-sep { color: var(--border-color); margin: 0 4px; }
 
-/* Trend chart */
-.trend-chart { padding: 8px 0; }
-.trend-bars { display: flex; align-items: flex-end; gap: 8px; height: 120px; }
+/* Trend chart fill card */
+.grid-2 > .card:first-child {
+  display: flex;
+  flex-direction: column;
+}
+.trend-chart {
+  flex: 1;
+  display: flex;
+  padding: 4px 0;
+  min-height: 100px;
+}
+.trend-bars {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 0 12px;
+  position: relative;
+  z-index: 1;
+}
 .trend-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; }
 .trend-bar-wrap { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
 .trend-bar {
   width: 70%;
-  background: linear-gradient(180deg, var(--accent-blue), rgba(88,166,255,0.3));
+  background: linear-gradient(180deg, var(--accent-blue), rgba(88,166,255,0.7));
   border-radius: 4px 4px 0 0;
   min-height: 2px;
   transition: height 0.3s;
@@ -268,8 +285,34 @@ onMounted(async () => {
 .trend-label { font-size: 12px; color: var(--text-secondary); margin-top: 6px; font-weight: 500; }
 .trend-count { font-size: 11px; color: var(--text-primary); font-weight: 600; }
 
-/* Rank */
-.rank-list { display: flex; flex-direction: column; gap: 8px; }
+/* Rank channel card scroll */
+.grid-2 > .card:last-child {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.rank-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+}
+.rank-list::-webkit-scrollbar {
+  width: 5px;
+}
+.rank-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.rank-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 40%, transparent);
+  border-radius: 3px;
+}
+.rank-list::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
 .rank-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; background: var(--bg-tertiary); transition: background 0.15s; }
 .rank-item:hover { background: var(--bg-hover); }
 .rank-pos { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; }
