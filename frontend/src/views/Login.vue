@@ -42,7 +42,7 @@
             <input id="confirmPassword" v-model="confirmPassword" type="password" class="form-control" placeholder="请再次输入密码" required />
           </div>
           <button type="submit" class="btn btn-primary" style="width:100%;padding:14px;font-size:14px;letter-spacing:2px;">
-            创 建 账 号
+            <SvgIcon name="rocket" :size="16" /> 创 建 账 号
           </button>
         </form>
 
@@ -57,7 +57,7 @@
             <input id="password" v-model="password" type="password" class="form-control" placeholder="请输入密码" required />
           </div>
           <button type="submit" class="btn btn-primary" style="width:100%;padding:14px;font-size:14px;letter-spacing:2px;">
-            登 录
+            <SvgIcon name="key" :size="16" /> 登 录
           </button>
         </form>
       </template>

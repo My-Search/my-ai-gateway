@@ -2,7 +2,7 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">{{ isEdit ? '编辑密钥' : '添加密钥' }}</div>
-      <router-link to="/admin/apikey/list" class="btn btn-secondary">返回列表</router-link>
+      <router-link to="/admin/apikey/list" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> 返回列表</router-link>
     </div>
     <form @submit.prevent="handleSave" style="max-width:600px;">
       <div class="form-group">
@@ -22,8 +22,8 @@
         </select>
       </div>
       <div style="display:flex;gap:8px;margin-top:24px;">
-        <button type="submit" class="btn btn-primary" :disabled="saving">{{ saving ? '保存中...' : '保存' }}</button>
-        <router-link to="/admin/apikey/list" class="btn btn-secondary">取消</router-link>
+        <button type="submit" class="btn btn-primary" :disabled="saving"><SvgIcon name="check" :size="14" /> {{ saving ? '保存中...' : '保存' }}</button>
+        <router-link to="/admin/apikey/list" class="btn btn-secondary"><SvgIcon name="x" :size="14" /> 取消</router-link>
       </div>
     </form>
   </div>

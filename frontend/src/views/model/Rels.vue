@@ -2,7 +2,7 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">模型关联 - {{ model?.modelName }}</div>
-      <router-link :to="'/admin/model/list'" class="btn btn-secondary">返回列表</router-link>
+      <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> 返回列表</router-link>
     </div>
 
     <div class="action-bar">
@@ -15,9 +15,9 @@
           :width="300"
           :dropdown-width="500"
         />
-        <button class="btn btn-primary btn-sm" :disabled="selectedModelIds.length === 0" @click="addRel">添加关联</button>
+        <button class="btn btn-primary btn-sm" :disabled="selectedModelIds.length === 0" @click="addRel"><SvgIcon name="link" :size="14" /> 添加关联</button>
         <button v-if="isDirty" class="btn btn-primary btn-sm" :disabled="isSaving" @click="saveOrder">
-          {{ isSaving ? '保存中...' : '保存顺序' }}
+          <SvgIcon name="check" :size="14" /> {{ isSaving ? '保存中...' : '保存顺序' }}
         </button>
       </div>
     </div>
@@ -47,7 +47,7 @@
             <td>{{ rel.channelName }}</td>
             <td><code class="model-tag">{{ rel.channelModelName }}</code></td>
             <td>
-              <button class="btn btn-sm btn-danger" @click="removeRel(rel)">删除</button>
+              <button class="btn btn-sm btn-danger" @click="removeRel(rel)"><SvgIcon name="trash" :size="14" /> 删除</button>
             </td>
           </tr>
           <tr v-if="!rels.length">

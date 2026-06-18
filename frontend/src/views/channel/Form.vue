@@ -2,7 +2,7 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">{{ isEdit ? '编辑渠道' : '添加渠道' }}</div>
-      <router-link to="/admin/channel/list" class="btn btn-secondary">返回列表</router-link>
+      <router-link to="/admin/channel/list" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> 返回列表</router-link>
     </div>
 
     <form @submit.prevent="handleSave" style="max-width:600px;">
@@ -36,7 +36,7 @@
         <div class="api-keys-list">
           <div v-for="(ak, idx) in apiKeys" :key="idx" class="api-key-item">
             <span style="flex:1;font-size:13px;"><strong>{{ ak.keyName }}</strong>: {{ maskKey(ak.apiKey) }}</span>
-            <button type="button" class="btn btn-sm btn-danger" @click="removeApiKey(idx)">删除</button>
+            <button type="button" class="btn btn-sm btn-danger" @click="removeApiKey(idx)"><SvgIcon name="trash" :size="14" /> 删除</button>
           </div>
           <div v-if="!apiKeys.length" style="color:var(--text-muted);font-size:13px;padding:8px 0;">
             暂无 API Key，点击下方按钮添加
@@ -67,7 +67,7 @@
           </button>
           <div class="toolbar-right">
             <span class="model-stats">共 {{ models.length }} 个</span>
-            <button v-if="models.length" type="button" class="btn btn-danger btn-sm" @click="clearAllModels">清理全部</button>
+            <button v-if="models.length" type="button" class="btn btn-danger btn-sm" @click="clearAllModels"><SvgIcon name="trash" :size="14" /> 清理全部</button>
           </div>
         </div>
         <div class="model-tags-container">
@@ -85,9 +85,9 @@
 
       <div style="display:flex;gap:8px;margin-top:24px;">
         <button type="submit" class="btn btn-primary" :disabled="saving">
-          {{ saving ? '保存中...' : '保存' }}
+          <SvgIcon name="check" :size="14" /> {{ saving ? '保存中...' : '保存' }}
         </button>
-        <router-link to="/admin/channel/list" class="btn btn-secondary">取消</router-link>
+        <router-link to="/admin/channel/list" class="btn btn-secondary"><SvgIcon name="x" :size="14" /> 取消</router-link>
       </div>
     </form>
 
@@ -106,8 +106,8 @@
                  @keydown.enter.prevent="confirmAddModel" />
         </div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" @click="showAddModel = false">取消</button>
-          <button class="btn btn-primary" @click="confirmAddModel">确认添加</button>
+          <button class="btn btn-secondary" @click="showAddModel = false"><SvgIcon name="x" :size="14" /> 取消</button>
+          <button class="btn btn-primary" @click="confirmAddModel"><SvgIcon name="check" :size="14" /> 确认添加</button>
         </div>
       </div>
     </div>

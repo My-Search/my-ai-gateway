@@ -563,6 +563,64 @@ public class RelayService {
     }
 
     /**
+     * 渠道模型快速测试 — 走网关中继而非直接构造 HTTP 请求
+     * <p>
+     * 复用 RelayService 的 WebClient、请求头构建逻辑和错误处理，
+     * 与 Playground 的 "/admin/api/chat" 走相同的技术栈，
+     * 确保测试结果与真实请求一致。
+     *
+     * @param channel      渠道
+     * @param channelModel 渠道模型
+     * @param apiKey       渠道 API Key
+     * @param message      测试消息
+     * @return 上游原始响应体
+     */
+    public String testChannelModel(Channel channel, ChannelModel channelModel, ChannelApiKey apiKey, String message) {
+        String provider = channel.getChannelType();
+        // 构建端点（复用 buildEndpoint 的逻辑，但直接使用原始参数）
+        String baseUrl = channel.getBaseUrl();
+        if (baseUrl == null || baseUrl.isBlank()) {
+            baseUrl = "anthropic".equals(provider) ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1";
+        }
+        baseUrl = baseUrl.replaceAll("/$", "");
+        String path = "anthropic".equals(provider) ? "/messages" : "/chat/completions";
+        String endpoint = baseUrl + path;
+
+        // 构建请求头（复用 buildProviderHeaders，已含 Content-Type）
+        Map<String, String> headers = buildProviderHeaders(provider, apiKey.getApiKey(), null);
+
+        // 构建请求体
+        String requestBody = "anthropic".equals(provider)
+                ? "{\"model\":\"" + channelModel.getModelName() + "\",\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"" + message + "\"}]}"
+                : "{\"model\":\"" + channelModel.getModelName() + "\",\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"" + message + "\"}]}";
+
+        log.info("渠道模型测试: channel={}, model={}, key={}, endpoint={}",
+                channel.getName(), channelModel.getModelName(), apiKey.getKeyName(), endpoint);
+
+        try {
+            return webClient.post()
+                    .uri(endpoint)
+                    .headers(h -> headers.forEach(h::add))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(BodyInserters.fromValue(requestBody))
+                    .exchangeToMono(resp -> resp.bodyToMono(String.class)
+                            .flatMap(body -> {
+                                if (resp.statusCode().is2xxSuccessful()) {
+                                    return Mono.just(body);
+                                }
+                                log.warn("渠道模型测试失败: status={}, channel={}, model={}, key={}",
+                                        resp.statusCode(), channel.getName(), channelModel.getModelName(), apiKey.getKeyName());
+                                return Mono.error(new RuntimeException("渠道测试失败: " + resp.statusCode() + " body: " + body));
+                            }))
+                    .block(java.time.Duration.ofSeconds(30));
+        } catch (Exception e) {
+            log.error("渠道模型测试异常: channel={}, model={}: {}",
+                    channel.getName(), channelModel.getModelName(), e.getMessage());
+            throw e;
+        }
+    }
+
+    /**
      * 构建 _gateway_meta SSE 事件，包含渠道类型、渠道名、模型名等信息
      */
     private SseEvent buildGatewayMetaEvent(RoutingCandidate candidate) {

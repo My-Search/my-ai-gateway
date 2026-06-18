@@ -2,7 +2,7 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">自定义模型列表</div>
-      <router-link to="/admin/model/form" class="btn btn-primary">+ 添加模型</router-link>
+      <router-link to="/admin/model/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> 添加模型</router-link>
     </div>
     <div class="table-container">
       <table>
@@ -32,10 +32,10 @@
               </span>
             </td>
             <td>
-              <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary">管理关联</router-link>
+              <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> 管理关联</router-link>
             </td>
             <td>
-              <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary">配置</router-link>
+              <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="zap" :size="14" /> 配置</router-link>
             </td>
             <td>
               <span v-if="m.enabled === 1" class="badge badge-success">启用</span>
@@ -44,8 +44,8 @@
             <td style="font-size:12px;color:var(--text-muted);">{{ m.createdAt }}</td>
             <td>
               <div style="display:flex;gap:6px;">
-                <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary">编辑</router-link>
-                <button class="btn btn-sm btn-danger" @click="confirmDelete(m)">删除</button>
+                <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> 编辑</router-link>
+                <button class="btn btn-sm btn-danger" @click="confirmDelete(m)"><SvgIcon name="trash" :size="14" /> 删除</button>
               </div>
             </td>
           </tr>
@@ -79,10 +79,10 @@
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
-          <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary">管理关联</router-link>
-          <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary">配置</router-link>
-          <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary">编辑</router-link>
-          <button class="btn btn-sm btn-danger" @click="confirmDelete(m)">删除</button>
+          <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> 管理关联</router-link>
+          <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="zap" :size="14" /> 配置</router-link>
+          <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> 编辑</router-link>
+          <button class="btn btn-sm btn-danger" @click="confirmDelete(m)"><SvgIcon name="trash" :size="14" /> 删除</button>
         </div>
       </div>
     </div>

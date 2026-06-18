@@ -9,7 +9,7 @@
         <button class="btn btn-sm btn-secondary" @click="loadLogs" :disabled="loading">
           <SvgIcon name="refresh" :size="14" /> 刷新
         </button>
-        <button class="btn btn-sm btn-danger" @click="cleanLogs">清理旧日志</button>
+        <button class="btn btn-sm btn-danger" @click="cleanLogs"><SvgIcon name="trash" :size="14" /> 清理旧日志</button>
       </div>
     </div>
     <div v-if="loading" style="text-align:center;padding:40px;color:var(--text-muted);">加载中...</div>

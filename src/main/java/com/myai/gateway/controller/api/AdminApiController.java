@@ -413,6 +413,15 @@ public class AdminApiController {
                 result.put("error", "渠道不存在");
                 return ResponseEntity.ok(result);
             }
+
+            // 获取渠道的第一个可用 API Key（优先从 channel_api_keys 表获取）
+            ChannelApiKey availableKey = channelApiKeyService.getAvailableApiKey(channel.getId());
+            if (availableKey == null) {
+                result.put("success", false);
+                result.put("error", "渠道没有可用的 API Key，请先添加 API Key");
+                return ResponseEntity.ok(result);
+            }
+
             List<ChannelModel> models = channelService.getChannelModels(id);
             if (models.isEmpty()) {
                 result.put("success", false);
@@ -420,38 +429,22 @@ public class AdminApiController {
                 return ResponseEntity.ok(result);
             }
 
-            var webClient = org.springframework.web.reactive.function.client.WebClient.builder()
-                    .codecs(config -> config.defaultCodecs().maxInMemorySize(5 * 1024 * 1024))
-                    .build();
-
-            String testModel = models.get(0).getModelName();
-            String baseUrl = channel.getBaseUrl();
-            if (baseUrl != null && baseUrl.endsWith("/")) baseUrl = baseUrl.substring(0, baseUrl.length() - 1);
+            // 支持前端传入 modelName 来选择测试模型，默认使用第一个模型
+            String requestedModel = (String) body.get("modelName");
+            ChannelModel testChannelModel = null;
+            if (requestedModel != null && !requestedModel.isEmpty()) {
+                testChannelModel = models.stream()
+                        .filter(m -> requestedModel.equals(m.getModelName()))
+                        .findFirst().orElse(null);
+            }
+            if (testChannelModel == null) {
+                testChannelModel = models.get(0);
+            }
+            String testModel = testChannelModel.getModelName();
 
             long startTime = System.currentTimeMillis();
-            String endpoint;
-            String requestBody;
-            Map<String, String> headers = new HashMap<>();
-
-            if ("anthropic".equals(channel.getChannelType())) {
-                endpoint = baseUrl + "/messages";
-                requestBody = "{\"model\":\"" + testModel + "\",\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"" + message + "\"}]}";
-                headers.put("x-api-key", channel.getApiKey());
-                headers.put("anthropic-version", "2023-06-01");
-            } else {
-                endpoint = baseUrl + "/chat/completions";
-                requestBody = "{\"model\":\"" + testModel + "\",\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"" + message + "\"}]}";
-                headers.put("Authorization", "Bearer " + channel.getApiKey());
-            }
-            headers.put("Content-Type", "application/json");
-
-            String response = webClient.post()
-                    .uri(endpoint)
-                    .headers(h -> headers.forEach(h::set))
-                    .bodyValue(requestBody)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block(java.time.Duration.ofSeconds(30));
+            // 走网关中继测试 — 复用 RelayService 的 WebClient、header 构建和错误处理
+            String response = relayService.testChannelModel(channel, testChannelModel, availableKey, message);
 
             long responseTime = System.currentTimeMillis() - startTime;
             String content = extractContent(response, channel.getChannelType());

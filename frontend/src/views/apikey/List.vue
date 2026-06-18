@@ -2,7 +2,7 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">API 密钥列表</div>
-      <button class="btn btn-primary" @click="openForm()">+ 添加密钥</button>
+      <button class="btn btn-primary" @click="openForm()"><SvgIcon name="plus" :size="14" /> 添加密钥</button>
     </div>
     <div class="alert alert-info">
       API 密钥用于调用网关的 API。用户请求时需要在 Header 中携带密钥。
@@ -49,11 +49,11 @@
             <td style="font-size:12px;color:var(--text-muted);">{{ key.createdAt }}</td>
             <td>
               <div style="display:flex;gap:6px;align-items:center;">
-                <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)" title="复制分享链接">分享</button>
-                <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)" title="开启分享并复制链接">分享</button>
-                <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)">撤销</button>
-                <button class="btn btn-sm btn-secondary" @click="openForm(key)">编辑</button>
-                <button class="btn btn-sm btn-danger" @click="confirmDelete(key)">删除</button>
+                <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)" title="复制分享链接"><SvgIcon name="link" :size="14" /> 分享</button>
+                <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)" title="开启分享并复制链接"><SvgIcon name="link" :size="14" /> 分享</button>
+                <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)"><SvgIcon name="x-bold" :size="14" /> 撤销</button>
+                <button class="btn btn-sm btn-secondary" @click="openForm(key)"><SvgIcon name="edit" :size="14" /> 编辑</button>
+                <button class="btn btn-sm btn-danger" @click="confirmDelete(key)"><SvgIcon name="trash" :size="14" /> 删除</button>
               </div>
             </td>
           </tr>
@@ -94,12 +94,12 @@
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
-          <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)">分享</button>
-          <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)">分享</button>
-          <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)">撤销</button>
-          <button class="btn btn-sm btn-secondary" @click="copyKey(key.keyValue)">复制</button>
-          <button class="btn btn-sm btn-secondary" @click="openForm(key)">编辑</button>
-          <button class="btn btn-sm btn-danger" @click="confirmDelete(key)">删除</button>
+          <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)"><SvgIcon name="link" :size="14" /> 分享</button>
+          <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)"><SvgIcon name="link" :size="14" /> 分享</button>
+          <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)"><SvgIcon name="x-bold" :size="14" /> 撤销</button>
+          <button class="btn btn-sm btn-secondary" @click="copyKey(key.keyValue)"><SvgIcon name="copy" :size="14" /> 复制</button>
+          <button class="btn btn-sm btn-secondary" @click="openForm(key)"><SvgIcon name="edit" :size="14" /> 编辑</button>
+          <button class="btn btn-sm btn-danger" @click="confirmDelete(key)"><SvgIcon name="trash" :size="14" /> 删除</button>
         </div>
       </div>
       <div v-if="!apiKeys.length" class="mobile-card-empty">

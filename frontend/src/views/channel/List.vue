@@ -2,7 +2,7 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">渠道列表</div>
-      <router-link to="/admin/channel/form" class="btn btn-primary">+ 添加渠道</router-link>
+      <router-link to="/admin/channel/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> 添加渠道</router-link>
     </div>
     <div class="table-container">
       <table>
@@ -58,11 +58,11 @@
             <td style="font-size:12px;color:var(--text-muted);">{{ ch.createdAt }}</td>
             <td>
               <div style="display:flex;gap:6px;flex-wrap:nowrap;">
-                <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary">编辑</router-link>
-                <button class="btn btn-sm btn-success" @click="quickTest(ch)">测试</button>
+                <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> 编辑</router-link>
+                <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> 测试</button>
                 <router-link :to="`/admin/channel/reload/${ch.id}`" class="btn btn-sm btn-secondary"
-                  @click.prevent="reloadModels(ch.id!)">刷新模型</router-link>
-                <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)">删除</button>
+                  @click.prevent="reloadModels(ch.id!)"><SvgIcon name="refresh" :size="14" /> 刷新模型</router-link>
+                <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)"><SvgIcon name="trash" :size="14" /> 删除</button>
               </div>
             </td>
           </tr>
@@ -114,11 +114,11 @@
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
-          <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary">编辑</router-link>
-          <button class="btn btn-sm btn-success" @click="quickTest(ch)">测试</button>
+          <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> 编辑</router-link>
+          <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> 测试</button>
           <router-link :to="`/admin/channel/reload/${ch.id}`" class="btn btn-sm btn-secondary"
-            @click.prevent="reloadModels(ch.id!)">刷新</router-link>
-          <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)">删除</button>
+            @click.prevent="reloadModels(ch.id!)"><SvgIcon name="refresh" :size="14" /> 刷新</router-link>
+          <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)"><SvgIcon name="trash" :size="14" /> 删除</button>
         </div>
       </div>
       <div v-if="!channels.length" class="mobile-card-empty">
@@ -137,6 +137,15 @@
           渠道: {{ testChannel?.name }}
         </div>
         <div class="form-group">
+          <label>测试模型</label>
+          <select v-model="testSelectedModel" class="form-control" :disabled="testModels.length === 0">
+            <option v-if="testModels.length === 0" value="">暂无可用模型</option>
+            <option v-for="m in testModels" :key="m.modelName" :value="m.modelName">
+              {{ m.displayName || m.modelName }}
+            </option>
+          </select>
+        </div>
+        <div class="form-group">
           <label>测试消息</label>
           <textarea v-model="testMessage" class="form-control" rows="3"></textarea>
         </div>
@@ -151,7 +160,7 @@
           </template>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" @click="closeTestModal">关闭</button>
+          <button class="btn btn-secondary" @click="closeTestModal"><SvgIcon name="x" :size="14" /> 关闭</button>
           <button class="btn btn-primary" :disabled="testLoading" @click="sendTestRequest">
             <SvgIcon name="send" :size="14" /> {{ testLoading ? '测试中...' : '发送测试' }}
           </button>
@@ -175,13 +184,15 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { channelApi, type Channel } from '@/api/channel'
+import { channelApi, type Channel, type ChannelModel } from '@/api/channel'
 import Dialog from '@/components/common/Dialog.vue'
 
 const router = useRouter()
 const channels = ref<Channel[]>([])
 const showTestModal = ref(false)
 const testChannel = ref<Channel | null>(null)
+const testModels = ref<ChannelModel[]>([])
+const testSelectedModel = ref('')
 const testMessage = ref('Hello, this is a test message.')
 const testResult = ref<{ success: boolean; response?: string; responseTime?: number; error?: string } | null>(null)
 const testLoading = ref(false)
@@ -224,10 +235,22 @@ async function loadChannels() {
   }
 }
 
-function quickTest(ch: Channel) {
+async function quickTest(ch: Channel) {
   testChannel.value = ch
   testMessage.value = 'Hello, this is a test message.'
   testResult.value = null
+  testSelectedModel.value = ''
+  testModels.value = []
+  // 获取渠道的模型列表供用户选择
+  try {
+    const res = await channelApi.getModels(ch.id!)
+    testModels.value = res.data.models || []
+    if (testModels.value.length > 0) {
+      testSelectedModel.value = testModels.value[0].modelName
+    }
+  } catch {
+    // 模型列表加载失败不影响测试功能，只是没有下拉选择
+  }
   showTestModal.value = true
 }
 
@@ -240,7 +263,7 @@ async function sendTestRequest() {
   if (!testChannel.value?.id) return
   testLoading.value = true
   try {
-    const res = await channelApi.quickTest(testChannel.value.id, testMessage.value)
+    const res = await channelApi.quickTest(testChannel.value.id, testMessage.value, testSelectedModel.value || undefined)
     testResult.value = res.data
   } catch (e: any) {
     testResult.value = { success: false, error: e.message }

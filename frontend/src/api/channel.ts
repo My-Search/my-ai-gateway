@@ -78,9 +78,11 @@ export const channelApi = {
   deleteAllModels(channelId: number) {
     return http.delete<{ success: boolean; count: number }>(`/channels/${channelId}/models`)
   },
-  quickTest(id: number, message: string) {
+  quickTest(id: number, message: string, modelName?: string) {
+    const payload: any = { message }
+    if (modelName) payload.modelName = modelName
     return http.post<{ success: boolean; response?: string; responseTime?: number; model?: string; error?: string }>(
-      `/channels/${id}/quick-test`, { message }
+      `/channels/${id}/quick-test`, payload
     )
   },
   getUsageStats(id: number) {

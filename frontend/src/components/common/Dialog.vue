@@ -18,14 +18,14 @@
               class="btn btn-secondary"
               @click="onCancel"
             >
-              {{ cancelText }}
+              <SvgIcon name="x" :size="14" /> {{ cancelText }}
             </button>
             <button
               class="btn"
               :class="confirmClass"
               @click="onConfirm"
             >
-              {{ confirmText }}
+              <SvgIcon name="check" :size="14" /> {{ confirmText }}
             </button>
           </div>
         </div>
