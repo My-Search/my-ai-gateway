@@ -5,6 +5,14 @@ server:
       charset: UTF-8
       enabled: true
       force: true
+  # SSE 流式优化：减小 socket buffer 让每次 flush 立即发送给客户端
+  tomcat:
+    socket:
+      buffer: 1024
+  # SSE 流式优化：确保 data 不被缓冲，每次 flush 即时发送
+  compression:
+    enabled: true
+    mime-types: text/html,text/xml,text/plain,application/json,application/javascript,text/css
 
 spring:
   application:

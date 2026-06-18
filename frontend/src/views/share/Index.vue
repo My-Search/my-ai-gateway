@@ -119,11 +119,10 @@
             在线测试
           </div>
         </div>
-        <div class="card-body">
+        <div class="card-body chat-card-body">
           <ChatPlayground
             :models="filteredModels"
-            :fixed-share-code="shareData.shareCode"
-            compact
+            :fixed-share-code="shareData.shareCode || shareCodeFromRoute"
           />
         </div>
       </div>
@@ -159,6 +158,10 @@ const shareData = ref<ShareData>({
 })
 const models = computed(() => shareData.value.models)
 const baseUrl = computed(() => shareData.value.baseUrl)
+
+// 从路由参数获取分享码，作为 fixedShareCode 的保底值
+// 后端 buildShareResponse 已返回 shareCode，但若响应缺失则用路由中的 code 兜底
+const shareCodeFromRoute = computed(() => route.params.code as string)
 
 // Toast
 const toast = ref({ show: false, message: '', type: 'success' })
@@ -302,6 +305,11 @@ async function copyText(text: string, label: string = '') {
 
 .card-body {
   padding: 20px;
+}
+
+/* ChatPlayground 在卡片中需要限制高度，避免溢出 */
+.chat-card-body :deep(.chat-playground) {
+  height: 520px;
 }
 
 /* 接口格式选择器 */

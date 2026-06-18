@@ -46,7 +46,9 @@ class AdminAuthInterceptorTest {
             "/static/css/main.css",
             "/admin/api/auth/check",
             "/admin/api/auth/login",
-            "/admin/api/auth/setup"
+            "/admin/api/auth/setup",
+            "/api/share/abc123",
+            "/api/share/by-key/sk-myai-test"
     })
     void whitelistedPathsPassWithoutSession(String uri) throws Exception {
         when(request.getRequestURI()).thenReturn(uri);

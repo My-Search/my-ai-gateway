@@ -123,6 +123,9 @@ public class RelayService {
         Mono.fromCallable(() -> parseRequest(requestBody, "openai"))
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
                 .flatMapMany(req -> executeStreamRelay(traceId, authHeader, req, "openai", internalClient))
+                // publishOn(prefetch=1)：每处理完一个事件再请求下一个，让 SSE 发送之间有空隙，
+                // 确保 Tomcat flush 能真正将数据推送到 TCP 栈，避免多个事件被合并发送
+                .publishOn(reactor.core.scheduler.Schedulers.boundedElastic(), 1)
                 .subscribe(
                         event -> sendSseEvent(emitter, event),
                         err -> {
@@ -145,6 +148,8 @@ public class RelayService {
         Mono.fromCallable(() -> parseRequest(requestBody, "anthropic"))
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
                 .flatMapMany(req -> executeStreamRelay(traceId, apiKeyHeader, req, "anthropic", internalClient))
+                // publishOn(prefetch=1)：同 OpenAI 流式，确保事件逐个发送
+                .publishOn(reactor.core.scheduler.Schedulers.boundedElastic(), 1)
                 .subscribe(
                         event -> sendSseEvent(emitter, event),
                         err -> {

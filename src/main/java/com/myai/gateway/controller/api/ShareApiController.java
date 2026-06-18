@@ -139,6 +139,7 @@ public class ShareApiController {
 
         result.put("success", true);
         result.put("id", apiKey.getId());
+        result.put("shareCode", apiKey.getShareCode());
         result.put("keyName", apiKey.getKeyName());
         result.put("keyValue", keyValue);
         result.put("keyValueMasked", maskedKey);

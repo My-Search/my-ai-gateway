@@ -19,7 +19,7 @@ export interface DashboardStats {
   dailyTrend: { label: string; requests: number }[]
   channelRank: { name: string; requests: number; success: number; avgTime: number; totalTokens: number }[]
   modelRank: { name: string; requests: number; success: number; totalTokens: number }[]
-  channelModelRank: { name: string; requests: number; success: number; totalTokens: number }[]
+  channelModelRank: { name: string; channelName?: string; requests: number; success: number; totalTokens: number }[]
   recentLogs: { id: number; modelName: string; channelName: string; phase: string; createdAt: string }[]
   todayTokenStats: TodayTokenStats
 }

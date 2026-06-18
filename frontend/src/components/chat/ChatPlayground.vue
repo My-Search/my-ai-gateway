@@ -36,7 +36,7 @@
 
         <div class="form-group">
           <label>Max Tokens</label>
-          <input v-model.number="maxTokens" type="number" class="form-control" min="1" max="32000" />
+          <input v-model.number="maxTokens" type="number" class="form-control" min="1" max="256000" />
         </div>
 
         <button class="btn btn-secondary" style="width:100%;" @click="clearChat">
@@ -108,6 +108,7 @@
               <div v-if="msg.role === 'assistant'" class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
               <template v-else>{{ msg.content }}</template>
             </div>
+            <div v-if="msg.truncated" class="chat-truncated-hint">⚠ 输出因 token 限制被截断</div>
             <div v-if="msg.meta" class="chat-meta" v-html="msg.meta"></div>
           </div>
         </div>
@@ -126,7 +127,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted, watch } from 'vue'
+import { ref, nextTick, onMounted, watch, shallowRef, triggerRef } from 'vue'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { chatStream } from '@/api/chat'
 import { marked } from 'marked'
@@ -153,6 +154,8 @@ interface ChatMessage {
   content: string
   meta?: string
   channelInfo?: any
+  /** 回答因 max_tokens 限制被截断 */
+  truncated?: boolean
 }
 
 const isShareMode = ref(!!props.fixedShareCode)
@@ -162,9 +165,10 @@ const apiKeys = ref<ApiKey[]>([])
 const selectedModel = ref('')
 const selectedApiKey = ref(0)
 const temperature = ref(0.7)
-const maxTokens = ref(2048)
+const maxTokens = ref(128000)
 const userInput = ref('')
-const messages = ref<ChatMessage[]>([])
+// 使用 shallowRef 避免深层响应式追踪，配合 triggerRef 实现精确控制的流式渲染
+const messages = shallowRef<ChatMessage[]>([])
 const streaming = ref(false)
 const tokenUsage = ref('')
 const routingProgress = ref<{ phase: string; channel: string; channel_model: string; message?: string } | null>(null)
@@ -280,6 +284,7 @@ function quickSend(text: string) {
 
 function addMessage(role: ChatMessage['role'], content: string, meta?: string, channelInfo?: any) {
   messages.value.push({ role, content, meta, channelInfo })
+  triggerRef(messages)  // 手动触发 shallowRef 更新
   scrollToBottom()
   return messages.value[messages.value.length - 1]
 }
@@ -357,6 +362,9 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
     const events = buffer.split('\n\n')
     buffer = events.pop() || ''
 
+    // 本轮网络数据块中是否有新内容需要渲染
+    let hasNewContent = false
+
     for (const event of events) {
       if (!event.trim()) continue
       const lines = event.split('\n')
@@ -386,16 +394,32 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
             continue
           }
           if (json.choices && json.choices[0]) {
-            const delta = json.choices[0].delta
+            const choice = json.choices[0]
+            const delta = choice.delta
             if (delta?.content) {
               fullContent += delta.content
               tokenNum++
               targetMsg.content = fullContent
-              await scrollToBottom()
+              hasNewContent = true
+            }
+            // 检测截断：finish_reason=length 表示上游 API 因 token 限制截断了回答
+            if (choice.finish_reason === 'length') {
+              targetMsg.truncated = true
+              hasNewContent = true
             }
           }
         } catch { /* ignore parse errors */ }
       }
+    }
+
+    // 本轮 read 有新内容 → 等待 Vue 渲染后再处理下一批数据
+    // 关键：让出主线程让浏览器有机会渲染这一帧，避免批量合并更新
+    if (hasNewContent) {
+      // 手动触发 shallowRef 更新
+      triggerRef(messages)
+      // 等待下一帧渲染
+      await new Promise(resolve => requestAnimationFrame(resolve))
+      await scrollToBottom()
     }
   }
 
@@ -522,6 +546,12 @@ function renderMarkdown(text: string): string {
 }
 
 .chat-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+.chat-truncated-hint {
+  font-size: 12px; color: var(--accent-yellow); margin-top: 4px;
+  padding: 4px 10px; border-radius: 4px;
+  background: rgba(210, 153, 34, 0.08);
+  border: 1px solid rgba(210, 153, 34, 0.2);
+}
 .chat-quick-actions {
   display: flex; gap: 8px; padding: 8px 0;
   border-top: 1px solid var(--border-color);

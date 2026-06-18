@@ -898,6 +898,12 @@ public class AdminApiController {
         // 显式设置响应头，确保浏览器使用 UTF-8 解码 SSE 流
         response.setContentType("text/event-stream;charset=UTF-8");
         response.setCharacterEncoding("UTF-8");
+        // SSE 响应不能被任何中间层或客户端缓冲，必须即时推送
+        response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+        response.setHeader("Pragma", "no-cache");
+        response.setHeader("X-Accel-Buffering", "no");
+        // 设置极小的响应缓冲区（1KB），确保每次 flush 立即将数据推送到 TCP 栈
+        response.setBufferSize(1024);
 
         SseEmitter emitter = new SseEmitter(300_000L); // 5分钟超时
 

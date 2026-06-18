@@ -132,12 +132,15 @@
         </div>
         <div v-else-if="!currentModelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">暂无数据</div>
         <div class="rank-list" v-else>
-          <div class="rank-item" v-for="(m, idx) in currentModelRank" :key="m.name">
+          <div class="rank-item" v-for="(m, idx) in currentModelRank" :key="m.name + (m.channelName || '')">
             <div class="rank-pos" :class="idx === 0 ? 'gold' : idx === 1 ? 'silver' : idx === 2 ? 'bronze' : ''">
               {{ idx + 1 }}
             </div>
             <div class="rank-info">
-              <div class="rank-name">{{ m.name }}</div>
+              <div class="rank-name">
+                <span v-if="modelRankTab === 'channel' && m.channelName" class="rank-channel-tag">{{ m.channelName }}</span>
+                <span class="rank-model-text">{{ m.name }}</span>
+              </div>
               <div class="rank-meta">
                 <span>{{ m.requests }} 请求</span>
                 <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ m.success }}</span>
@@ -274,10 +277,22 @@ onMounted(async () => {
 .rank-pos.silver { background: linear-gradient(135deg, #c0c0c0, #a8a8a8); color: #1a1a1a; }
 .rank-pos.bronze { background: linear-gradient(135deg, #cd7f32, #b87333); color: #fff; }
 .rank-info { flex: 1; min-width: 0; }
-.rank-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rank-name { display: flex; align-items: center; font-size: 14px; font-weight: 600; min-width: 0; }
+.rank-model-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .rank-meta { font-size: 12px; color: var(--text-muted); display: flex; gap: 8px; margin-top: 3px; align-items: center; }
 .rank-meta-time { color: var(--text-muted); font-size: 11px; }
 .rank-meta-tokens { color: #ec4899; font-size: 11px; font-weight: 600; }
+.rank-channel-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(88,166,255,0.15);
+  color: var(--accent-blue);
+  margin-right: 6px;
+  line-height: 1.4;
+}
 .rank-bar-bg { width: 80px; height: 6px; background: var(--bg-primary); border-radius: 3px; overflow: hidden; flex-shrink: 0; min-width: 20px; }
 .rank-bar { height: 100%; background: var(--accent-blue); border-radius: 3px; transition: width 0.3s; min-width: 4px; }
 

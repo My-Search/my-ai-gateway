@@ -283,26 +283,31 @@ public class StatsService {
      * @param byChannelModel true=按渠道模型名聚合，false=按入口模型名聚合
      */
     private List<Map<String, Object>> buildModelRank(List<RequestLog> todayLogs, boolean byChannelModel) {
-        // 提取分组 key 的辅助方法
-        java.util.function.Function<RequestLog, String> getKey = byChannelModel
-                ? l -> l.getChannelModelName()
-                : l -> l.getModelName();
+        if (byChannelModel) {
+            return buildChannelModelRankWithChannel(todayLogs);
+        }
+        // 入口模型模式：按 modelName 分组
+        return buildEntryModelRank(todayLogs);
+    }
 
+    /**
+     * 入口模型排行：按自定义模型名(modelName)聚合
+     */
+    private List<Map<String, Object>> buildEntryModelRank(List<RequestLog> todayLogs) {
         Map<String, Long> modelCounts = todayLogs.stream()
                 .filter(l -> "start".equals(l.getPhase()))
-                .filter(l -> getKey.apply(l) != null)
-                .collect(Collectors.groupingBy(l -> getKey.apply(l), Collectors.counting()));
+                .filter(l -> l.getModelName() != null)
+                .collect(Collectors.groupingBy(RequestLog::getModelName, Collectors.counting()));
 
         Map<String, Long> modelSuccess = todayLogs.stream()
                 .filter(l -> "success".equals(l.getPhase()))
-                .filter(l -> getKey.apply(l) != null)
-                .collect(Collectors.groupingBy(l -> getKey.apply(l), Collectors.counting()));
+                .filter(l -> l.getModelName() != null)
+                .collect(Collectors.groupingBy(RequestLog::getModelName, Collectors.counting()));
 
-        // Token 用量按模型聚合
         Map<String, Long> modelTotalTokens = todayLogs.stream()
                 .filter(l -> "success".equals(l.getPhase()))
-                .filter(l -> getKey.apply(l) != null)
-                .collect(Collectors.groupingBy(l -> getKey.apply(l),
+                .filter(l -> l.getModelName() != null)
+                .collect(Collectors.groupingBy(RequestLog::getModelName,
                         Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
 
         return modelCounts.entrySet().stream()
@@ -311,6 +316,53 @@ public class StatsService {
                 .map(e -> {
                     Map<String, Object> item = new LinkedHashMap<>();
                     item.put("name", e.getKey());
+                    item.put("requests", e.getValue());
+                    item.put("success", modelSuccess.getOrDefault(e.getKey(), 0L));
+                    item.put("totalTokens", modelTotalTokens.getOrDefault(e.getKey(), 0L));
+                    return item;
+                })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 渠道模型排行：按 (channelName, channelModelName) 复合分组，
+     * 每条记录附带渠道名，方便前端展示
+     */
+    private List<Map<String, Object>> buildChannelModelRankWithChannel(List<RequestLog> todayLogs) {
+        // 复合 key 分隔符（不会出现在渠道名/模型名中）
+        String sep = "\t";
+
+        java.util.function.Function<RequestLog, String> compositeKey = l ->
+                (l.getChannelName() != null ? l.getChannelName() : "") + sep
+                        + (l.getChannelModelName() != null ? l.getChannelModelName() : "");
+
+        Map<String, Long> modelCounts = todayLogs.stream()
+                .filter(l -> "start".equals(l.getPhase()))
+                .filter(l -> l.getChannelModelName() != null)
+                .collect(Collectors.groupingBy(compositeKey, Collectors.counting()));
+
+        Map<String, Long> modelSuccess = todayLogs.stream()
+                .filter(l -> "success".equals(l.getPhase()))
+                .filter(l -> l.getChannelModelName() != null)
+                .collect(Collectors.groupingBy(compositeKey, Collectors.counting()));
+
+        Map<String, Long> modelTotalTokens = todayLogs.stream()
+                .filter(l -> "success".equals(l.getPhase()))
+                .filter(l -> l.getChannelModelName() != null)
+                .collect(Collectors.groupingBy(compositeKey,
+                        Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
+
+        return modelCounts.entrySet().stream()
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                .limit(10)
+                .map(e -> {
+                    String key = e.getKey();
+                    int sepIdx = key.indexOf(sep);
+                    String channelName = key.substring(0, sepIdx);
+                    String modelName = key.substring(sepIdx + sep.length());
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("name", modelName);
+                    item.put("channelName", channelName);
                     item.put("requests", e.getValue());
                     item.put("success", modelSuccess.getOrDefault(e.getKey(), 0L));
                     item.put("totalTokens", modelTotalTokens.getOrDefault(e.getKey(), 0L));

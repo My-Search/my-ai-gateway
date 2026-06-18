@@ -143,10 +143,10 @@ const router = createRouter({
 /**
  * 全局前置守卫：需要登录的页面先验证 session
  * 
- * 注意：使用 next('/login') 进行 Vue Router 客户端导航，不要用 window.location.href
- * 因为全页跳转会销毁 SPA 实例，重建后可能因 cookie 时序导致死循环。
+ * 使用 Vue Router 4 推荐的 return value 模式，替代已弃用的 next() 回调。
+ * 避免 async 守卫中 next() 可能引发的竞态条件（导航在 promise 解析前提前完成）。
  */
-router.beforeEach(async (to, _from, next) => {
+router.beforeEach(async (to, _from) => {
   // 清除之前的延迟显示定时器
   if (showLoadingTimer) {
     clearTimeout(showLoadingTimer)
@@ -160,43 +160,42 @@ router.beforeEach(async (to, _from, next) => {
     loadingStartTime = Date.now()
   }, LOADING_SHOW_DELAY)
 
-  // 登录页始终放行
-  if (to.path === '/login') {
+  // 公开页面白名单：这些页面不需要任何认证，始终放行
+  // 注意：使用 to.path 而非 route meta，避免 Vue Router 的 matched 链在某些
+  // 边缘情况下（如嵌套路由、redirect 路由）不能正确反映 requiresAuth 状态
+  const publicPaths = ['/login', '/share/']
+  const isPublicPath = publicPaths.some(prefix => to.path.startsWith(prefix))
+
+  if (isPublicPath) {
     // 取消延迟显示
     if (showLoadingTimer) {
       clearTimeout(showLoadingTimer)
       showLoadingTimer = null
     }
-    next()
-    return
+    return // return undefined → 允许导航
   }
 
-  // 需要认证的路由 → 向后端确认 session 有效
-  if (to.matched.some(r => r.meta.requiresAuth !== false)) {
-    try {
-      const auth = await checkAuth()
-      if (!auth.authenticated) {
-        // 取消延迟显示
-        if (showLoadingTimer) {
-          clearTimeout(showLoadingTimer)
-          showLoadingTimer = null
-        }
-        // 客户端导航到登录页，避免全页刷新
-        next({ path: '/login', replace: true })
-        return
-      }
-    } catch {
+  // 其他页面需要认证 → 向后端确认 session 有效
+  try {
+    const auth = await checkAuth()
+    if (!auth.authenticated) {
       // 取消延迟显示
       if (showLoadingTimer) {
         clearTimeout(showLoadingTimer)
         showLoadingTimer = null
       }
-      next({ path: '/login', replace: true })
-      return
+      return { path: '/login', replace: true } // 重定向到登录页
     }
+  } catch {
+    // 取消延迟显示
+    if (showLoadingTimer) {
+      clearTimeout(showLoadingTimer)
+      showLoadingTimer = null
+    }
+    return { path: '/login', replace: true }
   }
 
-  next()
+  // return undefined → 允许导航
 })
 
 /**
