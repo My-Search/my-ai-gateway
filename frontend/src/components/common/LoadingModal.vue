@@ -24,12 +24,14 @@
  */
 import { computed } from 'vue'
 import { useLoadingStore } from '@/stores/loading'
+import { useI18n } from '@/composables/useI18n'
 import SvgIcon from './SvgIcon.vue'
 
+const { t } = useI18n()
 const loadingStore = useLoadingStore()
 
 const visible = computed(() => loadingStore.isLoading)
-const text = computed(() => loadingStore.loadingText)
+const text = computed(() => loadingStore.loadingText === '加载中...' ? t('common.loading') : loadingStore.loadingText)
 </script>
 
 <style scoped>

@@ -1,16 +1,15 @@
 <template>
   <div>
-    <!-- 统计卡片 -->
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-icon" style="background:rgba(88,166,255,0.1);color:var(--accent-blue);">
           <SvgIcon name="chart" :size="24" />
         </div>
         <div class="stat-body">
-          <div class="stat-label">今日请求</div>
+          <div class="stat-label">{{ t('dashboard.todayRequests') }}</div>
           <div class="stat-value">{{ stats.todayRequests ?? '-' }}</div>
           <div class="stat-hint" v-if="(stats.yesterdayRequests ?? 0) > 0">
-            昨日 {{ stats.yesterdayRequests }}
+            {{ t('dashboard.yesterday') }} {{ stats.yesterdayRequests }}
             <span class="hint-sep">|</span>
             <SvgIcon name="token" :size="11" />
             {{ formatTokens(stats.todayTokenStats?.totalTokens) }} tokens
@@ -26,7 +25,7 @@
           <SvgIcon name="check" :size="24" />
         </div>
         <div class="stat-body">
-          <div class="stat-label">成功率</div>
+          <div class="stat-label">{{ t('dashboard.successRate') }}</div>
           <div class="stat-value">{{ stats.successRate ?? '-' }}%</div>
           <div class="stat-hint">
             <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ stats.todaySuccess ?? 0 }}</span>
@@ -39,9 +38,9 @@
           <SvgIcon name="zap" :size="24" />
         </div>
         <div class="stat-body">
-          <div class="stat-label">平均响应</div>
+          <div class="stat-label">{{ t('dashboard.avgResponse') }}</div>
           <div class="stat-value">{{ stats.avgResponseTime ?? '-' }}<small>ms</small></div>
-          <div class="stat-hint">基于今日所有完成请求</div>
+          <div class="stat-hint">{{ t('dashboard.basedOnToday') }}</div>
         </div>
       </div>
       <div class="stat-card">
@@ -49,32 +48,31 @@
           <SvgIcon name="monitor" :size="24" />
         </div>
         <div class="stat-body">
-          <div class="stat-label">资源概览</div>
+          <div class="stat-label">{{ t('dashboard.overview') }}</div>
           <div class="stat-value resource-value">
-            {{ stats.channelCount ?? 0 }} 渠道 <span class="dot-sep">·</span>
-            {{ stats.customModelCount ?? 0 }} 模型 <span class="dot-sep">·</span>
-            {{ stats.apiKeyCount ?? 0 }} 密钥
+            {{ t('dashboard.channelCount').replace('{count}', stats.channelCount ?? 0) }} <span class="dot-sep">·</span>
+            {{ t('dashboard.modelCount').replace('{count}', stats.customModelCount ?? 0) }} <span class="dot-sep">·</span>
+            {{ t('dashboard.keyCount').replace('{count}', stats.apiKeyCount ?? 0) }}
           </div>
-          <div class="stat-hint">系统配置资源汇总</div>
+          <div class="stat-hint">{{ t('dashboard.resourceSummary') }}</div>
         </div>
       </div>
     </div>
 
-    <!-- 7日趋势 + 渠道排行 -->
     <div class="grid-2" style="margin-top:20px;">
       <div class="card">
         <div class="card-header">
-          <div class="card-title"><SvgIcon name="chart" :size="18" /> 7日请求趋势</div>
+          <div class="card-title"><SvgIcon name="chart" :size="18" /> {{ t('dashboard.trend7Day') }}</div>
         </div>
         <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
-          <span class="loading-spinner"></span> 加载中...
+          <span class="loading-spinner"></span> {{ t('common.loading') }}
         </div>
         <div class="trend-chart" v-else-if="stats.dailyTrend?.length">
           <div class="trend-bars">
             <div class="trend-bar-col" v-for="day in stats.dailyTrend" :key="day.label">
               <div class="trend-bar-wrap">
                 <div class="trend-bar" :style="{ height: maxReq > 0 ? (day.requests / maxReq * 100) + '%' : '2px' }"
-                     :title="day.label + ': ' + day.requests + ' 请求'">
+                     :title="day.label + ': ' + day.requests + ' ' + t('dashboard.requests')">
                 </div>
               </div>
               <div class="trend-label">{{ day.label }}</div>
@@ -82,18 +80,18 @@
             </div>
           </div>
         </div>
-        <div v-else style="text-align:center;padding:30px;color:var(--text-muted);">暂无数据</div>
+        <div v-else style="text-align:center;padding:30px;color:var(--text-muted);">{{ t('dashboard.noData') }}</div>
       </div>
 
       <div class="card">
         <div class="card-header">
-          <div class="card-title"><SvgIcon name="rank" :size="18" /> 今日渠道排行</div>
+          <div class="card-title"><SvgIcon name="rank" :size="18" /> {{ t('dashboard.channelRank') }}</div>
         </div>
         <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
-          <span class="loading-spinner"></span> 加载中...
+          <span class="loading-spinner"></span> {{ t('common.loading') }}
         </div>
         <div v-else-if="!stats.channelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">
-          暂无数据，发起请求后将显示在此处
+          {{ t('dashboard.noRankData') }}
         </div>
         <div class="rank-list" v-else>
           <div class="rank-item" v-for="(ch, idx) in stats.channelRank" :key="ch.name">
@@ -103,7 +101,7 @@
             <div class="rank-info">
               <div class="rank-name">{{ ch.name }}</div>
               <div class="rank-meta">
-                <span>{{ ch.requests }} 请求</span>
+                <span>{{ ch.requests }} {{ t('dashboard.requests') }}</span>
                 <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ ch.success }}</span>
                 <span v-if="ch.avgTime > 0" class="rank-meta-time">{{ ch.avgTime }}ms</span>
                 <span v-if="ch.totalTokens > 0" class="rank-meta-tokens">{{ formatTokens(ch.totalTokens) }} tokens</span>
@@ -117,20 +115,19 @@
       </div>
     </div>
 
-    <!-- 模型排行 + 最近日志 -->
     <div class="grid-2" style="margin-top:16px;">
       <div class="card">
         <div class="card-header">
-          <div class="card-title"><SvgIcon name="model" :size="18" /> 今日模型排行</div>
+          <div class="card-title"><SvgIcon name="model" :size="18" /> {{ t('dashboard.modelRank') }}</div>
           <div class="tab-switch">
-            <button :class="['tab-btn', modelRankTab === 'entry' ? 'active' : '']" @click="modelRankTab = 'entry'">入口模型</button>
-            <button :class="['tab-btn', modelRankTab === 'channel' ? 'active' : '']" @click="modelRankTab = 'channel'">渠道模型</button>
+            <button :class="['tab-btn', modelRankTab === 'entry' ? 'active' : '']" @click="modelRankTab = 'entry'">{{ t('dashboard.entryModel') }}</button>
+            <button :class="['tab-btn', modelRankTab === 'channel' ? 'active' : '']" @click="modelRankTab = 'channel'">{{ t('dashboard.channelModel') }}</button>
           </div>
         </div>
         <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
-          <span class="loading-spinner"></span> 加载中...
+          <span class="loading-spinner"></span> {{ t('common.loading') }}
         </div>
-        <div v-else-if="!currentModelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">暂无数据</div>
+        <div v-else-if="!currentModelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">{{ t('dashboard.noData') }}</div>
         <div class="rank-list" v-else>
           <div class="rank-item" v-for="(m, idx) in currentModelRank" :key="m.name + (m.channelName || '')">
             <div class="rank-pos" :class="idx === 0 ? 'gold' : idx === 1 ? 'silver' : idx === 2 ? 'bronze' : ''">
@@ -142,7 +139,7 @@
                 <span class="rank-model-text">{{ m.name }}</span>
               </div>
               <div class="rank-meta">
-                <span>{{ m.requests }} 请求</span>
+                <span>{{ m.requests }} {{ t('dashboard.requests') }}</span>
                 <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ m.success }}</span>
                 <span v-if="m.totalTokens > 0" class="rank-meta-tokens">{{ formatTokens(m.totalTokens) }} tokens</span>
               </div>
@@ -153,13 +150,13 @@
 
       <div class="card">
         <div class="card-header">
-          <div class="card-title"><SvgIcon name="clock" :size="18" /> 最近活动</div>
-          <router-link to="/admin/log/list" class="btn btn-sm btn-secondary">查看全部 →</router-link>
+          <div class="card-title"><SvgIcon name="clock" :size="18" /> {{ t('dashboard.recentActivity') }}</div>
+          <router-link to="/admin/log/list" class="btn btn-sm btn-secondary">{{ t('dashboard.viewAll') }}</router-link>
         </div>
         <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
-          <span class="loading-spinner"></span> 加载中...
+          <span class="loading-spinner"></span> {{ t('common.loading') }}
         </div>
-        <div v-else-if="!stats.recentLogs?.length" style="text-align:center;padding:30px;color:var(--text-muted);">暂无活动记录</div>
+        <div v-else-if="!stats.recentLogs?.length" style="text-align:center;padding:30px;color:var(--text-muted);">{{ t('dashboard.noActivity') }}</div>
         <div class="activity-list" v-else>
           <div class="activity-item" v-for="log in stats.recentLogs" :key="log.id">
             <span :class="'phase phase-' + log.phase">{{ phaseLabel(log.phase) }}</span>
@@ -176,6 +173,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { dashboardApi, type DashboardStats } from '@/api/dashboard'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 const stats = ref<DashboardStats>({} as DashboardStats)
 const loading = ref(true)
@@ -191,7 +191,7 @@ const currentModelRank = computed(() => {
 })
 
 function phaseLabel(phase: string) {
-  const map: Record<string, string> = { start: '开始', retry: '重试', reroute: '重路由', success: '成功', fail: '失败' }
+  const map: Record<string, string> = { start: t('dashboard.start'), retry: t('dashboard.retry'), reroute: t('dashboard.reroute'), success: t('dashboard.success'), fail: t('common.fail') }
   return map[phase] || phase
 }
 

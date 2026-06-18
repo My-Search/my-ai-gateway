@@ -1,8 +1,8 @@
 <template>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">模型关联 - {{ model?.modelName }}</div>
-      <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> 返回列表</router-link>
+      <div class="card-title">{{ t('model.rels.title').replace('{name}', model?.modelName || '') }}</div>
+      <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
     </div>
 
     <div class="action-bar">
@@ -10,14 +10,14 @@
         <SearchableSelect
           v-model="selectedModelIds"
           :options="selectOptions"
-          placeholder="-- 选择渠道模型 --"
+          :placeholder="t('model.rels.selectModel')"
           :multiple="true"
           :width="300"
           :dropdown-width="500"
         />
-        <button class="btn btn-primary btn-sm" :disabled="selectedModelIds.length === 0" @click="addRel"><SvgIcon name="link" :size="14" /> 添加关联</button>
+        <button class="btn btn-primary btn-sm" :disabled="selectedModelIds.length === 0" @click="addRel"><SvgIcon name="link" :size="14" /> {{ t('model.rels.addRel') }}</button>
         <button v-if="isDirty" class="btn btn-primary btn-sm" :disabled="isSaving" @click="saveOrder">
-          <SvgIcon name="check" :size="14" /> {{ isSaving ? '保存中...' : '保存顺序' }}
+          <SvgIcon name="check" :size="14" /> {{ isSaving ? t('common.saving') : t('model.rels.saveOrder') }}
         </button>
       </div>
     </div>
@@ -26,10 +26,10 @@
       <table>
         <thead>
           <tr>
-            <th>排序</th>
-            <th>渠道</th>
-            <th>模型</th>
-            <th>操作</th>
+            <th>{{ t('model.rels.sort') }}</th>
+            <th>{{ t('model.rels.channel') }}</th>
+            <th>{{ t('model.rels.model') }}</th>
+            <th>{{ t('model.rels.actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -37,28 +37,32 @@
             v-for="(rel, index) in rels"
             :key="rel.id"
             draggable="true"
-            :class="{ dragging: draggingIndex === index, 'drag-over': dragOverIndex === index && draggingIndex !== index }"
+            :class="{
+              dragging: draggingIndex === index,
+              'drag-over-before': dragOverIndex === index && insertPosition === 'before' && draggingIndex !== index,
+              'drag-over-after': dragOverIndex === index && insertPosition === 'after' && draggingIndex !== index
+            }"
             @dragstart="onDragStart(index)"
             @dragover="onDragOver(index, $event)"
             @drop="onDrop(index)"
             @dragend="onDragEnd"
           >
-            <td><span class="drag-handle" title="拖拽排序">≡</span></td>
+            <td><span class="drag-handle" :title="t('model.rels.dragSort')">≡</span></td>
             <td>{{ rel.channelName }}</td>
             <td><code class="model-tag">{{ rel.channelModelName }}</code></td>
             <td>
-              <button class="btn btn-sm btn-danger" @click="removeRel(rel)"><SvgIcon name="trash" :size="14" /> 删除</button>
+              <button class="btn btn-sm btn-danger" @click="removeRel(rel)"><SvgIcon name="trash" :size="14" /> {{ t('model.rels.delete') }}</button>
             </td>
           </tr>
           <tr v-if="!rels.length">
-            <td colspan="4" style="text-align:center;color:var(--text-muted);padding:40px;">暂无关联</td>
+            <td colspan="4" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
           </tr>
         </tbody>
       </table>
     </div>
   </div>
 
-  <!-- 通用弹框 -->
+  <!-- Common Dialog -->
   <Dialog
     v-model="dialogVisible"
     :title="dialogTitle"
@@ -73,10 +77,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from '@/composables/useI18n'
 import { modelApi, type CustomModel, type ModelChannelRel } from '@/api/model'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
 import Dialog from '@/components/common/Dialog.vue'
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const model = ref<CustomModel | null>(null)
@@ -84,16 +90,17 @@ const rels = ref<ModelChannelRel[]>([])
 const availableModels = ref<any[]>([])
 const selectedModelIds = ref<number[]>([])
 
-// 拖拽排序状态
+  // Drag and drop sort state
 const draggingIndex = ref<number | null>(null)
 const dragOverIndex = ref<number | null>(null)
+const insertPosition = ref<'before' | 'after'>('before')
 const isDirty = ref(false)
 const originalRelIds = ref<number[]>([])
 const isSaving = ref(false)
 
-/* ---------- 弹框状态 ---------- */
+/* ---------- Dialog state ---------- */
 const dialogVisible = ref(false)
-const dialogTitle = ref('提示')
+const dialogTitle = ref(t('common.prompt'))
 const dialogMessage = ref('')
 const dialogType = ref<'alert' | 'confirm'>('alert')
 const dialogConfirmClass = ref('btn-primary')
@@ -106,7 +113,7 @@ function openDialog(opts: {
   confirmClass?: string
   onConfirm?: () => void
 }) {
-  dialogTitle.value = opts.title ?? '提示'
+  dialogTitle.value = opts.title ?? t('common.prompt')
   dialogMessage.value = opts.message
   dialogType.value = opts.type ?? 'alert'
   dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
@@ -121,7 +128,7 @@ function onDialogConfirm() {
 /* ------------------------------ */
 
 const selectOptions = computed(() => {
-  // 过滤已关联的模型
+  // Filter out already-linked models
   const existingIds = new Set(rels.value.map(r => r.channelModelId))
   return availableModels.value
     .filter(am => !existingIds.has(am.id))
@@ -141,7 +148,7 @@ async function loadData() {
     isDirty.value = false
     availableModels.value = res.data.availableModels
   } catch (e: any) {
-    openDialog({ title: '加载失败', message: e.message })
+    openDialog({ title: t('error.loadFailed'), message: e.message })
     router.push('/admin/model/list')
   }
 }
@@ -156,14 +163,14 @@ async function addRel() {
       await loadData()
     }
   } catch (e: any) {
-    openDialog({ title: '添加失败', message: e.message })
+    openDialog({ title: t('model.rels.addFailed'), message: e.message })
   }
 }
 
 function removeRel(rel: ModelChannelRel) {
   openDialog({
-    title: '确认删除',
-    message: '确认删除此关联？',
+    title: t('common.confirmDelete'),
+    message: t('model.rels.deleteConfirm'),
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: async () => {
@@ -171,7 +178,7 @@ function removeRel(rel: ModelChannelRel) {
         await modelApi.removeRel(rel.id)
         await loadData()
       } catch (e: any) {
-        openDialog({ title: '删除失败', message: e.message })
+        openDialog({ title: t('model.rels.deleteFailed'), message: e.message })
       }
     }
   })
@@ -184,6 +191,9 @@ function onDragStart(index: number) {
 function onDragOver(index: number, e: DragEvent) {
   e.preventDefault()
   dragOverIndex.value = index
+  const tr = e.currentTarget as HTMLElement
+  const rect = tr.getBoundingClientRect()
+  insertPosition.value = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
 }
 
 function onDrop(index: number) {
@@ -191,7 +201,14 @@ function onDrop(index: number) {
 
   const newRels = [...rels.value]
   const [moved] = newRels.splice(draggingIndex.value, 1)
-  newRels.splice(index, 0, moved)
+
+  // Calculate insert position: before → insert before target, after → insert after target
+  // Note: array has changed after splice, need to adjust index
+  let insertAt = insertPosition.value === 'after' ? index + 1 : index
+  if (draggingIndex.value < index && insertAt > 0) {
+    insertAt-- // One item removed above, target position shifted up
+  }
+  newRels.splice(insertAt, 0, moved)
   rels.value = newRels
 
   const currentIds = rels.value.map(r => r.id)
@@ -209,15 +226,13 @@ function onDragEnd() {
 async function saveOrder() {
   isSaving.value = true
   try {
-    const updates = rels.value.map((rel, index) =>
-      modelApi.updateRelSort(rel.id, index + 1)
-    )
-    await Promise.all(updates)
-    isDirty.value = false // 保存成功后隐藏保存按钮
+    const sortedRelIds = rels.value.map(r => r.id)
+    await modelApi.batchUpdateSortOrders(sortedRelIds)
+    isDirty.value = false // Hide save button after successful save
     await loadData()
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e)
-    openDialog({ title: '保存失败', message })
+    openDialog({ title: t('model.rels.saveFailed'), message })
   } finally {
     isSaving.value = false
   }
@@ -237,12 +252,17 @@ tr[draggable="true"]:active {
 
 tr.dragging {
   opacity: 0.5;
-  background-color: var(--bg-hover, #f5f5f5);
+  background-color: var(--bg-hover);
 }
 
-tr.drag-over {
-  background-color: var(--primary-light, #e3f2fd);
-  box-shadow: inset 0 -2px 0 var(--primary, #2196f3);
+tr.drag-over-before {
+  box-shadow: inset 0 2px 0 var(--accent-blue);
+  background-color: color-mix(in srgb, var(--accent-blue) 6%, transparent);
+}
+
+tr.drag-over-after {
+  box-shadow: inset 0 -2px 0 var(--accent-blue);
+  background-color: color-mix(in srgb, var(--accent-blue) 6%, transparent);
 }
 
 .drag-handle {

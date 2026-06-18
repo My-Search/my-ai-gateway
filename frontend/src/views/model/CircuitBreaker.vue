@@ -1,42 +1,42 @@
 <template>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">熔断配置 - {{ model?.modelName }}</div>
-      <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> 返回列表</router-link>
+      <div class="card-title">{{ t('cb.title').replace('{name}', model?.modelName || '') }}</div>
+      <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
     </div>
     <form @submit.prevent="handleSave" style="max-width:600px;">
       <div class="form-group">
-        <label>熔断开关</label>
+        <label>{{ t('cb.enabled') }}</label>
         <select v-model.number="config.enabled" class="form-control">
-          <option :value="1">开启</option>
-          <option :value="0">关闭</option>
+          <option :value="1">{{ t('cb.on') }}</option>
+          <option :value="0">{{ t('cb.off') }}</option>
         </select>
       </div>
       <div class="form-group">
-        <label>熔断范围</label>
+        <label>{{ t('cb.scope') }}</label>
         <select v-model="config.circuitBreakScope" class="form-control">
-          <option value="channel">渠道级（按 API Key 熔断）</option>
-          <option value="model">模型级</option>
+          <option value="channel">{{ t('cb.scopeChannel') }}</option>
+          <option value="model">{{ t('cb.scopeModel') }}</option>
         </select>
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label>重试次数</label>
+          <label>{{ t('cb.retryCount') }}</label>
           <input v-model.number="config.retryCount" type="number" class="form-control" min="0" />
         </div>
         <div class="form-group">
-          <label>熔断持续时间 (秒)</label>
+          <label>{{ t('cb.duration') }}</label>
           <input v-model.number="config.circuitBreakDuration" type="number" class="form-control" min="1" />
         </div>
       </div>
       <div style="display:flex;gap:8px;margin-top:24px;">
-        <button type="submit" class="btn btn-primary" :disabled="saving"><SvgIcon name="check" :size="14" /> {{ saving ? '保存中...' : '保存' }}</button>
-        <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="x" :size="14" /> 取消</router-link>
+        <button type="submit" class="btn btn-primary" :disabled="saving"><SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('cb.save') }}</button>
+        <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="x" :size="14" /> {{ t('cb.cancel') }}</router-link>
       </div>
     </form>
   </div>
 
-  <!-- 通用弹框 -->
+  <!-- Common Dialog -->
   <Dialog
     v-model="dialogVisible"
     :title="dialogTitle"
@@ -50,9 +50,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from '@/composables/useI18n'
 import { modelApi, type CustomModel, type CircuitBreakerConfig } from '@/api/model'
 import Dialog from '@/components/common/Dialog.vue'
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const model = ref<CustomModel | null>(null)
@@ -62,9 +64,9 @@ const config = ref<CircuitBreakerConfig>({
   circuitBreakDuration: 60, circuitBreakScope: 'model'
 })
 
-/* ---------- 弹框状态 ---------- */
+/* ---------- Dialog state ---------- */
 const dialogVisible = ref(false)
-const dialogTitle = ref('提示')
+const dialogTitle = ref(t('common.prompt'))
 const dialogMessage = ref('')
 const dialogType = ref<'alert' | 'confirm'>('alert')
 let dialogOnConfirm: (() => void) | null = null
@@ -75,7 +77,7 @@ function openDialog(opts: {
   type?: 'alert' | 'confirm'
   onConfirm?: () => void
 }) {
-  dialogTitle.value = opts.title ?? '提示'
+  dialogTitle.value = opts.title ?? t('common.prompt')
   dialogMessage.value = opts.message
   dialogType.value = opts.type ?? 'alert'
   dialogOnConfirm = opts.onConfirm ?? null
@@ -99,7 +101,7 @@ onMounted(async () => {
       config.value.modelId = id
     }
   } catch (e: any) {
-    openDialog({ title: '加载失败', message: e.message })
+    openDialog({ title: t('error.loadFailed'), message: e.message })
     router.push('/admin/model/list')
   }
 })
@@ -108,9 +110,9 @@ async function handleSave() {
   saving.value = true
   try {
     await modelApi.saveCircuitBreaker(Number(route.params.id), config.value)
-    openDialog({ title: '成功', message: '熔断配置保存成功', onConfirm: () => router.push('/admin/model/list') })
+    openDialog({ title: t('common.success'), message: t('cb.saveSuccess'), onConfirm: () => router.push('/admin/model/list') })
   } catch (e: any) {
-    openDialog({ title: '保存失败', message: e.message })
+    openDialog({ title: t('cb.saveFailed'), message: e.message })
   } finally {
     saving.value = false
   }

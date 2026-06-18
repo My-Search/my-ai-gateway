@@ -1,22 +1,22 @@
 <template>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">自定义模型列表</div>
-      <router-link to="/admin/model/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> 添加模型</router-link>
+      <div class="card-title">{{ t('model.list.title') }}</div>
+      <router-link to="/admin/model/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> {{ t('model.list.add') }}</router-link>
     </div>
     <div class="table-container">
       <table>
         <thead>
           <tr>
             <th>ID</th>
-            <th>模型名称</th>
-            <th>描述</th>
-            <th>选择策略</th>
-            <th>关联模型</th>
-            <th>熔断配置</th>
-            <th>状态</th>
-            <th>创建时间</th>
-            <th>操作</th>
+            <th>{{ t('model.list.modelName') }}</th>
+            <th>{{ t('model.list.description') }}</th>
+            <th>{{ t('model.list.strategy') }}</th>
+            <th>{{ t('model.list.linkedModels') }}</th>
+            <th>{{ t('model.list.circuitBreaker') }}</th>
+            <th>{{ t('model.list.status') }}</th>
+            <th>{{ t('model.list.createdAt') }}</th>
+            <th>{{ t('model.list.actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -32,26 +32,26 @@
               </span>
             </td>
             <td>
-              <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> 管理关联</router-link>
+              <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> {{ t('model.list.manageRels') }}</router-link>
             </td>
             <td>
-              <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="zap" :size="14" /> 配置</router-link>
+              <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="zap" :size="14" /> {{ t('model.list.config') }}</router-link>
             </td>
             <td>
-              <span v-if="m.enabled === 1" class="badge badge-success">启用</span>
-              <span v-else class="badge badge-danger">禁用</span>
+              <span v-if="m.enabled === 1" class="badge badge-success">{{ t('common.enabled') }}</span>
+              <span v-else class="badge badge-danger">{{ t('common.disabled') }}</span>
             </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ m.createdAt }}</td>
             <td>
               <div style="display:flex;gap:6px;">
-                <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> 编辑</router-link>
-                <button class="btn btn-sm btn-danger" @click="confirmDelete(m)"><SvgIcon name="trash" :size="14" /> 删除</button>
+                <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('model.list.edit') }}</router-link>
+                <button class="btn btn-sm btn-danger" @click="confirmDelete(m)"><SvgIcon name="trash" :size="14" /> {{ t('model.list.delete') }}</button>
               </div>
             </td>
           </tr>
           <tr v-if="!models.length">
             <td colspan="9" style="text-align:center;color:var(--text-muted);padding:40px;">
-              暂无自定义模型，点击右上角「添加模型」创建
+              {{ t('model.list.empty') }}
             </td>
           </tr>
         </tbody>
@@ -61,34 +61,34 @@
     <!-- Mobile card list (visible ≤ 768px) -->
     <div class="mobile-card-list">
       <div v-if="!models.length" class="empty-state">
-        暂无自定义模型，点击右上角「添加模型」创建
+        {{ t('model.list.empty') }}
       </div>
       <div v-for="m in models" :key="m.id" class="mobile-card">
         <div class="mobile-card-header">
           <strong class="mobile-card-title">{{ m.modelName }}</strong>
-          <span v-if="m.enabled === 1" class="badge badge-success">启用</span>
-          <span v-else class="badge badge-danger">禁用</span>
+          <span v-if="m.enabled === 1" class="badge badge-success">{{ t('common.enabled') }}</span>
+          <span v-else class="badge badge-danger">{{ t('common.disabled') }}</span>
         </div>
         <div class="mobile-card-row">
-          <span class="mobile-card-label">描述:</span>
+          <span class="mobile-card-label">{{ t('model.list.description') }}:</span>
           <span class="mobile-card-value">{{ m.description || '-' }}</span>
         </div>
         <div class="mobile-card-row">
-          <span class="mobile-card-label">策略:</span>
+          <span class="mobile-card-label">{{ t('model.list.strategy') }}:</span>
           <span class="badge" :class="strategyBadge(m.strategy)">{{ strategyLabel(m.strategy) }}</span>
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
-          <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> 管理关联</router-link>
-          <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="zap" :size="14" /> 配置</router-link>
-          <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> 编辑</router-link>
-          <button class="btn btn-sm btn-danger" @click="confirmDelete(m)"><SvgIcon name="trash" :size="14" /> 删除</button>
+          <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> {{ t('model.list.manageRels') }}</router-link>
+          <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="zap" :size="14" /> {{ t('model.list.config') }}</router-link>
+          <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('model.list.edit') }}</router-link>
+          <button class="btn btn-sm btn-danger" @click="confirmDelete(m)"><SvgIcon name="trash" :size="14" /> {{ t('model.list.delete') }}</button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- 通用弹框 -->
+  <!-- Common Dialog -->
   <Dialog
     v-model="dialogVisible"
     :title="dialogTitle"
@@ -102,14 +102,17 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useI18n } from '@/composables/useI18n'
 import { modelApi, type CustomModel } from '@/api/model'
 import Dialog from '@/components/common/Dialog.vue'
 
+const { t } = useI18n()
+
 const models = ref<CustomModel[]>([])
 
-/* ---------- 弹框状态 ---------- */
+/* ---------- Dialog state ---------- */
 const dialogVisible = ref(false)
-const dialogTitle = ref('提示')
+const dialogTitle = ref(t('common.prompt'))
 const dialogMessage = ref('')
 const dialogType = ref<'alert' | 'confirm'>('alert')
 const dialogConfirmClass = ref('btn-primary')
@@ -122,7 +125,7 @@ function openDialog(opts: {
   confirmClass?: string
   onConfirm?: () => void
 }) {
-  dialogTitle.value = opts.title ?? '提示'
+  dialogTitle.value = opts.title ?? t('common.prompt')
   dialogMessage.value = opts.message
   dialogType.value = opts.type ?? 'alert'
   dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
@@ -137,7 +140,7 @@ function onDialogConfirm() {
 /* ------------------------------ */
 
 function strategyLabel(s?: string) {
-  return s === 'random' ? '随机' : s === 'round_robin' ? '轮询' : '故障转移'
+  return s === 'random' ? t('model.list.strategyRandom') : s === 'round_robin' ? t('model.list.strategyRoundRobin') : t('model.list.strategyFailover')
 }
 
 function strategyBadge(s?: string) {
@@ -146,13 +149,13 @@ function strategyBadge(s?: string) {
 
 function confirmDelete(m: CustomModel) {
   openDialog({
-    title: '确认删除',
-    message: `确认删除模型「${m.modelName}」？`,
+    title: t('common.confirmDelete'),
+    message: t('model.list.deleteConfirm').replace('{name}', m.modelName),
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: () => {
       modelApi.delete(m.id!).then(() => loadModels()).catch(e =>
-        openDialog({ title: '删除失败', message: e.message })
+        openDialog({ title: t('error.deleteFailed'), message: e.message })
       )
     }
   })
@@ -163,7 +166,7 @@ async function loadModels() {
     const res = await modelApi.list()
     models.value = res.data
   } catch (e: any) {
-    openDialog({ title: '加载失败', message: e.message })
+    openDialog({ title: t('error.loadFailed'), message: e.message })
   }
 }
 

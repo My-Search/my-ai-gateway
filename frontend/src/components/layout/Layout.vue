@@ -17,9 +17,17 @@
           <span class="page-title">{{ currentTitle }}</span>
           <span class="version-badge">v1.0</span>
         </div>
-        <button class="btn-logout-mobile" @click="handleLogout" title="退出登录">
-          <SvgIcon name="logout" :size="18" />
-        </button>
+        <div class="mobile-header-right">
+          <button class="btn-icon-mobile" @click="toggleTheme" :title="isDark ? t('layout.switchLight') : t('layout.switchDark')">
+            <SvgIcon :name="isDark ? 'sun' : 'moon'" :size="18" />
+          </button>
+          <button class="btn-icon-mobile" @click="toggleLang" :title="t('layout.switchLang')">
+            {{ localeStore.locale === 'zh-CN' ? '中' : 'EN' }}
+          </button>
+          <button class="btn-icon-mobile" @click="handleLogout" :title="t('layout.logout')">
+            <SvgIcon name="logout" :size="18" />
+          </button>
+        </div>
       </div>
 
       <!-- Top header -->
@@ -29,9 +37,15 @@
           <span class="version-tag">v1.0</span>
         </div>
         <div class="header-right">
+          <button class="btn-icon" @click="toggleTheme" :title="isDark ? t('layout.switchLight') : t('layout.switchDark')">
+            <SvgIcon :name="isDark ? 'sun' : 'moon'" :size="16" />
+          </button>
+          <button class="btn-icon" @click="toggleLang" :title="t('layout.switchLang')">
+            {{ localeStore.locale === 'zh-CN' ? '中' : 'EN' }}
+          </button>
           <button class="btn-logout" @click="handleLogout">
             <SvgIcon name="logout" :size="16" />
-            <span>退出</span>
+            <span>{{ t('layout.logout') }}</span>
           </button>
         </div>
       </header>
@@ -49,13 +63,28 @@
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { authApi } from '@/api/auth'
+import { useThemeStore } from '@/stores/theme'
+import { useI18n } from '@/composables/useI18n'
+import { useLocaleStore } from '@/stores/locale'
 import Sidebar from './Sidebar.vue'
 
 const route = useRoute()
 const router = useRouter()
 const sidebarOpen = ref(false)
+const themeStore = useThemeStore()
+const isDark = themeStore.isDark
+const { t } = useI18n()
+const localeStore = useLocaleStore()
 
-const currentTitle = computed(() => (route.meta?.title as string) || '控制台')
+const currentTitle = computed(() => (route.meta?.title as string) || t('layout.console'))
+
+function toggleTheme() {
+  themeStore.toggle()
+}
+
+function toggleLang() {
+  localeStore.toggle()
+}
 
 async function handleLogout() {
   try {
@@ -89,7 +118,7 @@ async function handleLogout() {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0,0,0,0.5);
+  background: rgba(0,0,0,0.6);
   z-index: 99;
 }
 
@@ -141,6 +170,27 @@ async function handleLogout() {
   gap: 8px;
 }
 
+/* Icon-only button in header */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  text-decoration: none;
+  transition: all 0.15s;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-icon:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 .btn-logout {
   display: inline-flex;
   align-items: center;
@@ -159,7 +209,7 @@ async function handleLogout() {
 }
 
 .btn-logout:hover {
-  background: rgba(248, 81, 73, 0.15);
+  background: color-mix(in srgb, var(--accent-red) 15%, transparent);
   color: var(--accent-red);
 }
 
@@ -176,6 +226,32 @@ async function handleLogout() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.mobile-header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.btn-icon-mobile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  text-decoration: none;
+  transition: all 0.15s;
+  border: none;
+  cursor: pointer;
+}
+
+.btn-icon-mobile:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .mobile-header .page-title {
@@ -219,7 +295,7 @@ async function handleLogout() {
 }
 
 .btn-logout-mobile:hover {
-  background: rgba(248, 81, 73, 0.15);
+  background: color-mix(in srgb, var(--accent-red) 15%, transparent);
   color: var(--accent-red);
 }
 

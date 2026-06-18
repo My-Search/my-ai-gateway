@@ -2,39 +2,42 @@
   <aside class="sidebar" :class="{ 'sidebar-open': isOpen }">
     <div class="sidebar-header">
       <h1>My AI Gateway</h1>
-      <div class="subtitle">个人统一网关</div>
+      <div class="subtitle">{{ t('nav.subtitle') }}</div>
     </div>
     <nav class="sidebar-nav">
-      <div class="nav-section">概览</div>
+      <div class="nav-section">{{ t('nav.overview') }}</div>
       <router-link to="/admin/dashboard" @click="$emit('close')">
-        <SvgIcon name="home" :size="16" class="nav-icon" /> 仪表盘
+        <SvgIcon name="home" :size="16" class="nav-icon" /> {{ t('nav.dashboard') }}
       </router-link>
 
-      <div class="nav-section">资源管理</div>
+      <div class="nav-section">{{ t('nav.resources') }}</div>
       <router-link to="/admin/channel/list" @click="$emit('close')">
-        <SvgIcon name="channel" :size="16" class="nav-icon" /> 渠道管理
+        <SvgIcon name="channel" :size="16" class="nav-icon" /> {{ t('nav.channels') }}
       </router-link>
       <router-link to="/admin/model/list" @click="$emit('close')">
-        <SvgIcon name="model" :size="16" class="nav-icon" /> 模型管理
+        <SvgIcon name="model" :size="16" class="nav-icon" /> {{ t('nav.models') }}
       </router-link>
       <router-link to="/admin/apikey/list" @click="$emit('close')">
-        <SvgIcon name="key" :size="16" class="nav-icon" /> API密钥
+        <SvgIcon name="key" :size="16" class="nav-icon" /> {{ t('nav.apiKeys') }}
       </router-link>
 
-      <div class="nav-section">监控</div>
+      <div class="nav-section">{{ t('nav.monitoring') }}</div>
       <router-link to="/admin/log/list" @click="$emit('close')">
-        <SvgIcon name="log" :size="16" class="nav-icon" /> 请求日志
+        <SvgIcon name="log" :size="16" class="nav-icon" /> {{ t('nav.logs') }}
       </router-link>
 
-      <div class="nav-section">工具</div>
+      <div class="nav-section">{{ t('nav.tools') }}</div>
       <router-link to="/admin/playground" @click="$emit('close')">
-        <SvgIcon name="chat" :size="16" class="nav-icon" /> 模型测试
+        <SvgIcon name="chat" :size="16" class="nav-icon" /> {{ t('nav.playground') }}
       </router-link>
     </nav>
+
   </aside>
 </template>
 
 <script setup lang="ts">
+import { useI18n } from '@/composables/useI18n'
+
 defineProps<{
   isOpen: boolean
 }>()
@@ -42,6 +45,8 @@ defineProps<{
 defineEmits<{
   close: []
 }>()
+
+const { t } = useI18n()
 </script>
 
 <style scoped>
@@ -112,7 +117,7 @@ defineEmits<{
 
 .sidebar-nav a.router-link-exact-active,
 .sidebar-nav a.router-link-active {
-  background: rgba(88, 166, 255, 0.08);
+  background: color-mix(in srgb, var(--accent-blue) 8%, transparent);
   color: var(--accent-blue);
   border-right-color: var(--accent-blue);
   font-weight: 500;

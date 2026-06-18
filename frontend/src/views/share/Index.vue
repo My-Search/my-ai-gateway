@@ -1,32 +1,27 @@
 <template>
   <div class="share-container">
-    <!-- 加载状态 -->
     <div v-if="loading" class="loading-state">
       <div class="loading-spinner"></div>
-      <p>加载中...</p>
+      <p>{{ t('share.loading') }}</p>
     </div>
 
-    <!-- 错误状态 -->
     <div v-else-if="error" class="error-state">
       <div class="error-icon">⚠️</div>
-      <h2>加载失败</h2>
+      <h2>{{ t('share.loadFailed') }}</h2>
       <p>{{ error }}</p>
     </div>
 
-    <!-- 主要内容 -->
     <div v-else class="share-content">
-      <!-- 头部信息 -->
       <div class="share-header">
-        <h1>API 密钥使用说明</h1>
-        <p class="subtitle">使用此密钥调用 AI 模型 API</p>
+        <h1>{{ t('share.title') }}</h1>
+        <p class="subtitle">{{ t('share.subtitle') }}</p>
       </div>
 
-      <!-- 接口格式选择 -->
       <div class="card">
         <div class="card-header">
           <div class="card-title">
             <SvgIcon name="rocket" :size="18" />
-            选择接口格式
+            {{ t('share.selectFormat') }}
           </div>
         </div>
         <div class="card-body">
@@ -38,7 +33,7 @@
             >
               <SvgIcon name="openai" :size="24" class="format-icon" />
               <span class="format-name">OpenAI</span>
-              <span class="format-desc">兼容 OpenAI API 格式</span>
+              <span class="format-desc">{{ t('share.formatOpenAI') }}</span>
             </button>
             <button
               class="format-btn"
@@ -47,22 +42,20 @@
             >
               <SvgIcon name="anthropic" :size="24" class="format-icon" />
               <span class="format-name">Anthropic</span>
-              <span class="format-desc">兼容 Anthropic API 格式</span>
+              <span class="format-desc">{{ t('share.formatAnthropic') }}</span>
             </button>
           </div>
         </div>
       </div>
 
-      <!-- 接口信息 -->
       <div class="card">
         <div class="card-header">
           <div class="card-title">
             <SvgIcon name="info" :size="18" />
-            接口信息
+            {{ t('share.apiInfo') }}
           </div>
         </div>
         <div class="card-body">
-          <!-- Base URL -->
           <div class="info-row">
             <span class="info-label">Base URL:</span>
             <div class="info-value-with-copy">
@@ -73,7 +66,6 @@
             </div>
           </div>
 
-          <!-- API Key -->
           <div class="info-row">
             <span class="info-label">API Key:</span>
             <div class="info-value-with-copy">
@@ -86,18 +78,17 @@
         </div>
       </div>
 
-      <!-- 可用模型 -->
       <div class="card">
         <div class="card-header">
           <div class="card-title">
             <SvgIcon name="model" :size="18" />
-            可用模型
+            {{ t('share.availableModels') }}
           </div>
-          <span class="model-count">{{ filteredModels.length }} 个模型</span>
+          <span class="model-count">{{ t('share.modelCount').replace('{count}', filteredModels.length) }}</span>
         </div>
         <div class="card-body">
           <div v-if="filteredModels.length === 0" class="empty-state">
-            暂无该接口格式的可用模型
+            {{ t('share.noModels') }}
           </div>
           <div v-else class="model-tags">
             <span
@@ -111,12 +102,11 @@
         </div>
       </div>
 
-      <!-- 在线测试 -->
       <div class="card">
         <div class="card-header">
           <div class="card-title">
             <SvgIcon name="ai-chat" :size="18" />
-            在线测试
+            {{ t('share.onlineTest') }}
           </div>
         </div>
         <div class="card-body chat-card-body">
@@ -128,7 +118,6 @@
       </div>
     </div>
 
-    <!-- Toast 提示 -->
     <div v-if="toast.show" class="toast" :class="toast.type">
       {{ toast.message }}
     </div>
@@ -140,6 +129,9 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { shareApi, type ShareData } from '@/api/share'
 import ChatPlayground from '@/components/chat/ChatPlayground.vue'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 const route = useRoute()
 
@@ -188,7 +180,7 @@ onMounted(async () => {
   const shareCode = route.params.code as string
 
   if (!shareCode) {
-    error.value = '无效的分享链接'
+    error.value = t('share.invalidLink')
     loading.value = false
     return
   }
@@ -199,7 +191,7 @@ onMounted(async () => {
     shareData.value = res.data
     loading.value = false
   } catch (e: any) {
-    error.value = e.message || '加载失败'
+    error.value = e.message || t('share.loadFailed')
     loading.value = false
   }
 })
@@ -215,9 +207,9 @@ function showToast(message: string, type: 'success' | 'error' = 'success') {
 async function copyText(text: string, label: string = '') {
   try {
     await navigator.clipboard.writeText(text)
-    showToast(`${label || '内容'}已复制`)
+    showToast(t('share.copied').replace('{label}', label || ''))
   } catch {
-    showToast('复制失败', 'error')
+    showToast(t('share.copyFailed'), 'error')
   }
 }
 </script>

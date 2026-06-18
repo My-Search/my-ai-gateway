@@ -1,23 +1,23 @@
 <template>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">渠道列表</div>
-      <router-link to="/admin/channel/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> 添加渠道</router-link>
+      <div class="card-title">{{ t('channel.list.title') }}</div>
+      <router-link to="/admin/channel/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> {{ t('channel.list.add') }}</router-link>
     </div>
     <div class="table-container">
       <table>
         <thead>
           <tr>
             <th>ID</th>
-            <th>渠道名称</th>
-            <th>类型</th>
-            <th>接口地址</th>
-            <th>状态</th>
-            <th>模型数</th>
-            <th>请求次数</th>
-            <th>Token 用量</th>
-            <th>创建时间</th>
-            <th>操作</th>
+            <th>{{ t('channel.list.name') }}</th>
+            <th>{{ t('channel.list.type') }}</th>
+            <th>{{ t('channel.list.endpoint') }}</th>
+            <th>{{ t('channel.list.status') }}</th>
+            <th>{{ t('channel.list.modelCount') }}</th>
+            <th>{{ t('channel.list.requestCount') }}</th>
+            <th>{{ t('channel.list.tokenUsage') }}</th>
+            <th>{{ t('channel.list.createdAt') }}</th>
+            <th>{{ t('channel.list.actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -30,14 +30,14 @@
             </td>
             <td>
               <span v-if="ch.enabled === 1" class="badge badge-success">
-                <span class="status-dot active"></span>启用
+                <span class="status-dot active"></span>{{ t('common.enabled') }}
               </span>
               <span v-else class="badge badge-danger">
-                <span class="status-dot inactive"></span>禁用
+                <span class="status-dot inactive"></span>{{ t('common.disabled') }}
               </span>
             </td>
             <td>
-              <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary">查看</router-link>
+              <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary">{{ t('channel.list.view') }}</router-link>
             </td>
             <td style="text-align:right;font-variant-numeric:tabular-nums;">
               <span style="font-weight:600;">{{ formatNumber(ch.requestCount) }}</span>
@@ -45,11 +45,11 @@
             <td style="font-size:12px;font-variant-numeric:tabular-nums;">
               <template v-if="ch.totalTokens && ch.totalTokens > 0">
                 <div style="display:flex;flex-direction:column;gap:2px;">
-                  <span :title="`输入: ${formatNumber(ch.promptTokens)} | 输出: ${formatNumber(ch.completionTokens)}`">
+                  <span :title="t('channel.models.inputTokens') + ': ' + formatNumber(ch.promptTokens) + ' | ' + t('channel.models.outputTokens') + ': ' + formatNumber(ch.completionTokens)">
                     {{ formatTokens(ch.totalTokens) }}
                   </span>
                   <span style="color:var(--text-muted);font-size:11px;">
-                    入 {{ formatTokens(ch.promptTokens) }} / 出 {{ formatTokens(ch.completionTokens) }}
+                    {{ t('channel.models.inputTokens') }} {{ formatTokens(ch.promptTokens) }} / {{ t('channel.models.outputTokens') }} {{ formatTokens(ch.completionTokens) }}
                   </span>
                 </div>
               </template>
@@ -58,17 +58,17 @@
             <td style="font-size:12px;color:var(--text-muted);">{{ ch.createdAt }}</td>
             <td>
               <div style="display:flex;gap:6px;flex-wrap:nowrap;">
-                <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> 编辑</router-link>
-                <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> 测试</button>
+                <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('common.edit') }}</router-link>
+                <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> {{ t('channel.list.quickTest') }}</button>
                 <router-link :to="`/admin/channel/reload/${ch.id}`" class="btn btn-sm btn-secondary"
-                  @click.prevent="reloadModels(ch.id!)"><SvgIcon name="refresh" :size="14" /> 刷新模型</router-link>
-                <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)"><SvgIcon name="trash" :size="14" /> 删除</button>
+                  @click.prevent="reloadModels(ch.id!)"><SvgIcon name="refresh" :size="14" /> {{ t('channel.list.refreshModels') }}</router-link>
+                <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)"><SvgIcon name="trash" :size="14" /> {{ t('common.delete') }}</button>
               </div>
             </td>
           </tr>
           <tr v-if="!channels.length">
             <td colspan="10" style="text-align:center;color:var(--text-muted);padding:40px;">
-              暂无渠道数据，点击右上角「添加渠道」开始
+              {{ t('channel.list.empty') }}
             </td>
           </tr>
         </tbody>
@@ -81,48 +81,48 @@
         <div class="mobile-card-header">
           <strong class="mobile-card-title">{{ ch.name }}</strong>
           <span v-if="ch.enabled === 1" class="badge badge-success">
-            <span class="status-dot active"></span>启用
+            <span class="status-dot active"></span>{{ t('common.enabled') }}
           </span>
           <span v-else class="badge badge-danger">
-            <span class="status-dot inactive"></span>禁用
+            <span class="status-dot inactive"></span>{{ t('common.disabled') }}
           </span>
         </div>
         <div class="mobile-card-body">
           <div class="mobile-card-row">
-            <span class="mobile-card-label">类型</span>
+            <span class="mobile-card-label">{{ t('channel.list.type') }}</span>
             <span class="badge badge-info">{{ ch.channelType }}</span>
           </div>
           <div class="mobile-card-row">
-            <span class="mobile-card-label">地址</span>
+            <span class="mobile-card-label">{{ t('channel.list.endpoint') }}</span>
             <span class="mobile-card-value mobile-card-url">{{ ch.baseUrl }}</span>
           </div>
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-stats">
           <div class="mobile-card-stat">
-            <span class="mobile-card-stat-label">请求</span>
+            <span class="mobile-card-stat-label">{{ t('channel.list.requestCount') }}</span>
             <span class="mobile-card-stat-value">{{ formatNumber(ch.requestCount) }}</span>
           </div>
           <div class="mobile-card-stat">
-            <span class="mobile-card-stat-label">Token</span>
+            <span class="mobile-card-stat-label">{{ t('channel.list.tokenUsage') }}</span>
             <span class="mobile-card-stat-value">{{ formatTokens(ch.totalTokens) }}</span>
           </div>
           <div class="mobile-card-stat">
-            <span class="mobile-card-stat-label">创建时间</span>
+            <span class="mobile-card-stat-label">{{ t('channel.list.createdAt') }}</span>
             <span class="mobile-card-stat-value">{{ ch.createdAt }}</span>
           </div>
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
-          <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> 编辑</router-link>
-          <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> 测试</button>
+          <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('common.edit') }}</router-link>
+          <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> {{ t('channel.list.quickTest') }}</button>
           <router-link :to="`/admin/channel/reload/${ch.id}`" class="btn btn-sm btn-secondary"
-            @click.prevent="reloadModels(ch.id!)"><SvgIcon name="refresh" :size="14" /> 刷新</router-link>
-          <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)"><SvgIcon name="trash" :size="14" /> 删除</button>
+            @click.prevent="reloadModels(ch.id!)"><SvgIcon name="refresh" :size="14" /> {{ t('channel.list.refresh') }}</router-link>
+          <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)"><SvgIcon name="trash" :size="14" /> {{ t('common.delete') }}</button>
         </div>
       </div>
       <div v-if="!channels.length" class="mobile-card-empty">
-        暂无渠道数据，点击右上角「添加渠道」开始
+        {{ t('channel.list.empty') }}
       </div>
     </div>
 
@@ -130,46 +130,46 @@
     <div v-if="showTestModal" class="modal-overlay" @click.self="closeTestModal">
       <div class="modal-box">
         <div class="modal-header">
-          <SvgIcon name="zap" :size="18" /> 渠道快速测试
+          <SvgIcon name="zap" :size="18" /> {{ t('channel.list.quickTest') }}
           <button class="modal-close" @click="closeTestModal">&times;</button>
         </div>
         <div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">
-          渠道: {{ testChannel?.name }}
+          {{ t('channel.list.name') }}: {{ testChannel?.name }}
         </div>
         <div class="form-group">
-          <label>测试模型</label>
+          <label>{{ t('channel.list.testModel') }}</label>
           <select v-model="testSelectedModel" class="form-control" :disabled="testModels.length === 0">
-            <option v-if="testModels.length === 0" value="">暂无可用模型</option>
+            <option v-if="testModels.length === 0" value="">{{ t('channel.list.noModels') }}</option>
             <option v-for="m in testModels" :key="m.modelName" :value="m.modelName">
               {{ m.displayName || m.modelName }}
             </option>
           </select>
         </div>
         <div class="form-group">
-          <label>测试消息</label>
+          <label>{{ t('channel.list.testMessage') }}</label>
           <textarea v-model="testMessage" class="form-control" rows="3"></textarea>
         </div>
         <div v-if="testResult" class="test-result" :class="testResult.success ? 'success' : 'error'">
           <template v-if="testResult.success">
-            <SvgIcon name="check-bold" :size="16" /> 测试成功 ({{ testResult.responseTime }}ms)
+            <SvgIcon name="check-bold" :size="16" /> {{ t('channel.list.testSuccess') }} ({{ testResult.responseTime }}ms)
             <pre>{{ testResult.response }}</pre>
           </template>
           <template v-else>
-            <SvgIcon name="x" :size="16" /> 测试失败
+            <SvgIcon name="x" :size="16" /> {{ t('channel.list.testFail') }}
             <pre>{{ testResult.error }}</pre>
           </template>
         </div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" @click="closeTestModal"><SvgIcon name="x" :size="14" /> 关闭</button>
+          <button class="btn btn-secondary" @click="closeTestModal"><SvgIcon name="x" :size="14" /> {{ t('common.close') }}</button>
           <button class="btn btn-primary" :disabled="testLoading" @click="sendTestRequest">
-            <SvgIcon name="send" :size="14" /> {{ testLoading ? '测试中...' : '发送测试' }}
+            <SvgIcon name="send" :size="14" /> {{ testLoading ? t('channel.list.testing') : t('channel.list.sendTest') }}
           </button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- 通用弹框 -->
+  <!-- Dialog -->
   <Dialog
     v-model="dialogVisible"
     :title="dialogTitle"
@@ -184,10 +184,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from '@/composables/useI18n'
 import { channelApi, type Channel, type ChannelModel } from '@/api/channel'
 import Dialog from '@/components/common/Dialog.vue'
 
 const router = useRouter()
+const { t } = useI18n()
 const channels = ref<Channel[]>([])
 const showTestModal = ref(false)
 const testChannel = ref<Channel | null>(null)
@@ -197,9 +199,9 @@ const testMessage = ref('Hello, this is a test message.')
 const testResult = ref<{ success: boolean; response?: string; responseTime?: number; error?: string } | null>(null)
 const testLoading = ref(false)
 
-/* ---------- 弹框状态 ---------- */
+/* ---------- Dialog state ---------- */
 const dialogVisible = ref(false)
-const dialogTitle = ref('提示')
+const dialogTitle = ref(t('dialog.title'))
 const dialogMessage = ref('')
 const dialogType = ref<'alert' | 'confirm'>('alert')
 const dialogConfirmClass = ref('btn-primary')
@@ -212,7 +214,7 @@ function openDialog(opts: {
   confirmClass?: string
   onConfirm?: () => void
 }) {
-  dialogTitle.value = opts.title ?? '提示'
+  dialogTitle.value = opts.title ?? t('dialog.title')
   dialogMessage.value = opts.message
   dialogType.value = opts.type ?? 'alert'
   dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
@@ -231,7 +233,7 @@ async function loadChannels() {
     const res = await channelApi.list()
     channels.value = res.data
   } catch (e: any) {
-    openDialog({ title: '加载失败', message: '加载渠道列表失败: ' + e.message })
+    openDialog({ title: t('error.loadFailed'), message: t('error.loadFailed') + ': ' + e.message })
   }
 }
 
@@ -241,7 +243,7 @@ async function quickTest(ch: Channel) {
   testResult.value = null
   testSelectedModel.value = ''
   testModels.value = []
-  // 获取渠道的模型列表供用户选择
+  // Fetch channel models for user selection
   try {
     const res = await channelApi.getModels(ch.id!)
     testModels.value = res.data.models || []
@@ -249,7 +251,7 @@ async function quickTest(ch: Channel) {
       testSelectedModel.value = testModels.value[0].modelName
     }
   } catch {
-    // 模型列表加载失败不影响测试功能，只是没有下拉选择
+    // Model list load failure doesn't block test, just no dropdown
   }
   showTestModal.value = true
 }
@@ -274,16 +276,16 @@ async function sendTestRequest() {
 
 function reloadModels(id: number) {
   openDialog({
-    title: '确认重新加载',
-    message: '确认重新加载模型？将清除当前所有模型。',
+    title: t('channel.list.reloadConfirm'),
+    message: t('channel.list.reloadMsg'),
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: async () => {
       try {
         const res = await channelApi.reloadModels(id)
-        openDialog({ message: res.data.success ? '模型重新加载成功' : '加载失败: ' + res.data.error })
+        openDialog({ message: res.data.success ? t('channel.list.reloadSuccess') : t('error.loadFailed') + ': ' + res.data.error })
       } catch (e: any) {
-        openDialog({ title: '请求失败', message: e.message })
+        openDialog({ title: t('error.unknown'), message: e.message })
       }
     }
   })
@@ -291,19 +293,19 @@ function reloadModels(id: number) {
 
 function confirmDelete(ch: Channel) {
   openDialog({
-    title: '确认删除',
-    message: `确认删除渠道「${ch.name}」？关联数据将被清除。`,
+    title: t('common.confirmDelete'),
+    message: t('channel.list.deleteConfirm').replace('{name}', ch.name),
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: () => {
       channelApi.delete(ch.id!).then(() => loadChannels()).catch(e =>
-        openDialog({ title: '删除失败', message: e.message })
+        openDialog({ title: t('error.deleteFailed'), message: e.message })
       )
     }
   })
 }
 
-/** 格式化数字，千分位 */
+/** Format number with thousands separator */
 function formatNumber(n: number | undefined): string {
   if (n == null) return '0'
   return n.toLocaleString()

@@ -1,24 +1,24 @@
 <template>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">API 密钥列表</div>
-      <button class="btn btn-primary" @click="openForm()"><SvgIcon name="plus" :size="14" /> 添加密钥</button>
+      <div class="card-title">{{ t('apikey.list.title') }}</div>
+      <button class="btn btn-primary" @click="openForm()"><SvgIcon name="plus" :size="14" /> {{ t('apikey.list.add') }}</button>
     </div>
     <div class="alert alert-info">
-      API 密钥用于调用网关的 API。用户请求时需要在 Header 中携带密钥。
+      {{ t('apikey.list.desc') }}
     </div>
     <div class="table-container">
       <table>
         <thead>
           <tr>
             <th>ID</th>
-            <th>密钥名称</th>
-            <th>密钥值</th>
-            <th>状态</th>
-            <th>分享</th>
-            <th>最后使用</th>
-            <th>创建时间</th>
-            <th>操作</th>
+            <th>{{ t('apikey.list.keyName') }}</th>
+            <th>{{ t('apikey.list.keyValue') }}</th>
+            <th>{{ t('apikey.list.status') }}</th>
+            <th>{{ t('apikey.list.share') }}</th>
+            <th>{{ t('apikey.list.lastUsed') }}</th>
+            <th>{{ t('apikey.list.createdAt') }}</th>
+            <th>{{ t('apikey.list.actions') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -29,37 +29,37 @@
               <code class="model-tag" style="user-select:all;cursor:pointer;" @click="copyKey(key.keyValue)">
                 {{ maskKey(key.keyValue) }}
               </code>
-              <button class="copy-btn" @click="copyKey(key.keyValue)" title="复制密钥">
+              <button class="copy-btn" @click="copyKey(key.keyValue)" :title="t('apikey.list.copy')">
                 <SvgIcon name="copy" :size="14" />
               </button>
             </td>
             <td>
               <span v-if="key.enabled === 1" class="badge badge-success">
-                <span class="status-dot active"></span>启用
+                <span class="status-dot active"></span>{{ t('common.enabled') }}
               </span>
               <span v-else class="badge badge-danger">
-                <span class="status-dot inactive"></span>禁用
+                <span class="status-dot inactive"></span>{{ t('common.disabled') }}
               </span>
             </td>
             <td>
-              <span v-if="key.shared === 1" class="share-badge on">已分享</span>
-              <span v-else class="share-badge off">未分享</span>
+              <span v-if="key.shared === 1" class="share-badge on">{{ t('apikey.list.shared') }}</span>
+              <span v-else class="share-badge off">{{ t('apikey.list.notShared') }}</span>
             </td>
-            <td style="font-size:12px;color:var(--text-muted);">{{ key.lastUsedAt || '从未使用' }}</td>
+            <td style="font-size:12px;color:var(--text-muted);">{{ key.lastUsedAt || t('apikey.list.neverUsed') }}</td>
             <td style="font-size:12px;color:var(--text-muted);">{{ key.createdAt }}</td>
             <td>
               <div style="display:flex;gap:6px;align-items:center;">
-                <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)" title="复制分享链接"><SvgIcon name="link" :size="14" /> 分享</button>
-                <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)" title="开启分享并复制链接"><SvgIcon name="link" :size="14" /> 分享</button>
-                <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)"><SvgIcon name="x-bold" :size="14" /> 撤销</button>
-                <button class="btn btn-sm btn-secondary" @click="openForm(key)"><SvgIcon name="edit" :size="14" /> 编辑</button>
-                <button class="btn btn-sm btn-danger" @click="confirmDelete(key)"><SvgIcon name="trash" :size="14" /> 删除</button>
+                <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)" :title="t('apikey.list.shareLink')"><SvgIcon name="link" :size="14" /> {{ t('apikey.list.shareLink') }}</button>
+                <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)" :title="t('apikey.list.shareLink')"><SvgIcon name="link" :size="14" /> {{ t('apikey.list.shareLink') }}</button>
+                <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)"><SvgIcon name="x-bold" :size="14" /> {{ t('apikey.list.revoke') }}</button>
+                <button class="btn btn-sm btn-secondary" @click="openForm(key)"><SvgIcon name="edit" :size="14" /> {{ t('apikey.list.edit') }}</button>
+                <button class="btn btn-sm btn-danger" @click="confirmDelete(key)"><SvgIcon name="trash" :size="14" /> {{ t('apikey.list.delete') }}</button>
               </div>
             </td>
           </tr>
           <tr v-if="!apiKeys.length">
             <td colspan="8" style="text-align:center;color:var(--text-muted);padding:40px;">
-              暂无 API 密钥，点击右上角「添加密钥」创建
+              {{ t('apikey.list.empty') }}
             </td>
           </tr>
         </tbody>
@@ -72,43 +72,43 @@
         <div class="mobile-card-header">
           <strong class="mobile-card-title">{{ key.keyName }}</strong>
           <span v-if="key.enabled === 1" class="badge badge-success">
-            <span class="status-dot active"></span>启用
+            <span class="status-dot active"></span>{{ t('common.enabled') }}
           </span>
           <span v-else class="badge badge-danger">
-            <span class="status-dot inactive"></span>禁用
+            <span class="status-dot inactive"></span>{{ t('common.disabled') }}
           </span>
         </div>
         <div class="mobile-card-row">
-          <span class="mobile-card-label">密钥</span>
+          <span class="mobile-card-label">{{ t('apikey.list.keyValue') }}</span>
           <code class="model-tag" style="user-select:all;cursor:pointer;" @click="copyKey(key.keyValue)">
             {{ maskKey(key.keyValue) }}
           </code>
         </div>
         <div class="mobile-card-row">
-          <span class="mobile-card-label">最后使用</span>
-          <span class="mobile-card-value">{{ key.lastUsedAt || '从未使用' }}</span>
+          <span class="mobile-card-label">{{ t('apikey.list.lastUsed') }}</span>
+          <span class="mobile-card-value">{{ key.lastUsedAt || t('apikey.list.neverUsed') }}</span>
         </div>
         <div class="mobile-card-row">
-          <span class="mobile-card-label">创建时间</span>
+          <span class="mobile-card-label">{{ t('apikey.list.createdAt') }}</span>
           <span class="mobile-card-value">{{ key.createdAt }}</span>
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
-          <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)"><SvgIcon name="link" :size="14" /> 分享</button>
-          <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)"><SvgIcon name="link" :size="14" /> 分享</button>
-          <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)"><SvgIcon name="x-bold" :size="14" /> 撤销</button>
-          <button class="btn btn-sm btn-secondary" @click="copyKey(key.keyValue)"><SvgIcon name="copy" :size="14" /> 复制</button>
-          <button class="btn btn-sm btn-secondary" @click="openForm(key)"><SvgIcon name="edit" :size="14" /> 编辑</button>
-          <button class="btn btn-sm btn-danger" @click="confirmDelete(key)"><SvgIcon name="trash" :size="14" /> 删除</button>
+          <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)"><SvgIcon name="link" :size="14" /> {{ t('apikey.list.shareLink') }}</button>
+          <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)"><SvgIcon name="link" :size="14" /> {{ t('apikey.list.shareLink') }}</button>
+          <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)"><SvgIcon name="x-bold" :size="14" /> {{ t('apikey.list.revoke') }}</button>
+          <button class="btn btn-sm btn-secondary" @click="copyKey(key.keyValue)"><SvgIcon name="copy" :size="14" /> {{ t('apikey.list.copy') }}</button>
+          <button class="btn btn-sm btn-secondary" @click="openForm(key)"><SvgIcon name="edit" :size="14" /> {{ t('apikey.list.edit') }}</button>
+          <button class="btn btn-sm btn-danger" @click="confirmDelete(key)"><SvgIcon name="trash" :size="14" /> {{ t('apikey.list.delete') }}</button>
         </div>
       </div>
       <div v-if="!apiKeys.length" class="mobile-card-empty">
-        暂无 API 密钥，点击右上角「添加密钥」创建
+        {{ t('apikey.list.empty') }}
       </div>
     </div>
   </div>
 
-  <!-- 通用弹框 -->
+  <!-- Common Dialog -->
   <Dialog
     v-model="dialogVisible"
     :title="dialogTitle"
@@ -120,31 +120,31 @@
     {{ dialogMessage }}
   </Dialog>
 
-  <!-- 表单弹框 -->
+  <!-- Form Dialog -->
   <Dialog
     v-model="formDialogVisible"
     :title="formDialogTitle"
     type="confirm"
-    confirm-text="保存"
+    :confirm-text="t('apikey.form.save')"
     width="520px"
     @confirm="handleSave"
     @cancel="closeForm"
   >
     <form @submit.prevent="handleSave" style="margin-top:8px;">
       <div class="form-group">
-        <label for="keyName">密钥名称 *</label>
-        <input id="keyName" v-model="form.keyName" class="form-control" placeholder="如：生产密钥" required />
+        <label for="keyName">{{ t('apikey.form.keyName') }}</label>
+        <input id="keyName" v-model="form.keyName" class="form-control" :placeholder="t('apikey.form.keyNamePlaceholder')" required />
       </div>
       <div class="form-group">
-        <label for="keyValue">密钥值</label>
-        <input id="keyValue" v-model="form.keyValue" class="form-control" :disabled="isEdit" :placeholder="isEdit ? '编辑时不可修改' : '留空则自动生成'" />
-        <div class="form-hint">调用 API 时在 Authorization 头部使用 Bearer 此值，{{ isEdit ? '密钥值创建后不可修改' : '留空将自动生成' }}</div>
+        <label for="keyValue">{{ t('apikey.form.keyValue') }}</label>
+        <input id="keyValue" v-model="form.keyValue" class="form-control" :disabled="isEdit" :placeholder="isEdit ? t('apikey.form.keyValueDisabledHint') : t('apikey.form.keyValuePlaceholder')" />
+        <div class="form-hint">{{ t('apikey.form.keyValueHint') }}, {{ isEdit ? t('apikey.form.editNoModify') : t('apikey.form.autoGenerate') }}</div>
       </div>
       <div class="form-group" style="margin-bottom:0;">
-        <label for="enabled">状态</label>
+        <label for="enabled">{{ t('apikey.list.status') }}</label>
         <select id="enabled" v-model.number="form.enabled" class="form-control">
-          <option :value="1">启用</option>
-          <option :value="0">禁用</option>
+          <option :value="1">{{ t('common.enabled') }}</option>
+          <option :value="0">{{ t('common.disabled') }}</option>
         </select>
       </div>
     </form>
@@ -157,18 +157,21 @@ import { useRouter } from 'vue-router'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { shareApi } from '@/api/share'
 import Dialog from '@/components/common/Dialog.vue'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 const router = useRouter()
 
 const apiKeys = ref<ApiKey[]>([])
 
-/* ---------- 通用弹框状态 ---------- */
+/* ---------- Common Dialog state ---------- */
 const dialogVisible = ref(false)
-const dialogTitle = ref('提示')
+const dialogTitle = ref(t('common.prompt'))
 const dialogMessage = ref('')
 const dialogType = ref<'alert' | 'confirm'>('alert')
 const dialogConfirmClass = ref('btn-primary')
-const dialogConfirmText = ref('确定')
+const dialogConfirmText = ref(t('dialog.confirm'))
 let dialogOnConfirm: (() => void) | null = null
 
 function openDialog(opts: {
@@ -179,11 +182,11 @@ function openDialog(opts: {
   confirmText?: string
   onConfirm?: () => void
 }) {
-  dialogTitle.value = opts.title ?? '提示'
+  dialogTitle.value = opts.title ?? t('common.prompt')
   dialogMessage.value = opts.message
   dialogType.value = opts.type ?? 'alert'
   dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
-  dialogConfirmText.value = opts.confirmText ?? '确定'
+  dialogConfirmText.value = opts.confirmText ?? t('dialog.confirm')
   dialogOnConfirm = opts.onConfirm ?? null
   dialogVisible.value = true
 }
@@ -194,25 +197,25 @@ function onDialogConfirm() {
 }
 /* ------------------------------ */
 
-/* ---------- 表单弹框状态 ---------- */
+/* ---------- Form Dialog state ---------- */
 const formDialogVisible = ref(false)
-const formDialogTitle = ref('添加密钥')
+const formDialogTitle = ref(t('apikey.form.addTitle'))
 const isEdit = ref(false)
 const editId = ref<number | null>(null)
 const saving = ref(false)
 const form = ref<Partial<ApiKey>>({ keyName: '', keyValue: '', enabled: 1 })
 
-/** 打开表单弹框 */
+/** Open form dialog */
 function openForm(key?: ApiKey) {
   if (key?.id) {
     isEdit.value = true
     editId.value = key.id
-    formDialogTitle.value = '编辑密钥'
+    formDialogTitle.value = t('apikey.form.editTitle')
     form.value = { keyName: key.keyName, keyValue: key.keyValue, enabled: key.enabled }
   } else {
     isEdit.value = false
     editId.value = null
-    formDialogTitle.value = '添加密钥'
+    formDialogTitle.value = t('apikey.form.addTitle')
     form.value = { keyName: '', keyValue: '', enabled: 1 }
   }
   formDialogVisible.value = true
@@ -224,13 +227,13 @@ function closeForm() {
 
 async function handleSave() {
   if (!form.value.keyName) {
-    openDialog({ title: '提示', message: '请输入密钥名称' })
+    openDialog({ title: t('common.prompt'), message: t('apikey.list.inputName') })
     return
   }
   saving.value = true
   try {
     const payload = { ...form.value }
-    // 编辑模式下密钥值不可修改
+    // Key value cannot be modified in edit mode
     if (isEdit.value) {
       delete payload.keyValue
     }
@@ -242,7 +245,7 @@ async function handleSave() {
     formDialogVisible.value = false
     loadKeys()
   } catch (e: any) {
-    openDialog({ title: '保存失败', message: e.message })
+    openDialog({ title: t('apikey.form.saveFailed'), message: e.message })
   } finally {
     saving.value = false
   }
@@ -259,7 +262,7 @@ async function copyKey(val: string) {
   try {
     await navigator.clipboard.writeText(val)
     const toast = document.createElement('div')
-    toast.textContent = '复制成功'
+    toast.textContent = t('common.copySuccess')
     Object.assign(toast.style, {
       position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
       background: '#10b981', color: '#fff', padding: '8px 20px', borderRadius: '8px',
@@ -268,84 +271,84 @@ async function copyKey(val: string) {
     document.body.appendChild(toast)
     setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300) }, 1500)
   } catch {
-    openDialog({ message: '复制失败，请手动复制' })
+    openDialog({ message: t('apikey.list.manualCopyFailed') })
   }
 }
 
 /**
- * 复制分享链接（使用 shareCode 而非密钥值，避免密钥在网络传输中暴露）
+ * Copy share link (use shareCode instead of raw key to avoid key exposure over network)
  */
 function shareKey(key: ApiKey) {
   const code = key.shareCode || ''
   if (!code) {
-    openDialog({ title: '提示', message: '分享码不存在，请重新开启分享' })
+    openDialog({ title: t('common.prompt'), message: t('apikey.list.shareCodeMissing') })
     return
   }
   const shareUrl = `${window.location.origin}/share/${encodeURIComponent(code)}`
   navigator.clipboard.writeText(shareUrl).then(() => {
-    showToastMsg('分享链接已复制')
+    showToastMsg(t('apikey.list.shareLinkCopied'))
   }).catch(() => {
-    openDialog({ message: '分享链接复制失败' })
+    openDialog({ message: t('apikey.list.shareLinkCopyFailed') })
   })
 }
 
 /**
- * 先开启分享，再复制链接
+ * Enable sharing first, then copy the link
  */
 async function enableShare(key: ApiKey) {
   if (!key.id) return
   try {
     const res = await shareApi.toggleShare(key.id, true)
     if (!res.data.success) {
-      openDialog({ title: '操作失败', message: res.data.error || '开启分享失败' })
+      openDialog({ title: t('error.unknown'), message: res.data.error || t('apikey.list.enableShareFailed') })
       return
     }
-    // 使用后端返回的 shareCode 更新本地数据
+    // Update local data with shareCode from backend
     key.shared = 1
     key.shareCode = res.data.shareCode || key.shareCode
     shareKey(key)
-    // 刷新列表更新状态
+    // Refresh list to update status
     loadKeys()
   } catch (e: any) {
-    openDialog({ title: '操作失败', message: e.message })
+    openDialog({ title: t('error.unknown'), message: e.message })
   }
 }
 
 /**
- * 确认撤销分享
+ * Confirm revoke share
  */
 function confirmRevoke(key: ApiKey) {
   openDialog({
-    title: '确认撤销分享',
-    message: `确定要撤销密钥「${key.keyName}」的分享吗？撤销后原有的分享链接将立即失效，无法再访问。`,
+    title: t('apikey.list.revokeConfirm'),
+    message: t('apikey.list.revokeMsg', { name: key.keyName }),
     type: 'confirm',
     confirmClass: 'btn-warning',
-    confirmText: '确认撤销',
+    confirmText: t('apikey.list.confirmRevoke'),
     onConfirm: () => revokeShare(key)
   })
 }
 
 /**
- * 执行撤销分享
+ * Execute revoke share
  */
 async function revokeShare(key: ApiKey) {
   if (!key.id) return
   try {
     const res = await shareApi.toggleShare(key.id, false)
     if (!res.data.success) {
-      openDialog({ title: '操作失败', message: res.data.error || '撤销分享失败' })
+      openDialog({ title: t('error.unknown'), message: res.data.error || t('apikey.list.revokeFailed') })
       return
     }
     key.shared = 0
-    showToastMsg('已撤销分享，链接已失效')
+    showToastMsg(t('apikey.list.revokeSuccess'))
     loadKeys()
   } catch (e: any) {
-    openDialog({ title: '操作失败', message: e.message })
+    openDialog({ title: t('error.unknown'), message: e.message })
   }
 }
 
 /**
- * 显示 Toast 消息
+ * Show toast message
  */
 function showToastMsg(text: string) {
   const toast = document.createElement('div')
@@ -361,13 +364,13 @@ function showToastMsg(text: string) {
 
 function confirmDelete(key: ApiKey) {
   openDialog({
-    title: '确认删除',
-    message: `确定要删除密钥「${key.keyName}」吗？此操作不可恢复。`,
+    title: t('common.confirmDelete'),
+    message: t('apikey.list.deleteConfirm', { name: key.keyName }),
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: () => {
       apikeyApi.delete(key.id!).then(() => loadKeys()).catch(e =>
-        openDialog({ title: '删除失败', message: e.message })
+        openDialog({ title: t('error.deleteFailed'), message: e.message })
       )
     }
   })
@@ -378,7 +381,7 @@ async function loadKeys() {
     const res = await apikeyApi.list()
     apiKeys.value = res.data
   } catch (e: any) {
-    openDialog({ title: '加载失败', message: e.message })
+    openDialog({ title: t('error.loadFailed'), message: e.message })
   }
 }
 
@@ -394,7 +397,7 @@ onMounted(loadKeys)
 }
 .copy-btn:hover { color: var(--accent-blue); border-color: var(--accent-blue); }
 
-/* 警告按钮（撤销分享） */
+/* Warning button (revoke share) */
 :deep(.btn-warning) {
   background: #f59e0b; color: #fff; border-color: #d97706;
 }
@@ -402,13 +405,13 @@ onMounted(loadKeys)
   background: #d97706;
 }
 
-/* 分享状态徽标 */
+/* Share status badge */
 .share-badge {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 11px; padding: 2px 8px; border-radius: 4px;
 }
-.share-badge.on { background: #d1fae5; color: #065f46; }
-.share-badge.off { background: #fef3c7; color: #92400e; }
+.share-badge.on { background: color-mix(in srgb, var(--accent-green) 15%, transparent); color: var(--accent-green); }
+.share-badge.off { background: color-mix(in srgb, var(--accent-yellow) 15%, transparent); color: var(--accent-yellow); }
 
 /* Mobile card list */
 .mobile-card-list {

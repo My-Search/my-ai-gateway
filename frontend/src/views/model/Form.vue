@@ -1,43 +1,43 @@
 <template>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">{{ isEdit ? '编辑模型' : '添加模型' }}</div>
-      <router-link to="/admin/model/list" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> 返回列表</router-link>
+      <div class="card-title">{{ isEdit ? t('model.form.editTitle') : t('model.form.addTitle') }}</div>
+      <router-link to="/admin/model/list" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
     </div>
     <form @submit.prevent="handleSave" style="max-width:600px;">
       <div class="form-group">
-        <label for="modelName">模型名称 *</label>
-        <input id="modelName" v-model="form.modelName" class="form-control" placeholder="如：my-gpt4" required />
-        <div class="form-hint">该名称将用于 API 调用时指定模型</div>
+        <label for="modelName">{{ t('model.form.modelName') }}</label>
+        <input id="modelName" v-model="form.modelName" class="form-control" :placeholder="t('model.form.modelNamePlaceholder')" required />
+        <div class="form-hint">{{ t('model.form.modelNameHint') }}</div>
       </div>
       <div class="form-group">
-        <label for="description">描述</label>
-        <textarea id="description" v-model="form.description" class="form-control" placeholder="模型描述（可选）"></textarea>
+        <label for="description">{{ t('model.form.description') }}</label>
+        <textarea id="description" v-model="form.description" class="form-control" :placeholder="t('model.form.descriptionPlaceholder')"></textarea>
       </div>
       <div class="form-group">
-        <label for="strategy">选择策略</label>
+        <label for="strategy">{{ t('model.form.strategy') }}</label>
         <select id="strategy" v-model="form.strategy" class="form-control">
-          <option value="">故障转移（Failover）</option>
-          <option value="random">随机（Random）</option>
-          <option value="round_robin">轮询（Round Robin）</option>
+          <option value="">{{ t('model.form.strategyFailover') }}</option>
+          <option value="random">{{ t('model.form.strategyRandom') }}</option>
+          <option value="round_robin">{{ t('model.form.strategyRoundRobin') }}</option>
         </select>
-        <div class="form-hint">选择关联渠道时的模型选择策略</div>
+        <div class="form-hint">{{ t('model.form.strategyHint') }}</div>
       </div>
       <div class="form-group">
-        <label for="enabled">状态</label>
+        <label for="enabled">{{ t('model.form.status') }}</label>
         <select id="enabled" v-model.number="form.enabled" class="form-control">
-          <option :value="1">启用</option>
-          <option :value="0">禁用</option>
+          <option :value="1">{{ t('common.enabled') }}</option>
+          <option :value="0">{{ t('common.disabled') }}</option>
         </select>
       </div>
       <div style="display:flex;gap:8px;margin-top:24px;">
-        <button type="submit" class="btn btn-primary" :disabled="saving"><SvgIcon name="check" :size="14" /> {{ saving ? '保存中...' : '保存' }}</button>
-        <router-link to="/admin/model/list" class="btn btn-secondary"><SvgIcon name="x" :size="14" /> 取消</router-link>
+        <button type="submit" class="btn btn-primary" :disabled="saving"><SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('model.form.save') }}</button>
+        <router-link to="/admin/model/list" class="btn btn-secondary"><SvgIcon name="x" :size="14" /> {{ t('model.form.cancel') }}</router-link>
       </div>
     </form>
   </div>
 
-  <!-- 通用弹框 -->
+  <!-- Common Dialog -->
   <Dialog
     v-model="dialogVisible"
     :title="dialogTitle"
@@ -51,18 +51,20 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from '@/composables/useI18n'
 import { modelApi, type CustomModel } from '@/api/model'
 import Dialog from '@/components/common/Dialog.vue'
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const isEdit = computed(() => !!route.params.id)
 const saving = ref(false)
 const form = ref<Partial<CustomModel>>({ modelName: '', description: '', strategy: '', enabled: 1 })
 
-/* ---------- 弹框状态 ---------- */
+/* ---------- Dialog state ---------- */
 const dialogVisible = ref(false)
-const dialogTitle = ref('提示')
+const dialogTitle = ref(t('common.prompt'))
 const dialogMessage = ref('')
 const dialogType = ref<'alert' | 'confirm'>('alert')
 let dialogOnConfirm: (() => void) | null = null
@@ -73,7 +75,7 @@ function openDialog(opts: {
   type?: 'alert' | 'confirm'
   onConfirm?: () => void
 }) {
-  dialogTitle.value = opts.title ?? '提示'
+  dialogTitle.value = opts.title ?? t('common.prompt')
   dialogMessage.value = opts.message
   dialogType.value = opts.type ?? 'alert'
   dialogOnConfirm = opts.onConfirm ?? null
@@ -92,7 +94,7 @@ onMounted(async () => {
       const res = await modelApi.get(Number(route.params.id))
       form.value = { ...res.data }
     } catch (e: any) {
-      openDialog({ title: '加载失败', message: e.message })
+      openDialog({ title: t('model.form.loadFailed'), message: e.message })
       router.push('/admin/model/list')
     }
   }
@@ -103,13 +105,13 @@ async function handleSave() {
   try {
     if (isEdit.value) {
       await modelApi.update(Number(route.params.id), form.value)
-      openDialog({ title: '成功', message: '模型更新成功', onConfirm: () => router.push('/admin/model/list') })
+      openDialog({ title: t('common.success'), message: t('model.form.updateSuccess'), onConfirm: () => router.push('/admin/model/list') })
     } else {
       await modelApi.create(form.value)
-      openDialog({ title: '成功', message: '模型创建成功', onConfirm: () => router.push('/admin/model/list') })
+      openDialog({ title: t('common.success'), message: t('model.form.createSuccess'), onConfirm: () => router.push('/admin/model/list') })
     }
   } catch (e: any) {
-    openDialog({ title: '保存失败', message: e.message })
+    openDialog({ title: t('model.form.saveFailed'), message: e.message })
   } finally {
     saving.value = false
   }

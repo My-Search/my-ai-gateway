@@ -1,119 +1,122 @@
 <template>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">{{ isEdit ? '编辑渠道' : '添加渠道' }}</div>
-      <router-link to="/admin/channel/list" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> 返回列表</router-link>
+      <div class="card-title">{{ isEdit ? t('channel.form.editTitle') : t('channel.form.addTitle') }}</div>
+      <router-link to="/admin/channel/list" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
     </div>
 
     <form @submit.prevent="handleSave" style="max-width:600px;">
       <input type="hidden" v-model="form.id" />
 
       <div class="form-group">
-        <label for="name">渠道名称 *</label>
-        <input id="name" v-model="form.name" type="text" class="form-control" placeholder="如：OpenAI、Anthropic、Azure" required />
-        <div class="form-hint">自定义渠道名称，用于标识</div>
+        <label for="name">{{ t('channel.form.nameLabel') }}</label>
+        <input id="name" v-model="form.name" type="text" class="form-control" :placeholder="t('channel.form.namePlaceholder')" required />
+        <div class="form-hint">{{ t('channel.form.nameHint') }}</div>
       </div>
 
       <div class="form-group">
-        <label for="channelType">渠道类型 *</label>
+        <label for="channelType">{{ t('channel.form.typeLabel') }}</label>
         <select id="channelType" v-model="form.channelType" class="form-control" required>
-          <option value="">请选择类型</option>
-          <option value="openai">OpenAI 兼容</option>
+          <option value="">{{ t('channel.form.typePlaceholder') }}</option>
+          <option value="openai">{{ t('channel.form.typeOpenAI') }}</option>
           <option value="anthropic">Anthropic</option>
         </select>
-        <div class="form-hint">选择渠道 API 兼容类型</div>
+        <div class="form-hint">{{ t('channel.form.typeHint') }}</div>
       </div>
 
       <div class="form-group">
-        <label for="baseUrl">接口地址</label>
-        <input id="baseUrl" v-model="form.baseUrl" type="url" class="form-control" placeholder="如：https://api.openai.com/v1" />
-        <div class="form-hint">必填路径前缀，OpenAI 兼容格式为 https://xxx.com/v1</div>
+        <label for="baseUrl">{{ t('channel.form.endpointLabel') }}</label>
+        <input id="baseUrl" v-model="form.baseUrl" type="url" class="form-control" :placeholder="t('channel.form.endpointPlaceholder')" />
+        <div class="form-hint">{{ t('channel.form.endpointHint') }}</div>
       </div>
 
       <div class="form-group">
-        <label>渠道 API Keys</label>
-        <div class="form-hint">添加多个 API Key，系统会自动在它们之间进行故障转移</div>
+        <label>{{ t('channel.form.apiKeys') }}</label>
+        <div class="form-hint">{{ t('channel.form.apiKeysHint') }}</div>
         <div class="api-keys-list">
           <div v-for="(ak, idx) in apiKeys" :key="idx" class="api-key-item">
             <span style="flex:1;font-size:13px;"><strong>{{ ak.keyName }}</strong>: {{ maskKey(ak.apiKey) }}</span>
-            <button type="button" class="btn btn-sm btn-danger" @click="removeApiKey(idx)"><SvgIcon name="trash" :size="14" /> 删除</button>
+            <button type="button" class="btn btn-sm btn-danger" @click="removeApiKey(idx)"><SvgIcon name="trash" :size="14" /> {{ t('common.delete') }}</button>
           </div>
           <div v-if="!apiKeys.length" style="color:var(--text-muted);font-size:13px;padding:8px 0;">
-            暂无 API Key，点击下方按钮添加
+            {{ t('channel.form.noKeys') }}
           </div>
         </div>
         <button type="button" class="btn btn-sm btn-primary" style="margin-top:8px;" @click="openApiKeyDialog">
-          <SvgIcon name="plus" :size="14" /> 添加 API Key
+          <SvgIcon name="plus" :size="14" /> {{ t('channel.form.addKey') }}
         </button>
       </div>
 
       <div class="form-group">
-        <label for="enabled">状态</label>
+        <label for="enabled">{{ t('channel.form.statusLabel') }}</label>
         <select id="enabled" v-model.number="form.enabled" class="form-control">
-          <option :value="1">启用</option>
-          <option :value="0">禁用</option>
+          <option :value="1">{{ t('common.enabled') }}</option>
+          <option :value="0">{{ t('common.disabled') }}</option>
         </select>
       </div>
 
-      <!-- 模型管理 -->
+      <!-- Channel Models -->
       <div class="form-group">
-        <label>渠道模型</label>
+        <label>{{ t('channel.form.models') }}</label>
         <div class="model-toolbar">
           <button type="button" class="btn btn-success btn-sm" :disabled="fetchLoading" @click="doFetchModels">
-            <SvgIcon name="refresh" :size="14" /> {{ fetchLoading ? '获取中...' : '获取模型' }}
+            <SvgIcon name="refresh" :size="14" /> {{ fetchLoading ? t('channel.form.fetching') : t('channel.form.fetchModels') }}
           </button>
           <button type="button" class="btn btn-primary btn-sm" @click="showAddModel = true">
-            <SvgIcon name="plus" :size="14" /> 手动添加
+            <SvgIcon name="plus" :size="14" /> {{ t('channel.form.manualAdd') }}
           </button>
           <div class="toolbar-right">
-            <span class="model-stats">共 {{ models.length }} 个</span>
-            <button v-if="models.length" type="button" class="btn btn-danger btn-sm" @click="clearAllModels"><SvgIcon name="trash" :size="14" /> 清理全部</button>
+            <span class="model-stats">{{ t('channel.form.modelCount', models.length) }}</span>
+            <button v-if="models.length" type="button" class="btn btn-danger btn-sm" @click="clearAllModels"><SvgIcon name="trash" :size="14" /> {{ t('channel.form.clearAll') }}</button>
           </div>
         </div>
         <div class="model-tags-container">
-          <span v-for="(m, idx) in models" :key="idx"
-                class="model-tag" :class="{ '_deleted': m._deleted }"
-                @click="toggleModel(idx)" :title="m._deleted ? '点击恢复' : '点击移除'">
-            {{ m.displayName || m.modelName }}
-            <span class="tag-remove" @click.stop="removeModel(idx)">
-              <SvgIcon name="x" :size="12" />
+          <template v-if="models.length">
+            <span v-for="(m, idx) in models" :key="idx"
+                  class="model-tag" :class="{ '_deleted': m._deleted }"
+                  @click="toggleModel(idx)" :title="m._deleted ? t('channel.form.clickRestore') : t('channel.form.clickRemove')">
+              {{ m.displayName || m.modelName }}
+              <span class="tag-remove" @click.stop="removeModel(idx)">
+                <SvgIcon name="x" :size="12" />
+              </span>
             </span>
-          </span>
+          </template>
+          <span v-else class="empty-hint">{{ t('channel.list.noModels') }}</span>
         </div>
-        <div class="form-hint">已添加的模型将以标签形式展示，鼠标悬停可移除，保存后生效</div>
+        <div class="form-hint">{{ t('channel.form.modelHint') }}</div>
       </div>
 
       <div style="display:flex;gap:8px;margin-top:24px;">
         <button type="submit" class="btn btn-primary" :disabled="saving">
-          <SvgIcon name="check" :size="14" /> {{ saving ? '保存中...' : '保存' }}
+          <SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('common.save') }}
         </button>
-        <router-link to="/admin/channel/list" class="btn btn-secondary"><SvgIcon name="x" :size="14" /> 取消</router-link>
+        <router-link to="/admin/channel/list" class="btn btn-secondary"><SvgIcon name="x" :size="14" /> {{ t('common.cancel') }}</router-link>
       </div>
     </form>
 
     <!-- Add Model Dialog -->
     <div v-if="showAddModel" class="modal-overlay" @click.self="showAddModel = false">
       <div class="modal-box" style="width:400px;">
-        <h3>手动添加模型</h3>
+        <h3>{{ t('channel.form.addModelTitle') }}</h3>
         <div class="form-group">
-          <label>模型名称 *</label>
-          <input v-model="newModelName" class="form-control" placeholder="如：gpt-4o-mini"
+          <label>{{ t('channel.form.modelName') }}</label>
+          <input v-model="newModelName" class="form-control" :placeholder="t('channel.form.modelNamePlaceholder')"
                  @keydown.enter.prevent="confirmAddModel" />
         </div>
         <div class="form-group">
-          <label>显示名称</label>
-          <input v-model="newDisplayName" class="form-control" placeholder="不填则默认为模型名称"
+          <label>{{ t('channel.form.displayName') }}</label>
+          <input v-model="newDisplayName" class="form-control" :placeholder="t('channel.form.displayNamePlaceholder')"
                  @keydown.enter.prevent="confirmAddModel" />
         </div>
         <div class="modal-actions">
-          <button class="btn btn-secondary" @click="showAddModel = false"><SvgIcon name="x" :size="14" /> 取消</button>
-          <button class="btn btn-primary" @click="confirmAddModel"><SvgIcon name="check" :size="14" /> 确认添加</button>
+          <button class="btn btn-secondary" @click="showAddModel = false"><SvgIcon name="x" :size="14" /> {{ t('common.cancel') }}</button>
+          <button class="btn btn-primary" @click="confirmAddModel"><SvgIcon name="check" :size="14" /> {{ t('channel.form.confirmAddModel') }}</button>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- 通用弹框 -->
+  <!-- Common Dialog -->
   <Dialog
     v-model="dialogVisible"
     :title="dialogTitle"
@@ -124,23 +127,23 @@
     {{ dialogMessage }}
   </Dialog>
 
-  <!-- API Key 输入弹框 -->
+  <!-- API Key Input Dialog -->
   <Dialog
     v-model="apiKeyDialogVisible"
-    title="添加 API Key"
+    :title="t('channel.form.addKey')"
     type="confirm"
-    confirm-text="添加"
+    :confirm-text="t('dialog.add')"
     width="480px"
     @confirm="confirmAddApiKey"
     @cancel="closeApiKeyDialog"
   >
     <div class="form-group">
-      <label>API Key 名称 *</label>
-      <input v-model="newApiKeyName" class="form-control" placeholder="如：主Key、备用Key1" @keydown.enter.prevent="confirmAddApiKey" />
+      <label>{{ t('channel.form.keyNameLabel') }}</label>
+      <input v-model="newApiKeyName" class="form-control" :placeholder="t('channel.form.keyNamePlaceholder')" @keydown.enter.prevent="confirmAddApiKey" />
     </div>
     <div class="form-group" style="margin-bottom:0;">
-      <label>API Key *</label>
-      <input v-model="newApiKeyValue" class="form-control" placeholder="请输入 API Key" @keydown.enter.prevent="confirmAddApiKey" />
+      <label>{{ t('channel.form.keyValueLabel') }}</label>
+      <input v-model="newApiKeyValue" class="form-control" :placeholder="t('channel.form.keyValuePlaceholder')" @keydown.enter.prevent="confirmAddApiKey" />
     </div>
   </Dialog>
 </template>
@@ -148,11 +151,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from '@/composables/useI18n'
 import { channelApi, type Channel, type ChannelApiKey, type ChannelModel } from '@/api/channel'
 import Dialog from '@/components/common/Dialog.vue'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 const isEdit = computed(() => !!route.params.id)
 
 const saving = ref(false)
@@ -161,9 +166,9 @@ const showAddModel = ref(false)
 const newModelName = ref('')
 const newDisplayName = ref('')
 
-/* ---------- 通用弹框状态 ---------- */
+/* ---------- Dialog state ---------- */
 const dialogVisible = ref(false)
-const dialogTitle = ref('提示')
+const dialogTitle = ref(t('common.prompt'))
 const dialogMessage = ref('')
 const dialogType = ref<'alert' | 'confirm'>('alert')
 const dialogConfirmClass = ref('btn-primary')
@@ -176,7 +181,7 @@ function openDialog(opts: {
   confirmClass?: string
   onConfirm?: () => void
 }) {
-  dialogTitle.value = opts.title ?? '提示'
+  dialogTitle.value = opts.title ?? t('common.prompt')
   dialogMessage.value = opts.message
   dialogType.value = opts.type ?? 'alert'
   dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
@@ -190,7 +195,7 @@ function onDialogConfirm() {
 }
 /* ------------------------------ */
 
-/* ---------- API Key 弹框状态 ---------- */
+/* ---------- API Key Dialog state ---------- */
 const apiKeyDialogVisible = ref(false)
 const newApiKeyName = ref('')
 const newApiKeyValue = ref('')
@@ -209,15 +214,15 @@ function confirmAddApiKey() {
   const keyName = newApiKeyName.value.trim()
   const apiKey = newApiKeyValue.value.trim()
   if (!keyName) {
-    openDialog({ title: '提示', message: '请输入 API Key 名称' })
+    openDialog({ title: t('common.prompt'), message: t('channel.form.inputKeyName') })
     return
   }
   if (!apiKey) {
-    openDialog({ title: '提示', message: '请输入 API Key' })
+    openDialog({ title: t('common.prompt'), message: t('channel.form.inputKeyValue') })
     return
   }
   if (apiKeys.value.some(k => k.keyName === keyName)) {
-    openDialog({ title: '提示', message: 'API Key 名称已存在' })
+    openDialog({ title: t('common.prompt'), message: t('channel.form.keyNameExists') })
     return
   }
   apiKeys.value.push({
@@ -260,7 +265,7 @@ onMounted(async () => {
         displayName: m.displayName || m.modelName
       }))
     } catch (e: any) {
-      openDialog({ title: '加载失败', message: '加载渠道信息失败: ' + e.message })
+      openDialog({ title: t('error.loadFailed'), message: e.message })
       router.push('/admin/channel/list')
     }
   }
@@ -272,8 +277,8 @@ function maskKey(key: string) {
 
 function removeApiKey(index: number) {
   openDialog({
-    title: '确认删除',
-    message: '确认删除该 API Key？',
+    title: t('common.confirmDelete'),
+    message: t('apikey.list.deleteConfirm').replace('{name}', apiKeys.value[index]?.keyName || ''),
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: () => {
@@ -306,8 +311,8 @@ function removeModel(index: number) {
 
 function confirmAddModel() {
   const name = newModelName.value.trim()
-  if (!name) { openDialog({ title: '提示', message: '请输入模型名称' }); return }
-  if (models.value.some(m => m.modelName === name)) { openDialog({ title: '提示', message: '模型已存在' }); return }
+  if (!name) { openDialog({ title: t('common.prompt'), message: t('channel.form.inputModelName') }); return }
+  if (models.value.some(m => m.modelName === name)) { openDialog({ title: t('common.prompt'), message: t('channel.form.modelExists') }); return }
   models.value.push({
     modelName: name,
     displayName: newDisplayName.value.trim() || name
@@ -333,19 +338,19 @@ async function doFetchModels() {
             added++
           }
         }
-        openDialog({ message: `新增 ${added} 个模型` })
+        openDialog({ message: t('channel.form.fetchedModels').replace('{count}', String(added)) })
       } else {
-        openDialog({ title: '刷新失败', message: res.data.error || '刷新失败' })
+        openDialog({ title: t('channel.form.refreshFailed'), message: res.data.error || t('channel.form.refreshFailed') })
       }
     } catch (e: any) {
-      openDialog({ title: '刷新失败', message: e.message })
+      openDialog({ title: t('channel.form.refreshFailed'), message: e.message })
     } finally {
       fetchLoading.value = false
     }
   } else {
     // Preview fetch
-    if (!form.value.channelType) { openDialog({ title: '提示', message: '请先选择渠道类型' }); return }
-    if (!apiKeys.value.length) { openDialog({ title: '提示', message: '请先添加至少一个 API Key' }); return }
+    if (!form.value.channelType) { openDialog({ title: t('common.prompt'), message: t('channel.form.selectTypeFirst') }); return }
+    if (!apiKeys.value.length) { openDialog({ title: t('common.prompt'), message: t('channel.form.addAtLeastOneKey') }); return }
     fetchLoading.value = true
     try {
       const res = await channelApi.fetchModels(
@@ -362,12 +367,12 @@ async function doFetchModels() {
             added++
           }
         }
-        openDialog({ message: `获取到 ${res.data.count} 个模型，新增 ${added} 个` })
+        openDialog({ message: t('channel.form.addedModels').replace('{count}', res.data.count).replace('{added}', String(added)) })
       } else {
-        openDialog({ title: '获取失败', message: res.data.error || '获取模型列表失败' })
+        openDialog({ title: t('channel.form.refreshFailed'), message: res.data.error || t('channel.form.refreshFailed') })
       }
     } catch (e: any) {
-      openDialog({ title: '请求失败', message: e.message })
+      openDialog({ title: t('common.fail'), message: e.message })
     } finally {
       fetchLoading.value = false
     }
@@ -377,8 +382,8 @@ async function doFetchModels() {
 function clearAllModels() {
   if (!models.value.length) return
   openDialog({
-    title: '确认清理',
-    message: `确认清理全部 ${models.value.length} 个模型？此操作不可恢复`,
+    title: t('common.confirmDelete'),
+    message: t('channel.form.clearModelsConfirm').replace('{count}', String(models.value.length)),
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: () => {
@@ -412,13 +417,13 @@ async function handleSave() {
     if (isEdit.value) {
       const id = Number(route.params.id)
       await channelApi.update(id, payload)
-      openDialog({ title: '成功', message: '渠道更新成功', onConfirm: () => router.push('/admin/channel/list') })
+      openDialog({ title: t('common.success'), message: t('channel.form.saveSuccess'), onConfirm: () => router.push('/admin/channel/list') })
     } else {
       await channelApi.create(payload)
-      openDialog({ title: '成功', message: '渠道创建成功', onConfirm: () => router.push('/admin/channel/list') })
+      openDialog({ title: t('common.success'), message: t('channel.form.createSuccess'), onConfirm: () => router.push('/admin/channel/list') })
     }
   } catch (e: any) {
-    openDialog({ title: '保存失败', message: e.message })
+    openDialog({ title: t('channel.form.saveFailed'), message: e.message })
   } finally {
     saving.value = false
   }
@@ -443,8 +448,7 @@ async function handleSave() {
   background: var(--bg-secondary); border-radius: 8px; min-height: 28px;
   max-height: 140px; overflow-y: auto;
 }
-.model-tags-container:empty::after {
-  content: '暂无模型，点击下方"获取模型"或"手动添加"添加';
+.model-tags-container .empty-hint {
   color: var(--text-muted); font-size: 13px;
 }
 .model-tag {

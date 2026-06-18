@@ -60,6 +60,9 @@ export const modelApi = {
   updateRelSort(relId: number, sortOrder: number) {
     return http.put<{ success: boolean }>(`/models/rels/${relId}/sort`, { sortOrder })
   },
+  batchUpdateSortOrders(sortedRelIds: number[]) {
+    return http.put<{ success: boolean }>('/models/rels/sort', { sortedRelIds })
+  },
   getCircuitBreaker(id: number) {
     return http.get<{ model: CustomModel; config: CircuitBreakerConfig }>(`/models/${id}/circuit-breaker`)
   },

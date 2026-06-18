@@ -1,28 +1,26 @@
 <template>
   <div class="chat-playground" :class="{ compact }">
-    <!-- 移动端配置栏切换按钮 -->
     <button v-if="!compact" class="mobile-sidebar-toggle" @click="showSidebar = !showSidebar">
       <SvgIcon name="settings" :size="14" />
-      {{ showSidebar ? '收起配置' : '展开配置' }}
+      {{ showSidebar ? t('playground.toggleConfig') : t('playground.showConfig') }}
     </button>
 
-    <!-- 左侧配置栏 -->
     <div v-if="!compact" class="playground-sidebar" :class="{ 'mobile-hidden': !showSidebar }">
       <div class="card">
-        <div class="card-title mb-3">测试配置</div>
+        <div class="card-title mb-3">{{ t('playground.testConfig') }}</div>
 
         <div class="form-group">
-          <label>选择模型</label>
+          <label>{{ t('playground.selectModel') }}</label>
           <select v-model="selectedModel" class="form-control">
-            <option value="">-- 请选择模型 --</option>
+            <option value="">{{ t('playground.selectModelPlaceholder') }}</option>
             <option v-for="m in models" :key="m.modelName" :value="m.modelName">{{ m.modelName }}</option>
           </select>
         </div>
 
         <div v-if="!isShareMode" class="form-group">
-          <label>API 密钥</label>
+          <label>{{ t('playground.apiKey') }}</label>
           <select v-model="selectedApiKey" class="form-control">
-            <option :value="0">自动选择（第一个可用）</option>
+            <option :value="0">{{ t('playground.autoSelect') }}</option>
             <option v-for="k in apiKeys" :key="k.id" :value="k.id">
               {{ k.keyName }} ({{ (k.keyValue || '').substring(0, 15) }}...)
             </option>
@@ -40,21 +38,20 @@
         </div>
 
         <button class="btn btn-secondary" style="width:100%;" @click="clearChat">
-          <SvgIcon name="trash" :size="14" /> 清空对话
+          <SvgIcon name="trash" :size="14" /> {{ t('playground.clearChat') }}
         </button>
       </div>
 
       <div class="card mt-3">
-        <div class="card-title mb-3">状态</div>
+        <div class="card-title mb-3">{{ t('playground.status') }}</div>
         <div class="status-item">
           <span class="status-dot" :class="streaming ? 'active' : 'inactive'"></span>
-          <span>{{ streaming ? '生成中...' : '就绪' }}</span>
+          <span>{{ streaming ? t('playground.generating') : t('playground.ready') }}</span>
         </div>
         <div v-if="tokenUsage" class="text-muted mt-2" style="font-size:12px;">{{ tokenUsage }}</div>
       </div>
     </div>
 
-    <!-- 右侧聊天区 -->
     <div class="playground-main">
       <div v-if="!compact" class="chat-header">
         <div class="chat-header-left">
@@ -62,17 +59,16 @@
             <SvgIcon v-if="streaming" name="zap" :size="16" />
             <SvgIcon v-else name="check" :size="16" />
           </span>
-          <span class="chat-header-title">模型可用性测试</span>
+          <span class="chat-header-title">{{ t('playground.title') }}</span>
         </div>
         <div class="chat-header-right" v-if="selectedModel">
-          当前模型: <code>{{ selectedModel }}</code>
+          {{ t('playground.currentModel') }}: <code>{{ selectedModel }}</code>
         </div>
       </div>
 
-      <!-- compact 模式的简单模型选择 -->
       <div v-if="compact" class="compact-controls">
         <select v-model="selectedModel" class="form-control">
-          <option value="">-- 请选择模型 --</option>
+          <option value="">{{ t('playground.selectModelPlaceholder') }}</option>
           <option v-for="m in models" :key="m.modelName" :value="m.modelName">{{ m.modelName }}</option>
         </select>
       </div>
@@ -80,8 +76,8 @@
       <div class="chat-messages" ref="chatRef">
         <div v-if="!messages.length" class="chat-empty">
           <div class="empty-icon"><SvgIcon name="ai-chat" :size="48" color="var(--accent-purple)" /></div>
-          <div style="font-size:16px;font-weight:600;margin-bottom:8px;">模型测试 Playground</div>
-          <div style="color:var(--text-muted);">选择模型后输入消息开始测试</div>
+          <div style="font-size:16px;font-weight:600;margin-bottom:8px;">{{ t('playground.welcomeTitle') }}</div>
+          <div style="color:var(--text-muted);">{{ t('playground.welcomeDesc') }}</div>
         </div>
 
         <div v-for="(msg, idx) in messages" :key="idx"
@@ -100,15 +96,15 @@
             </div>
             <div v-if="idx === messages.length - 1 && routingProgress" class="chat-routing-progress">
               <span class="routing-dot"></span>
-              <span v-if="routingProgress.phase === 'trying'">正在尝试 {{ routingProgress.channel }} / {{ routingProgress.channel_model }}</span>
-              <span v-else-if="routingProgress.phase === 'retrying'">重试中 {{ routingProgress.channel }} / {{ routingProgress.channel_model }}（{{ routingProgress.message }}）</span>
-              <span v-else-if="routingProgress.phase === 'switching'">切换候选：{{ routingProgress.message }}，尝试下一渠道…</span>
+              <span v-if="routingProgress.phase === 'trying'">{{ t('playground.trying').replace('{channel}', routingProgress.channel).replace('{channelModel}', routingProgress.channel_model) }}</span>
+              <span v-else-if="routingProgress.phase === 'retrying'">{{ t('playground.retrying').replace('{channel}', routingProgress.channel).replace('{channelModel}', routingProgress.channel_model).replace('{msg}', routingProgress.message || '') }}</span>
+              <span v-else-if="routingProgress.phase === 'switching'">{{ t('playground.switching').replace('{msg}', routingProgress.message || '') }}</span>
             </div>
             <div class="chat-bubble" :class="{ 'cursor-blink': idx === messages.length - 1 && streaming }">
               <div v-if="msg.role === 'assistant'" class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
               <template v-else>{{ msg.content }}</template>
             </div>
-            <div v-if="msg.truncated" class="chat-truncated-hint">⚠ 输出因 token 限制被截断</div>
+            <div v-if="msg.truncated" class="chat-truncated-hint">{{ t('playground.truncated') }}</div>
             <div v-if="msg.meta" class="chat-meta" v-html="msg.meta"></div>
           </div>
         </div>
@@ -119,7 +115,7 @@
       </div>
 
       <div class="chat-input-area">
-        <textarea v-model="userInput" class="form-control" placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
+        <textarea v-model="userInput" class="form-control" :placeholder="t('playground.inputPlaceholder')"
                   :rows="compact ? 2 : 3" @keydown="handleKeydown"></textarea>
       </div>
     </div>
@@ -131,6 +127,9 @@ import { ref, nextTick, onMounted, watch, shallowRef, triggerRef } from 'vue'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { chatStream } from '@/api/chat'
 import { marked } from 'marked'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 /** 模型选项 */
 interface ModelOption {
@@ -312,7 +311,7 @@ async function sendMessage() {
   if (!content || streaming.value || !selectedModel.value) return
 
   if (!selectedModel.value) {
-    addMessage('system-msg', '请先选择一个模型')
+    addMessage('system-msg', t('playground.selectModelFirst'))
     return
   }
 
@@ -327,7 +326,7 @@ async function sendMessage() {
   try {
     await sendStreamRequest(assistantMsg)
   } catch (e: any) {
-    assistantMsg.content = '请求失败: ' + e.message
+    assistantMsg.content = t('playground.requestFailed') + ': ' + e.message
     assistantMsg.role = 'system-msg'
   } finally {
     streaming.value = false
@@ -390,7 +389,7 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
             continue
           }
           if (json.error) {
-            targetMsg.content = '错误: ' + (typeof json.error === 'object' ? json.error.message : json.error)
+            targetMsg.content = t('playground.error') + ': ' + (typeof json.error === 'object' ? json.error.message : json.error)
             continue
           }
           if (json.choices && json.choices[0]) {
@@ -425,7 +424,7 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
 
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
   targetMsg.content = fullContent
-  tokenUsage.value = `本轮: ${tokenNum} tokens / ${elapsed}s`
+  tokenUsage.value = t('playground.tokenUsage').replace('{tokens}', String(tokenNum)).replace('{elapsed}', elapsed)
 }
 
 /** 将 Markdown 渲染为安全的 HTML */
@@ -677,8 +676,8 @@ function renderMarkdown(text: string): string {
 /* —— 代码块 —— */
 .chat-playground .markdown-body pre {
   margin: 0 0 12px;
-  background: #1e1e2e;
-  color: #cdd6f4;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
   border-radius: 8px;
   padding: 12px 16px;
   overflow-x: auto;
@@ -691,8 +690,8 @@ function renderMarkdown(text: string): string {
 }
 .chat-playground .markdown-body p > code,
 .chat-playground .markdown-body li > code {
-  background: rgba(88, 166, 255, 0.12);
-  color: var(--accent-blue, #58a6ff);
+  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+  color: var(--accent-blue);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 12.5px;
@@ -707,9 +706,9 @@ function renderMarkdown(text: string): string {
 .chat-playground .markdown-body blockquote {
   margin: 0 0 10px;
   padding: 4px 12px;
-  border-left: 3px solid var(--accent-purple, #a78bfa);
-  color: var(--text-muted, #888);
-  background: rgba(167, 139, 250, 0.06);
+  border-left: 3px solid var(--accent-purple);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--accent-purple) 6%, transparent);
   border-radius: 0 4px 4px 0;
 }
 /* —— 表格 —— */
@@ -721,23 +720,23 @@ function renderMarkdown(text: string): string {
 }
 .chat-playground .markdown-body th,
 .chat-playground .markdown-body td {
-  border: 1px solid var(--border-color, #333);
+  border: 1px solid var(--border-color);
   padding: 6px 10px;
   text-align: left;
 }
 .chat-playground .markdown-body th {
-  background: rgba(88, 166, 255, 0.08);
+  background: color-mix(in srgb, var(--accent-blue) 8%, transparent);
   font-weight: 600;
 }
 /* —— 分割线 —— */
 .chat-playground .markdown-body hr {
   margin: 0 0 10px;
   border: none;
-  border-top: 1px solid var(--border-color, #333);
+  border-top: 1px solid var(--border-color);
 }
 /* —— 链接与图片 —— */
 .chat-playground .markdown-body a {
-  color: var(--accent-blue, #58a6ff);
+  color: var(--accent-blue);
   text-decoration: underline;
 }
 .chat-playground .markdown-body img {

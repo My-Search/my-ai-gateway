@@ -630,6 +630,22 @@ public class AdminApiController {
         return ResponseEntity.ok(result);
     }
 
+    @PutMapping(value = "/models/rels/sort", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> batchUpdateRelSort(@RequestBody Map<String, Object> body) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            @SuppressWarnings("unchecked")
+            List<Integer> rawIds = (List<Integer>) body.get("sortedRelIds");
+            List<Long> sortedRelIds = rawIds.stream().map(Integer::longValue).collect(Collectors.toList());
+            modelService.updateChannelRelSortOrders(sortedRelIds);
+            result.put("success", true);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
     @GetMapping(value = "/models/{id}/circuit-breaker", produces = "application/json;charset=UTF-8")
     public ResponseEntity<?> getCircuitBreaker(@PathVariable Long id) {
         com.myai.gateway.entity.Model m = modelService.getById(id);

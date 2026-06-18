@@ -6,7 +6,7 @@
         v-if="multiple && selectedCount > 0 && !isOpen"
         type="text"
         class="form-control"
-        :value="`已勾选 ${selectedCount} 个模型待添加`"
+        :value="selectedCountText"
         readonly
         @focus="onFocusMulti"
         style="cursor: pointer;"
@@ -16,7 +16,7 @@
         v-else
         type="text"
         class="form-control"
-        :placeholder="multiple && selectedCount > 0 ? '搜索更多...' : placeholder"
+        :placeholder="multiple && selectedCount > 0 ? t('common.searchMore') : placeholder"
         :value="searchText"
         @input="onSearchInput"
         @focus="isOpen = true"
@@ -36,13 +36,16 @@
       </li>
     </ul>
     <div v-if="isOpen && !filteredOptions.length" class="searchable-select-empty">
-      无匹配结果
+      {{ t('common.noMatch') }}
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 interface SelectOption {
   value: number
@@ -74,6 +77,10 @@ const selectedCount = computed(() => {
   if (!props.multiple) return 0
   return Array.isArray(props.modelValue) ? props.modelValue.length : 0
 })
+
+const selectedCountText = computed(() =>
+  t('common.selectedCount').replace('{count}', String(selectedCount.value))
+)
 
 const filteredOptions = computed(() => {
   if (!searchText.value) return props.options
@@ -195,8 +202,8 @@ onUnmounted(() => {
   margin: 4px 0 0 0;
   padding: 0;
   list-style: none;
-  background: var(--bg-card, #1e1e2e);
-  border: 1px solid var(--border-color, #333);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   max-height: 300px;
   overflow-y: auto;
@@ -225,11 +232,11 @@ onUnmounted(() => {
 }
 
 .searchable-select-dropdown li:hover {
-  background: var(--bg-hover, #2a2a3e);
+  background: var(--bg-hover);
 }
 
 .searchable-select-dropdown li.active {
-  background: var(--primary-color, #4a9eff);
+  background: var(--accent-blue);
   color: #fff;
 }
 
@@ -240,8 +247,8 @@ onUnmounted(() => {
   right: 0;
   margin: 4px 0 0 0;
   padding: 12px;
-  background: var(--bg-card, #1e1e2e);
-  border: 1px solid var(--border-color, #333);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   text-align: center;
   color: var(--text-muted, #888);

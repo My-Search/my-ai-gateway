@@ -4,8 +4,8 @@
       <div v-if="visible" class="dialog-overlay" @click.self="onCancel">
         <div class="dialog-box" role="dialog" aria-modal="true" :style="{ maxWidth: props.width }">
           <div class="dialog-header">
-            <span class="dialog-title">{{ title }}</span>
-            <button v-if="showClose" class="dialog-close" @click="onCancel" aria-label="关闭">
+            <span class="dialog-title">{{ dialogTitle }}</span>
+            <button v-if="showClose" class="dialog-close" @click="onCancel" :aria-label="t('common.close')">
               <SvgIcon name="x" :size="18" />
             </button>
           </div>
@@ -18,14 +18,14 @@
               class="btn btn-secondary"
               @click="onCancel"
             >
-              <SvgIcon name="x" :size="14" /> {{ cancelText }}
+              <SvgIcon name="x" :size="14" /> {{ dialogCancelText }}
             </button>
             <button
               class="btn"
               :class="confirmClass"
               @click="onConfirm"
             >
-              <SvgIcon name="check" :size="14" /> {{ confirmText }}
+              <SvgIcon name="check" :size="14" /> {{ dialogConfirmText }}
             </button>
           </div>
         </div>
@@ -48,6 +48,9 @@
  *   open().then(confirmed => { ... })
  */
 import { computed } from 'vue'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 interface Props {
   modelValue: boolean
@@ -62,11 +65,11 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  title: '提示',
+  title: '',
   message: '',
   type: 'alert',
-  confirmText: '确定',
-  cancelText: '取消',
+  confirmText: '',
+  cancelText: '',
   confirmClass: 'btn-primary',
   showClose: true,
   width: '420px'
@@ -82,6 +85,10 @@ const visible = computed({
   get: () => props.modelValue,
   set: (val) => emit('update:modelValue', val)
 })
+
+const dialogTitle = computed(() => props.title || t('dialog.title'))
+const dialogConfirmText = computed(() => props.confirmText || t('dialog.confirm'))
+const dialogCancelText = computed(() => props.cancelText || t('dialog.cancel'))
 
 function onConfirm() {
   visible.value = false

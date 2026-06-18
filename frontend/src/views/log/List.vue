@@ -2,17 +2,17 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">
-        请求日志
-        <span v-if="sseConnected" class="badge badge-sse">实时</span>
+        {{ t('log.list.title') }}
+        <span v-if="sseConnected" class="badge badge-sse">{{ t('log.list.realtime') }}</span>
       </div>
       <div style="display:flex;gap:8px;">
         <button class="btn btn-sm btn-secondary" @click="loadLogs" :disabled="loading">
-          <SvgIcon name="refresh" :size="14" /> 刷新
+          <SvgIcon name="refresh" :size="14" /> {{ t('common.refresh') }}
         </button>
-        <button class="btn btn-sm btn-danger" @click="cleanLogs"><SvgIcon name="trash" :size="14" /> 清理旧日志</button>
+        <button class="btn btn-sm btn-danger" @click="cleanLogs"><SvgIcon name="trash" :size="14" /> {{ t('log.list.cleanOld') }}</button>
       </div>
     </div>
-    <div v-if="loading" style="text-align:center;padding:40px;color:var(--text-muted);">加载中...</div>
+    <div v-if="loading" style="text-align:center;padding:40px;color:var(--text-muted);">{{ t('common.loading') }}</div>
 
     <template v-for="trace in traces" :key="trace.traceId">
       <div class="log-trace" :class="{ 'trace-success': trace.successCount > 0 && trace.failCount === 0, 'trace-fail': trace.failCount > 0 }" @click="toggleTrace(trace.traceId)">
@@ -22,9 +22,9 @@
             <code class="model-tag">{{ trace.modelName || '-' }}</code>
           </span>
           <span class="trace-stats">
-            <span v-if="trace.failCount > 0" class="badge badge-danger">失败</span>
-            <span v-else-if="trace.successCount > 0" class="badge badge-success">成功</span>
-            <span v-if="trace.retryCount > 0" class="badge badge-warning">重试 {{ trace.retryCount }}</span>
+            <span v-if="trace.failCount > 0" class="badge badge-danger">{{ t('log.list.fail') }}</span>
+            <span v-else-if="trace.successCount > 0" class="badge badge-success">{{ t('log.list.success') }}</span>
+            <span v-if="trace.retryCount > 0" class="badge badge-warning">{{ t('log.list.retry', { count: trace.retryCount }) }}</span>
           </span>
           <span class="trace-time">{{ formatDateTime(trace.startTime) }}</span>
           <span class="trace-duration" v-if="trace.totalTimeMs > 0">{{ trace.totalTimeMs }}ms</span>
@@ -34,7 +34,7 @@
       <div v-if="expandedTraces.has(trace.traceId)" class="trace-detail">
         <div v-for="(group, gIdx) in groupedTraceLogs.get(trace.traceId) || []" :key="group.key + '-' + gIdx" class="log-entry" :style="{ paddingLeft: `calc(var(--indent-base, 12px) + ${gIdx} * var(--indent-step, 16px))` }">
           <span class="phase" :class="'phase-' + group.logs[0].phase">
-            {{ group.logs[0].phase }}<span v-if="group.logs.length > 1" class="retry-count">（x{{ group.logs.length }}）</span>
+            {{ group.logs[0].phase }}<span v-if="group.logs.length > 1" class="retry-count">(x{{ group.logs.length }})</span>
           </span>
           <span class="log-info">
             <template v-if="group.logs[0].channelName">{{ group.logs[0].channelName }}/</template>
@@ -48,19 +48,17 @@
       </div>
     </template>
 
-    <div v-if="!loading && !traces.length" class="empty-state">暂无日志数据</div>
+    <div v-if="!loading && !traces.length" class="empty-state">{{ t('log.list.empty') }}</div>
 
-    <!-- 分页加载更多 -->
     <div v-if="hasMore" ref="loadMoreTrigger" class="load-more">
-      <span v-if="loadingMore">加载中...</span>
-      <span v-else>上滑加载更多</span>
+      <span v-if="loadingMore">{{ t('common.loading') }}</span>
+      <span v-else>{{ t('log.list.loadMore') }}</span>
     </div>
     <div v-if="!hasMore && traces.length > 0" class="load-more">
-      已加载全部 {{ total }} 条记录
+      {{ t('log.list.loadedAll').replace('{total}', total) }}
     </div>
   </div>
 
-  <!-- 通用弹框 -->
   <Dialog
     v-model="dialogVisible"
     :title="dialogTitle"
@@ -76,6 +74,9 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { logApi, subscribeLogStream, type LogTrace, type RequestLog } from '@/api/log'
 import Dialog from '@/components/common/Dialog.vue'
+import { useI18n } from '@/composables/useI18n'
+
+const { t } = useI18n()
 
 const traces = ref<LogTrace[]>([])
 const expandedTraces = ref(new Set<string>())
@@ -91,9 +92,8 @@ const total = ref(0)
 const loadMoreTrigger = ref<HTMLElement | null>(null)
 let observer: IntersectionObserver | null = null
 
-/* ---------- 弹框状态 ---------- */
 const dialogVisible = ref(false)
-const dialogTitle = ref('提示')
+const dialogTitle = ref(t('dialog.title'))
 const dialogMessage = ref('')
 const dialogType = ref<'alert' | 'confirm'>('alert')
 const dialogConfirmClass = ref('btn-primary')
@@ -106,7 +106,7 @@ function openDialog(opts: {
   confirmClass?: string
   onConfirm?: () => void
 }) {
-  dialogTitle.value = opts.title ?? '提示'
+  dialogTitle.value = opts.title ?? t('dialog.title')
   dialogMessage.value = opts.message
   dialogType.value = opts.type ?? 'alert'
   dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
@@ -119,8 +119,6 @@ function onDialogConfirm() {
   dialogOnConfirm = null
 }
 /* ------------------------------ */
-
-/* ========== EventSource / SSE 管理 ========== */
 
 let eventSource: EventSource | null = null
 
@@ -280,7 +278,7 @@ async function loadLogs() {
       }
     }
   } catch (e: any) {
-    openDialog({ title: '加载失败', message: e.message })
+    openDialog({ title: t('error.loadFailed'), message: e.message })
   } finally {
     loading.value = false
   }
@@ -300,7 +298,7 @@ async function loadMoreLogs() {
     // offset 按 backend 返回总数递增（与后端分页语义对齐）
     offset.value += newTraces.length
   } catch (e: any) {
-    console.error('加载更多日志失败:', e)
+    console.error('Failed to load more logs:', e)
   } finally {
     loadingMore.value = false
   }
@@ -308,17 +306,17 @@ async function loadMoreLogs() {
 
 function cleanLogs() {
   openDialog({
-    title: '确认清理',
-    message: '确认清理 30 天前的日志？',
+    title: t('common.confirm'),
+    message: t('log.list.cleanConfirm'),
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: async () => {
       try {
         const res = await logApi.clean()
-        openDialog({ message: res.data.message || '清理成功' })
+        openDialog({ message: res.data.message || t('log.list.cleanSuccess') })
         await loadLogs()
       } catch (e: any) {
-        openDialog({ title: '清理失败', message: e.message })
+        openDialog({ title: t('common.fail'), message: e.message })
       }
     }
   })
@@ -356,8 +354,8 @@ onUnmounted(() => {
   border-left: 3px solid transparent;
 }
 .log-trace:hover { background: var(--bg-hover); }
-.log-trace.trace-success { border-left-color: var(--accent-green, #3fb950); }
-.log-trace.trace-fail { border-left-color: var(--accent-red, #f85149); }
+.log-trace.trace-success { border-left-color: var(--accent-green); }
+.log-trace.trace-fail { border-left-color: var(--accent-red); }
 .trace-header {
   display: flex; align-items: center; gap: 12px; padding: 10px 12px; font-size: 13px;
 }
@@ -399,17 +397,17 @@ onUnmounted(() => {
 .log-error { color: var(--accent-red); font-size: 11px; margin-top: 4px; white-space: pre-wrap; }
 
 .phase { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; white-space: nowrap; }
-.phase-start { background: rgba(88,166,255,0.2); color: var(--accent-blue); }
-.phase-retry { background: rgba(210,153,34,0.2); color: var(--accent-yellow); }
-.phase-reroute { background: rgba(188,140,255,0.2); color: var(--accent-purple); }
-.phase-success { background: rgba(63,185,80,0.2); color: var(--accent-green); }
-.phase-fail { background: rgba(248,81,73,0.2); color: var(--accent-red); }
-.phase-skip { background: rgba(139,139,139,0.2); color: var(--text-muted); }
+.phase-start { background: color-mix(in srgb, var(--accent-blue) 20%, transparent); color: var(--accent-blue); }
+.phase-retry { background: color-mix(in srgb, var(--accent-yellow) 20%, transparent); color: var(--accent-yellow); }
+.phase-reroute { background: color-mix(in srgb, var(--accent-purple) 20%, transparent); color: var(--accent-purple); }
+.phase-success { background: color-mix(in srgb, var(--accent-green) 20%, transparent); color: var(--accent-green); }
+.phase-fail { background: color-mix(in srgb, var(--accent-red) 20%, transparent); color: var(--accent-red); }
+.phase-skip { background: color-mix(in srgb, var(--text-muted) 20%, transparent); color: var(--text-muted); }
 .retry-count { font-weight: 400; opacity: 0.85; margin-left: 2px; }
 
 .badge-sse {
-  background: rgba(63,185,80,0.2);
-  color: var(--accent-green, #3fb950);
+  background: color-mix(in srgb, var(--accent-green) 20%, transparent);
+  color: var(--accent-green);
   font-size: 11px;
   font-weight: 600;
   padding: 2px 8px;
