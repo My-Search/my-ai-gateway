@@ -14,18 +14,22 @@ echo "分支：${REMOTE}/${BRANCH}"
 echo "======================================"
 
 echo ""
-echo "1. 检查 Git 仓库状态..."
+echo "1. 静默清理 Docker 无用资源..."
+docker system prune -af 2>/dev/null || echo "  (清理完成或 Docker 暂不可用)"
+
+echo ""
+echo "2. 检查 Git 仓库状态..."
 if [ ! -d ".git" ]; then
-  echo "错误：当前目录不是 Git 仓库：${APP_DIR}"
+  echo "错误：当前目录不是 Git 仓库：${SCRIPT_DIR}"
   exit 1
 fi
 
 echo ""
-echo "2. 获取远程最新代码..."
+echo "3. 获取远程最新代码..."
 git fetch "${REMOTE}" "${BRANCH}"
 
 echo ""
-echo "3. 强制同步远程代码..."
+echo "4. 强制同步远程代码..."
 git reset --hard "${REMOTE}/${BRANCH}"
 
 # 默认不清理未跟踪文件，避免误删 .env.compose、data/ 等
@@ -33,7 +37,7 @@ git reset --hard "${REMOTE}/${BRANCH}"
 # git clean -fd
 
 echo ""
-echo "4. 检测 Docker Compose 命令..."
+echo "5. 检测 Docker Compose 命令..."
 
 if docker compose version >/dev/null 2>&1; then
   COMPOSE_CMD="docker compose"
@@ -47,19 +51,19 @@ fi
 echo "使用命令：${COMPOSE_CMD}"
 
 echo ""
-echo "5. 重新构建镜像..."
+echo "6. 重新构建镜像..."
 ${COMPOSE_CMD} build --no-cache
 
 echo ""
-echo "6. 停止旧容器..."
+echo "7. 停止旧容器..."
 ${COMPOSE_CMD} down
 
 echo ""
-echo "7. 启动新容器..."
+echo "8. 启动新容器..."
 ${COMPOSE_CMD} up -d
 
 echo ""
-echo "8. 查看容器状态..."
+echo "9. 查看容器状态..."
 ${COMPOSE_CMD} ps
 
 echo ""

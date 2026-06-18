@@ -83,7 +83,7 @@
         <div v-else style="text-align:center;padding:30px;color:var(--text-muted);">{{ t('dashboard.noData') }}</div>
       </div>
 
-      <div class="card">
+      <div class="card channel-rank-card">
         <div class="card-header">
           <div class="card-title"><SvgIcon name="rank" :size="18" /> {{ t('dashboard.channelRank') }}</div>
         </div>
@@ -93,7 +93,7 @@
         <div v-else-if="!stats.channelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">
           {{ t('dashboard.noRankData') }}
         </div>
-        <div class="rank-list" v-else>
+        <div class="rank-list channel-rank-list" v-else>
           <div class="rank-item" v-for="(ch, idx) in stats.channelRank" :key="ch.name">
             <div class="rank-pos" :class="idx === 0 ? 'gold' : idx === 1 ? 'silver' : idx === 2 ? 'bronze' : ''">
               {{ idx + 1 }}
@@ -338,6 +338,15 @@ onMounted(async () => {
 }
 .rank-bar-bg { width: 80px; height: 6px; background: var(--bg-primary); border-radius: 3px; overflow: hidden; flex-shrink: 0; min-width: 20px; }
 .rank-bar { height: 100%; background: var(--accent-blue); border-radius: 3px; transition: width 0.3s; min-width: 4px; }
+
+/* 渠道排行固定高度显示3项，超出滚动 */
+.channel-rank-card {
+  align-self: start;
+}
+.channel-rank-list {
+  min-height: 196px; /* 固定高度显示3项，不足也占位 */
+  max-height: 196px;
+}
 
 /* Tab switch */
 .tab-switch { display: flex; gap: 4px; background: var(--bg-primary); border-radius: 6px; padding: 2px; }

@@ -115,7 +115,7 @@ export default {
   'channel.list.refreshModels': '刷新模型',
   'channel.list.refresh': '刷新',
   'channel.list.empty': '暂无渠道数据，点击右上角「添加渠道」开始',
-  'channel.list.quickTest': '渠道快速测试',
+  'channel.list.quickTest': '模型测试',
   'channel.list.testModel': '测试模型',
   'channel.list.testMessage': '测试消息',
   'channel.list.testSuccess': '测试成功',

@@ -43,7 +43,7 @@ public class ModelService {
 
     public List<Model> listAll() {
         return modelMapper.selectList(
-                new LambdaQueryWrapper<Model>().orderByDesc(Model::getCreatedAt));
+                new LambdaQueryWrapper<Model>().orderByAsc(Model::getId));
     }
 
     public Model getById(Long id) {

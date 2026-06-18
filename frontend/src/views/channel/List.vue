@@ -137,15 +137,6 @@
           {{ t('channel.list.name') }}: {{ testChannel?.name }}
         </div>
         <div class="form-group">
-          <label>{{ t('channel.list.testModel') }}</label>
-          <select v-model="testSelectedModel" class="form-control" :disabled="testModels.length === 0">
-            <option v-if="testModels.length === 0" value="">{{ t('channel.list.noModels') }}</option>
-            <option v-for="m in testModels" :key="m.modelName" :value="m.modelName">
-              {{ m.displayName || m.modelName }}
-            </option>
-          </select>
-        </div>
-        <div class="form-group">
           <label>{{ t('channel.list.testMessage') }}</label>
           <textarea v-model="testMessage" class="form-control" rows="3"></textarea>
         </div>
@@ -185,7 +176,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
-import { channelApi, type Channel, type ChannelModel } from '@/api/channel'
+import { channelApi, type Channel } from '@/api/channel'
 import Dialog from '@/components/common/Dialog.vue'
 
 const router = useRouter()
@@ -193,8 +184,6 @@ const { t } = useI18n()
 const channels = ref<Channel[]>([])
 const showTestModal = ref(false)
 const testChannel = ref<Channel | null>(null)
-const testModels = ref<ChannelModel[]>([])
-const testSelectedModel = ref('')
 const testMessage = ref('Hello, this is a test message.')
 const testResult = ref<{ success: boolean; response?: string; responseTime?: number; error?: string } | null>(null)
 const testLoading = ref(false)
@@ -241,18 +230,6 @@ async function quickTest(ch: Channel) {
   testChannel.value = ch
   testMessage.value = 'Hello, this is a test message.'
   testResult.value = null
-  testSelectedModel.value = ''
-  testModels.value = []
-  // Fetch channel models for user selection
-  try {
-    const res = await channelApi.getModels(ch.id!)
-    testModels.value = res.data.models || []
-    if (testModels.value.length > 0) {
-      testSelectedModel.value = testModels.value[0].modelName
-    }
-  } catch {
-    // Model list load failure doesn't block test, just no dropdown
-  }
   showTestModal.value = true
 }
 
@@ -265,7 +242,7 @@ async function sendTestRequest() {
   if (!testChannel.value?.id) return
   testLoading.value = true
   try {
-    const res = await channelApi.quickTest(testChannel.value.id, testMessage.value, testSelectedModel.value || undefined)
+    const res = await channelApi.quickTest(testChannel.value.id, testMessage.value, undefined)
     testResult.value = res.data
   } catch (e: any) {
     testResult.value = { success: false, error: e.message }
