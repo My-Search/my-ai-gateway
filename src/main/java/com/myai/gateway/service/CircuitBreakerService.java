@@ -169,7 +169,7 @@ public class CircuitBreakerService {
     @Transactional
     public void triggerCircuitBreak(Long modelId, Long channelId, Long channelApiKeyId, Long channelModelId) {
         CircuitBreakerConfig config = modelService.getCircuitBreakerConfig(modelId);
-        if (config == null || config.getEnabled() != 1) {
+        if (config == null) {
             return;
         }
 

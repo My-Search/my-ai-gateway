@@ -148,15 +148,17 @@ class CircuitBreakerServiceTest {
     }
 
     @Test
-    void triggerCircuitBreak_disabledConfig_doesNothing() {
+    void triggerCircuitBreak_enabledFlag_ignored_stillTriggers() {
         CircuitBreakerConfig config = new CircuitBreakerConfig();
         config.setEnabled(0);
+        config.setCircuitBreakDuration(60);
+        config.setCircuitBreakScope("model");
         when(modelService.getCircuitBreakerConfig(100L)).thenReturn(config);
 
         service.triggerCircuitBreak(100L, 1L, 2L, 10L);
 
-        verify(stateMapper, never()).delete(any());
-        verify(stateMapper, never()).insert(any(CircuitBreakerState.class));
+        verify(stateMapper, atLeastOnce()).delete(any());
+        verify(stateMapper, atLeastOnce()).insert(any(CircuitBreakerState.class));
     }
 
     @Test

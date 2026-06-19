@@ -219,6 +219,19 @@ public class RelayService {
                     "没有可用的路由候选", "api_error", 503));
         }
 
+        // 发起请求前实时检查熔断状态：若已被其他并发请求熔断，快速跳过
+        if (isCandidateCircuitBroken(candidate)) {
+            log.info("已熔断跳过 - traceId={} retryIndex={} channel={} model={} key={} (已被熔断，跳过该候选)",
+                    traceId, retryIndex,
+                    candidate.getChannel().getName(),
+                    candidate.getChannelModel().getModelName(),
+                    candidate.getChannelApiKey().getKeyName());
+            logPhase(traceId, candidate, req, "skip",
+                    "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+            remaining.remove(candidate);
+            return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime);
+        }
+
         log.info("路由决策 - traceId={} retryIndex={} 选中候选: channel={} model={} key={} (剩余{}个候选)",
                 traceId, retryIndex,
                 candidate.getChannel().getName(),
@@ -287,6 +300,17 @@ public class RelayService {
                         err.getMessage()))
                 .onErrorResume(err -> {
                     if (attempt < maxAttempts) {
+                        // 重试前检查熔断：若已被其他并发请求熔断，跳过剩余重试，直接让外层重路由
+                        if (isCandidateCircuitBroken(candidate)) {
+                            log.warn("已熔断跳过（候选内重试前检测到熔断）channel={} key={} model={} (第{}次失败后): {}",
+                                    candidate.getChannel().getName(),
+                                    candidate.getChannelApiKey().getKeyName(),
+                                    candidate.getChannelModel().getModelName(),
+                                    attempt, err.getMessage());
+                            logPhase(traceId, candidate, req, "retry",
+                                    "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）", retryIndex);
+                            return Mono.error(err);
+                        }
                         logPhase(traceId, candidate, req, "retry",
                                 "同一候选第 " + attempt + " 次失败，准备第 " + (attempt + 1) + " 次重试", retryIndex);
                         return invokeCandidateWithRetries(traceId, authHeader, req, candidate, provider,
@@ -340,6 +364,19 @@ public class RelayService {
         if (candidate == null) {
             log.warn("流式负载均衡器返回null候选 - traceId={}", traceId);
             return Flux.error(new RuntimeException("没有可用的路由候选"));
+        }
+
+        // 发起请求前实时检查熔断状态：若已被其他并发请求熔断，快速跳过
+        if (isCandidateCircuitBroken(candidate)) {
+            log.info("已熔断跳过 - traceId={} retryIndex={} channel={} model={} key={} (已被熔断，跳过该流式候选)",
+                    traceId, retryIndex,
+                    candidate.getChannel().getName(),
+                    candidate.getChannelModel().getModelName(),
+                    candidate.getChannelApiKey().getKeyName());
+            logPhase(traceId, candidate, req, "skip",
+                    "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+            remaining.remove(candidate);
+            return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient);
         }
 
         log.info("流式路由决策 - traceId={} retryIndex={} 选中候选: channel={} model={} key={} (剩余{}个候选){}",
@@ -459,6 +496,17 @@ public class RelayService {
                         err.getMessage()))
                 .onErrorResume(err -> {
                     if (attempt < maxAttempts) {
+                        // 重试前检查熔断：若已被其他并发请求熔断，跳过剩余重试，直接让外层重路由
+                        if (isCandidateCircuitBroken(candidate)) {
+                            log.warn("已熔断跳过（流式候选内重试前检测到熔断）channel={} key={} model={} (第{}次失败后): {}",
+                                    candidate.getChannel().getName(),
+                                    candidate.getChannelApiKey().getKeyName(),
+                                    candidate.getChannelModel().getModelName(),
+                                    attempt, err.getMessage());
+                            logPhase(traceId, candidate, req, "retry",
+                                    "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）", retryIndex);
+                            return Flux.error(err);
+                        }
                         // 获取已累积的流式内容，携带到重试请求中
                         String accumulatedContent = streamContentManager.getContent(traceId);
                         InternalRequest retryReq = req;
@@ -1014,6 +1062,17 @@ public class RelayService {
      */
     private int getMaxAttempts(String modelName) {
         return Math.max(1, getRetryCount(modelName) + 1);
+    }
+
+    /**
+     * 检查候选是否已被熔断（含渠道级和模型级）
+     * <p>用于在发起请求前或重试前实时检测，若被其他并发请求熔断则快速跳过。</p>
+     */
+    private boolean isCandidateCircuitBroken(RoutingCandidate candidate) {
+        return circuitBreakerService.isChannelCircuitBroken(
+                candidate.getChannel().getId(), candidate.getChannelApiKey().getId())
+                || circuitBreakerService.isModelCircuitBroken(
+                candidate.getChannelModel().getId(), candidate.getChannelApiKey().getId());
     }
 
     /**

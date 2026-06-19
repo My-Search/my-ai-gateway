@@ -280,6 +280,221 @@ class RelayServiceTest {
     }
 
     @Test
+    void tryCandidates_triggersCircuitBreakerEvenWhenEnabledIsZero() {
+        // enabled=0 时，重试耗尽后仍应触发熔断（不再被 enabled 检查阻止）
+        RelayService spyService = spy(relayService);
+
+        CircuitBreakerConfig config = new CircuitBreakerConfig();
+        config.setRetryCount(1);
+        config.setCircuitBreakDuration(60);
+        config.setCircuitBreakScope("model");
+        config.setEnabled(0);  // 原先 enabled=0 会阻止熔断，现在不应阻止
+        when(modelService.getCircuitBreakerConfig(1L)).thenReturn(config);
+
+        Model model = new Model();
+        model.setId(1L);
+        model.setModelName("x");
+        when(modelService.getByModelName("x")).thenReturn(model);
+
+        Channel channel = new Channel();
+        channel.setId(10L);
+        channel.setName("A");
+        channel.setEnabled(1);
+
+        ChannelModel cm1 = new ChannelModel();
+        cm1.setId(100L);
+        cm1.setChannelId(10L);
+        cm1.setModelName("a1");
+        cm1.setEnabled(1);
+
+        ChannelApiKey key1 = new ChannelApiKey();
+        key1.setId(1000L);
+        key1.setChannelId(10L);
+        key1.setKeyName("ak1");
+        key1.setEnabled(1);
+
+        ModelChannelRel rel1 = new ModelChannelRel(1L, 100L);
+        rel1.setSortOrder(0);
+        rel1.setEnabled(1);
+
+        RoutingCandidate candidate1 = new RoutingCandidate(rel1, channel, cm1, key1);
+        List<RoutingCandidate> candidates = new ArrayList<>(List.of(candidate1));
+
+        InternalRequest req = new InternalRequest();
+        req.setModel("x");
+        req.setClientApiFormat("openai");
+
+        doReturn(Mono.error(new RuntimeException("fail")))
+                .when(spyService).callProviderNonStream(any(), any(), any(), any());
+        when(messageTransformer.buildErrorResponse(anyString(), anyString(), anyString(), anyInt()))
+                .thenReturn("{\"error\":true}");
+
+        spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
+                .block(Duration.ofSeconds(5));
+
+        // enabled=0 时验证熔断仍然被触发
+        verify(circuitBreakerService).triggerCircuitBreak(1L, 10L, 1000L, 100L);
+    }
+
+    @Test
+    void tryCandidates_skipsAlreadyBrokenCandidateBeforeFirstAttempt() {
+        // 候选在调用前已被熔断（并发请求导致），应跳过不尝试，标记"已熔断跳过"
+        RelayService spyService = spy(relayService);
+
+        CircuitBreakerConfig config = new CircuitBreakerConfig();
+        config.setRetryCount(0);
+        config.setCircuitBreakDuration(60);
+        config.setCircuitBreakScope("model");
+        config.setEnabled(1);
+        when(modelService.getCircuitBreakerConfig(1L)).thenReturn(config);
+
+        Model model = new Model();
+        model.setId(1L);
+        model.setModelName("x");
+        when(modelService.getByModelName("x")).thenReturn(model);
+
+        Channel channel = new Channel();
+        channel.setId(10L);
+        channel.setName("A");
+        channel.setEnabled(1);
+
+        ChannelModel cm1 = new ChannelModel();
+        cm1.setId(100L);
+        cm1.setChannelId(10L);
+        cm1.setModelName("a1");
+        cm1.setEnabled(1);
+        ChannelModel cm2 = new ChannelModel();
+        cm2.setId(101L);
+        cm2.setChannelId(10L);
+        cm2.setModelName("a2");
+        cm2.setEnabled(1);
+
+        ChannelApiKey key1 = new ChannelApiKey();
+        key1.setId(1000L);
+        key1.setChannelId(10L);
+        key1.setKeyName("ak1");
+        key1.setEnabled(1);
+
+        ModelChannelRel rel1 = new ModelChannelRel(1L, 100L);
+        rel1.setSortOrder(0);
+        rel1.setEnabled(1);
+        ModelChannelRel rel2 = new ModelChannelRel(1L, 101L);
+        rel2.setSortOrder(1);
+        rel2.setEnabled(1);
+
+        RoutingCandidate candidate1 = new RoutingCandidate(rel1, channel, cm1, key1);
+        RoutingCandidate candidate2 = new RoutingCandidate(rel2, channel, cm2, key1);
+
+        // 候选1模型级已熔断
+        when(circuitBreakerService.isChannelCircuitBroken(10L, 1000L)).thenReturn(false);
+        when(circuitBreakerService.isModelCircuitBroken(100L, 1000L)).thenReturn(true);
+        when(circuitBreakerService.isModelCircuitBroken(101L, 1000L)).thenReturn(false);
+
+        List<RoutingCandidate> candidates = new ArrayList<>(List.of(candidate1, candidate2));
+
+        InternalRequest req = new InternalRequest();
+        req.setModel("x");
+        req.setClientApiFormat("openai");
+
+        doReturn(Mono.just("{\"success\":true}"))
+                .when(spyService).callProviderNonStream(any(), any(), any(), any());
+        when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
+                .thenReturn("{\"success\":true}");
+
+        String result = spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
+                .block(Duration.ofSeconds(5));
+        assertThat(result).isEqualTo("{\"success\":true}");
+
+        // candidate1 被跳过（已熔断），只调用 candidate2
+        verify(spyService).callProviderNonStream(any(), any(), eq(candidate2), eq("openai"));
+        verify(spyService, times(1)).callProviderNonStream(any(), any(), any(), eq("openai"));
+    }
+
+    @Test
+    void invokeCandidateWithRetries_skipsRetryWhenCandidateBecomesBrokenConcurrently() {
+        // 候选在重试间隙被其他并发请求熔断，应跳过剩余重试，直接切换到下一个候选
+        RelayService spyService = spy(relayService);
+
+        CircuitBreakerConfig config = new CircuitBreakerConfig();
+        config.setRetryCount(2);  // 最多 3 次尝试
+        config.setCircuitBreakDuration(60);
+        config.setCircuitBreakScope("model");
+        config.setEnabled(1);
+        when(modelService.getCircuitBreakerConfig(1L)).thenReturn(config);
+
+        Model model = new Model();
+        model.setId(1L);
+        model.setModelName("x");
+        when(modelService.getByModelName("x")).thenReturn(model);
+
+        Channel channel = new Channel();
+        channel.setId(10L);
+        channel.setName("A");
+        channel.setEnabled(1);
+
+        ChannelModel cm1 = new ChannelModel();
+        cm1.setId(100L);
+        cm1.setChannelId(10L);
+        cm1.setModelName("a1");
+        cm1.setEnabled(1);
+        ChannelModel cm2 = new ChannelModel();
+        cm2.setId(101L);
+        cm2.setChannelId(10L);
+        cm2.setModelName("a2");
+        cm2.setEnabled(1);
+
+        ChannelApiKey key1 = new ChannelApiKey();
+        key1.setId(1000L);
+        key1.setChannelId(10L);
+        key1.setKeyName("ak1");
+        key1.setEnabled(1);
+
+        ModelChannelRel rel1 = new ModelChannelRel(1L, 100L);
+        rel1.setSortOrder(0);
+        rel1.setEnabled(1);
+        ModelChannelRel rel2 = new ModelChannelRel(1L, 101L);
+        rel2.setSortOrder(1);
+        rel2.setEnabled(1);
+
+        RoutingCandidate candidate1 = new RoutingCandidate(rel1, channel, cm1, key1);
+        RoutingCandidate candidate2 = new RoutingCandidate(rel2, channel, cm2, key1);
+        List<RoutingCandidate> candidates = new ArrayList<>(List.of(candidate1, candidate2));
+
+        InternalRequest req = new InternalRequest();
+        req.setModel("x");
+        req.setClientApiFormat("openai");
+
+        // candidate1 前两次失败（attempt=1, attempt=2），第三次跳出到 candidate2
+        // candidate2 成功
+        doReturn(
+                Mono.error(new RuntimeException("fail")),    // candidate1 attempt=1 → fail
+                Mono.error(new RuntimeException("fail")),    // candidate1 attempt=2 → fail
+                Mono.just("{\"success\":true}")               // candidate2 attempt=1 → success
+        ).when(spyService).callProviderNonStream(any(), any(), any(), any());
+        when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
+                .thenReturn("{\"success\":true}");
+
+        // isModelCircuitBroken 顺序返回值：pre-call 前 false, pre-retry-1 false, pre-retry-2 true
+        when(circuitBreakerService.isChannelCircuitBroken(any(), any())).thenReturn(false);
+        when(circuitBreakerService.isModelCircuitBroken(eq(100L), eq(1000L)))
+                .thenReturn(false)  // 第1次：tryCandidates 预检查 → false，发起第一次调用
+                .thenReturn(false)  // 第2次：attempt=1失败后重试前检查 → false，进行重试
+                .thenReturn(true);  // 第3次：attempt=2失败后重试前检查 → true，跳过重试
+        when(circuitBreakerService.isModelCircuitBroken(eq(101L), eq(1000L)))
+                .thenReturn(false);
+
+        String result = spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
+                .block(Duration.ofSeconds(5));
+        assertThat(result).isEqualTo("{\"success\":true}");
+
+        // candidate1 被调用了 2 次（首次 + 一次重试），第三次尝试因熔断跳过
+        verify(spyService, times(2)).callProviderNonStream(any(), any(), eq(candidate1), eq("openai"));
+        // candidate2 被调用了 1 次（熔断跳过 candidate1 后尝试 candidate2，成功）
+        verify(spyService, times(1)).callProviderNonStream(any(), any(), eq(candidate2), eq("openai"));
+        verify(spyService, times(3)).callProviderNonStream(any(), any(), any(), eq("openai"));
+    }
+
+    @Test
     void tryCandidates_failsOverInStrictSequentialOrder() {
         RelayService spyService = spy(relayService);
 
