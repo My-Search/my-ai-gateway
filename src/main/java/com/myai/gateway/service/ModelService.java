@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -287,5 +288,25 @@ public class ModelService {
      */
     public Channel getChannelById(Long channelId) {
         return channelMapper.selectById(channelId);
+    }
+
+    // ==================== 轮询 LRU 支持 ====================
+
+    /**
+     * 更新渠道模型的最后使用时间（用于轮询 LRU 排序）
+     *
+     * @param channelModelId 渠道模型 ID
+     */
+    @Transactional
+    public void updateChannelModelLastUsed(Long channelModelId) {
+        if (channelModelId == null) {
+            return;
+        }
+        ChannelModel cm = channelModelMapper.selectById(channelModelId);
+        if (cm != null) {
+            cm.setLastUsedAt(LocalDateTime.now());
+            channelModelMapper.updateById(cm);
+            log.debug("渠道模型 {} 最后使用时间已更新", channelModelId);
+        }
     }
 }

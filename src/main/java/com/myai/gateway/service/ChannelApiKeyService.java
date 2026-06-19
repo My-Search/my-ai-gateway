@@ -120,6 +120,44 @@ public class ChannelApiKeyService {
     }
 
     /**
+     * 将指定的 API Key 移到该渠道排序的最后一位
+     * 用于熔断后把失效的 key 排到末尾，使其优先级降低
+     *
+     * @param channelId  渠道 ID
+     * @param apiKeyId   API Key ID
+     */
+    @Transactional
+    public void moveToEnd(Long channelId, Long apiKeyId) {
+        if (channelId == null || apiKeyId == null) {
+            return;
+        }
+        // 1. 查找当前渠道的最大 sortOrder
+        List<ChannelApiKey> keys = listEnabledByChannelId(channelId);
+        if (keys == null || keys.isEmpty()) {
+            return;
+        }
+        int maxSortOrder = keys.stream()
+                .mapToInt(k -> k.getSortOrder() != null ? k.getSortOrder() : 0)
+                .max()
+                .orElse(0);
+
+        // 2. 更新目标 key 的 sortOrder 为最大值 + 1
+        ChannelApiKey targetKey = keys.stream()
+                .filter(k -> k.getId().equals(apiKeyId))
+                .findFirst()
+                .orElse(null);
+        if (targetKey != null) {
+            int currentSortOrder = targetKey.getSortOrder() != null ? targetKey.getSortOrder() : 0;
+            if (currentSortOrder < maxSortOrder) {
+                targetKey.setSortOrder(maxSortOrder + 1);
+                channelApiKeyMapper.updateById(targetKey);
+                log.info("API Key {} 已移至渠道 {} 的最后 (sortOrder: {} -> {})",
+                        apiKeyId, channelId, currentSortOrder, maxSortOrder + 1);
+            }
+        }
+    }
+
+    /**
      * 同步 API Keys（编辑渠道时使用）
      * 对比页面提交的 API Key 列表和数据库中的：
      * - 删除已在页面移除的

@@ -14,13 +14,16 @@ import java.util.TimeZone;
 
 /**
  * Jackson 全局配置
- * 统一 java.time.LocalDateTime 等 JSR-310 类型的序列化/反序列化格式，
- * 避免前端收到数组形式的时间戳。
+ * 统一 java.time.LocalDateTime 等 JSR-310 类型的序列化/反序列化格式。
+ *
+ * 时间格式采用 ISO 8601 带 Z 后缀（如 "2024-06-19T10:30:00Z"），
+ * 便于前端明确知道这是 UTC 时间，正确转换为浏览器本地时区。
  */
 @Configuration
 public class JacksonConfig {
 
-    private static final String DATE_TIME_PATTERN = "yyyy-MM-dd HH:mm:ss";
+    /** ISO 8601 格式，Z 后缀表示 UTC */
+    private static final String DATE_TIME_PATTERN = "yyyy-MM-dd'T'HH:mm:ss'Z'";
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern(DATE_TIME_PATTERN);
 
     @Bean
@@ -31,7 +34,7 @@ public class JacksonConfig {
             javaTimeModule.addDeserializer(LocalDateTime.class, new LocalDateTimeDeserializer(DATE_TIME_FORMATTER));
 
             builder.simpleDateFormat(DATE_TIME_PATTERN);
-            builder.timeZone(TimeZone.getTimeZone("Asia/Shanghai"));
+            builder.timeZone(TimeZone.getTimeZone("UTC"));
             builder.modules(javaTimeModule);
             builder.featuresToDisable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
         };

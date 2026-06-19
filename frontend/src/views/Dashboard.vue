@@ -174,6 +174,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { dashboardApi, type DashboardStats } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
+import { formatLocalTime } from '@/utils/date'
 
 const { t } = useI18n()
 
@@ -196,8 +197,7 @@ function phaseLabel(phase: string) {
 }
 
 function formatTime(dateStr: string) {
-  if (!dateStr) return ''
-  return dateStr.substring(11, 16)
+  return formatLocalTime(dateStr)
 }
 
 /** 格式化 token 数量，大数字用 K/M 缩写 */

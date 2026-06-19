@@ -23,13 +23,15 @@ class CircuitBreakerServiceTest {
 
     private CircuitBreakerStateMapper stateMapper;
     private ModelService modelService;
+    private ChannelApiKeyService channelApiKeyService;
     private CircuitBreakerService service;
 
     @BeforeEach
     void setUp() {
         stateMapper = mock(CircuitBreakerStateMapper.class);
         modelService = mock(ModelService.class);
-        service = new CircuitBreakerService(stateMapper, modelService);
+        channelApiKeyService = mock(ChannelApiKeyService.class);
+        service = new CircuitBreakerService(stateMapper, modelService, channelApiKeyService);
     }
 
     @Test

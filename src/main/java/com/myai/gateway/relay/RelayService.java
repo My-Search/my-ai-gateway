@@ -209,7 +209,9 @@ public class RelayService {
                     "所有候选均失败，无法完成请求", "api_error", 503));
         }
 
-        LoadBalancer balancer = loadBalancerFactory.getBalancer(provider);
+        // 根据模型的选择策略获取负载均衡器（不传 provider，传模型定义的 strategy）
+        String modelStrategy = resolveModelStrategy(req.getModel());
+        LoadBalancer balancer = loadBalancerFactory.getBalancer(modelStrategy);
         // 使用自定义模型 ID 作为负载均衡维度
         Long modelId = resolveModelId(req.getModel());
         RoutingCandidate candidate = balancer.select(remaining, modelId);
@@ -249,6 +251,8 @@ public class RelayService {
         return invokeCandidateWithRetries(traceId, authHeader, req, candidate, provider, retryIndex, 1, maxAttempts)
                 .flatMap(body -> {
                     balancer.markSuccess(candidate);
+                    // 更新渠道模型最后使用时间（用于轮询 LRU 排序）
+                    modelService.updateChannelModelLastUsed(candidate.getChannelModel().getId());
                     String transformed = transformResponse(body, candidate, req, provider, false);
                     int[] usage = extractUsageFromProviderResponse(body);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(),
@@ -358,7 +362,9 @@ public class RelayService {
             return Flux.error(new RuntimeException("所有流式候选均失败"));
         }
 
-        LoadBalancer balancer = loadBalancerFactory.getBalancer(provider);
+        // 根据模型的选择策略获取负载均衡器（不传 provider，传模型定义的 strategy）
+        String modelStrategy = resolveModelStrategy(req.getModel());
+        LoadBalancer balancer = loadBalancerFactory.getBalancer(modelStrategy);
         Long modelId = resolveModelId(req.getModel());
         RoutingCandidate candidate = balancer.select(remaining, modelId);
         if (candidate == null) {
@@ -421,6 +427,9 @@ public class RelayService {
                                     traceId, content.length(), ct);
                         }
                     }
+                    // 标记成功并更新渠道模型最后使用时间（用于轮询 LRU 排序）
+                    balancer.markSuccess(candidate);
+                    modelService.updateChannelModelLastUsed(candidate.getChannelModel().getId());
                     // 清理流式内容累积
                     streamContentManager.clearContent(traceId);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(),
@@ -1060,6 +1069,19 @@ public class RelayService {
     private Long resolveModelId(String modelName) {
         Model model = modelService.getByModelName(modelName);
         return model != null ? model.getId() : null;
+    }
+
+    /**
+     * 根据模型名解析该模型配置的选择策略
+     * <p>返回策略名称（random / round_robin / failover），
+     * 未配置策略时默认返回 failover 以保持兼容。</p>
+     */
+    private String resolveModelStrategy(String modelName) {
+        Model model = modelService.getByModelName(modelName);
+        if (model == null || model.getStrategy() == null || model.getStrategy().isBlank()) {
+            return "failover";
+        }
+        return model.getStrategy();
     }
 
     /**

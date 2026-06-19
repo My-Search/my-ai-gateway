@@ -53,7 +53,7 @@ public class RequestLog {
     /** 总 token 数 */
     private Integer totalTokens;
 
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
     private LocalDateTime createdAt;
 
     // Getters and Setters

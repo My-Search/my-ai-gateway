@@ -30,7 +30,11 @@ public class ChannelModel {
     /** 是否启用 */
     private Integer enabled;
 
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    /** 最后使用时间（用于轮询 LRU 排序） */
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
+    private LocalDateTime lastUsedAt;
+
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
     private LocalDateTime createdAt;
 
     /** 关联的渠道信息（非数据库字段） */
@@ -71,6 +75,9 @@ public class ChannelModel {
 
     public Integer getEnabled() { return enabled; }
     public void setEnabled(Integer enabled) { this.enabled = enabled; }
+
+    public LocalDateTime getLastUsedAt() { return lastUsedAt; }
+    public void setLastUsedAt(LocalDateTime lastUsedAt) { this.lastUsedAt = lastUsedAt; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

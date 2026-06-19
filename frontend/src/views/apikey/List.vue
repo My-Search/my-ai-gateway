@@ -43,8 +43,8 @@
               <span v-if="key.shared === 1" class="share-badge on">{{ t('apikey.list.shared') }}</span>
               <span v-else class="share-badge off">{{ t('apikey.list.notShared') }}</span>
             </td>
-            <td style="font-size:12px;color:var(--text-muted);">{{ key.lastUsedAt || t('apikey.list.neverUsed') }}</td>
-            <td style="font-size:12px;color:var(--text-muted);">{{ key.createdAt }}</td>
+            <td style="font-size:12px;color:var(--text-muted);">{{ key.lastUsedAt ? formatLocalDateTimeFull(key.lastUsedAt) : t('apikey.list.neverUsed') }}</td>
+            <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(key.createdAt) }}</td>
             <td>
               <div style="display:flex;gap:6px;align-items:center;">
                 <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)" :title="t('apikey.list.shareLink')"><SvgIcon name="link" :size="14" /> {{ t('apikey.list.shareLink') }}</button>
@@ -84,11 +84,11 @@
         </div>
         <div class="mobile-card-row">
           <span class="mobile-card-label">{{ t('apikey.list.lastUsed') }}</span>
-          <span class="mobile-card-value">{{ key.lastUsedAt || t('apikey.list.neverUsed') }}</span>
+          <span class="mobile-card-value">{{ key.lastUsedAt ? formatLocalDateTimeFull(key.lastUsedAt) : t('apikey.list.neverUsed') }}</span>
         </div>
         <div class="mobile-card-row">
           <span class="mobile-card-label">{{ t('apikey.list.createdAt') }}</span>
-          <span class="mobile-card-value">{{ key.createdAt }}</span>
+          <span class="mobile-card-value">{{ formatLocalDateTimeFull(key.createdAt) }}</span>
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
@@ -156,6 +156,7 @@ import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { shareApi } from '@/api/share'
 import Dialog from '@/components/common/Dialog.vue'
 import { useI18n } from '@/composables/useI18n'
+import { formatLocalDateTimeFull } from '@/utils/date'
 
 const { t } = useI18n()
 

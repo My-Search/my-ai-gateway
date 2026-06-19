@@ -30,7 +30,7 @@ public class ModelChannelRel {
     /** 是否启用 */
     private Integer enabled;
 
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
     private LocalDateTime createdAt;
 
     // 非数据库字段 - 关联查询使用

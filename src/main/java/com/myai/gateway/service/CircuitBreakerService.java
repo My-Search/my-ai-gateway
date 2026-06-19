@@ -32,11 +32,14 @@ public class CircuitBreakerService {
 
     private final CircuitBreakerStateMapper stateMapper;
     private final ModelService modelService;
+    private final ChannelApiKeyService channelApiKeyService;
 
     public CircuitBreakerService(CircuitBreakerStateMapper stateMapper,
-                                  ModelService modelService) {
+                                  ModelService modelService,
+                                  ChannelApiKeyService channelApiKeyService) {
         this.stateMapper = stateMapper;
         this.modelService = modelService;
+        this.channelApiKeyService = channelApiKeyService;
     }
 
     /**
@@ -221,6 +224,11 @@ public class CircuitBreakerService {
         state.setOpenedAt(now);
         state.setExpireAt(expireAt);
         stateMapper.insert(state);
+
+        // 熔断后将 API Key 移到排序末尾（隐式排序）
+        if (channelApiKeyId != null) {
+            channelApiKeyService.moveToEnd(channelId, channelApiKeyId);
+        }
     }
 
     /**
@@ -249,6 +257,11 @@ public class CircuitBreakerService {
         state.setOpenedAt(now);
         state.setExpireAt(expireAt);
         stateMapper.insert(state);
+
+        // 熔断后将 API Key 移到排序末尾（隐式排序）
+        if (channelApiKeyId != null) {
+            channelApiKeyService.moveToEnd(channelId, channelApiKeyId);
+        }
     }
 
     /**

@@ -53,7 +53,7 @@
               </template>
               <span v-else style="color:var(--text-muted);">-</span>
             </td>
-            <td style="font-size:12px;color:var(--text-muted);">{{ ch.createdAt }}</td>
+            <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(ch.createdAt) }}</td>
             <td>
               <div style="display:flex;gap:6px;flex-wrap:nowrap;">
                 <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('common.edit') }}</router-link>
@@ -107,7 +107,7 @@
           </div>
           <div class="mobile-card-stat">
             <span class="mobile-card-stat-label">{{ t('channel.list.createdAt') }}</span>
-            <span class="mobile-card-stat-value">{{ ch.createdAt }}</span>
+            <span class="mobile-card-stat-value">{{ formatLocalDateTimeFull(ch.createdAt) }}</span>
           </div>
         </div>
         <div class="mobile-card-divider"></div>
@@ -189,6 +189,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { channelApi, type Channel, type ChannelModel } from '@/api/channel'
+import { formatLocalDateTimeFull } from '@/utils/date'
 import Dialog from '@/components/common/Dialog.vue'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
 

@@ -702,8 +702,6 @@ function renderMarkdown(text: string): string {
   line-height: 1.6;
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--bg-secondary) 50%, transparent);
-  max-height: 400px;
-  overflow-y: auto;
 }
 
 /* ===== 配置切换按钮（右上角） ===== */

@@ -31,7 +31,7 @@
               <span v-if="m.enabled === 1" class="badge badge-success">{{ t('common.enabled') }}</span>
               <span v-else class="badge badge-danger">{{ t('common.disabled') }}</span>
             </td>
-            <td style="font-size:12px;color:var(--text-muted);">{{ m.createdAt }}</td>
+            <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(m.createdAt) }}</td>
             <td>
               <div style="display:flex;gap:6px;">
                 <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> {{ t('model.list.manageRels') }}</router-link>
@@ -96,6 +96,7 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { modelApi, type CustomModel } from '@/api/model'
+import { formatLocalDateTimeFull } from '@/utils/date'
 import Dialog from '@/components/common/Dialog.vue'
 
 const { t } = useI18n()

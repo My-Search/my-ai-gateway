@@ -76,6 +76,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { logApi, subscribeLogStream, type LogTrace, type RequestLog } from '@/api/log'
 import Dialog from '@/components/common/Dialog.vue'
 import { useI18n } from '@/composables/useI18n'
+import { formatLocalDateTime, formatLocalFullTime } from '@/utils/date'
 
 const { t } = useI18n()
 
@@ -248,13 +249,11 @@ function shortenId(id: string) {
 }
 
 function formatDateTime(dateStr?: string) {
-  if (!dateStr || typeof dateStr !== 'string') return ''
-  return dateStr.substring(5, 16)
+  return formatLocalDateTime(dateStr)
 }
 
 function formatTime(dateStr: string) {
-  if (!dateStr || typeof dateStr !== 'string') return ''
-  return dateStr.substring(11, 19)
+  return formatLocalFullTime(dateStr)
 }
 
 function toggleTrace(id: string) {

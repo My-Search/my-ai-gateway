@@ -252,3 +252,10 @@ ALTER TABLE api_keys ADD COLUMN shared INTEGER DEFAULT 1;
 
 -- 为历史数据设置默认值（已有记录的 shared 设为 0，需要手动开启）
 UPDATE api_keys SET shared = 0 WHERE shared IS NULL;
+
+-- ========================================
+-- VERSION:v1.10.0
+-- channel_models 添加 last_used_at 字段，支持 LRU 轮询（按模型最后的最后使用时间排序）
+-- ========================================
+
+ALTER TABLE channel_models ADD COLUMN last_used_at TIMESTAMP;
