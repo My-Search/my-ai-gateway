@@ -227,7 +227,7 @@ public class RelayService {
                     candidate.getChannelModel().getModelName(),
                     candidate.getChannelApiKey().getKeyName());
             logPhase(traceId, candidate, req, "skip",
-                    "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+                    "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
             return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime);
         }
@@ -240,7 +240,7 @@ public class RelayService {
                 remaining.size());
 
         logPhase(traceId, candidate, req, "start",
-                "路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+                "路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
 
         int maxAttempts = getMaxAttempts(req.getModel());
         log.info("开始调用候选 - traceId={} maxAttempts={} (retryCount={})",
@@ -374,7 +374,7 @@ public class RelayService {
                     candidate.getChannelModel().getModelName(),
                     candidate.getChannelApiKey().getKeyName());
             logPhase(traceId, candidate, req, "skip",
-                    "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+                    "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
             return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient);
         }
@@ -388,7 +388,7 @@ public class RelayService {
                 req.isContextRetry() ? " [已拼接]" : "");
 
         logPhase(traceId, candidate, req, "start",
-                "流式路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+                "流式路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
 
         int maxAttempts = getMaxAttempts(req.getModel());
         // 仅内部客户端发送路由进度事件
@@ -404,16 +404,29 @@ public class RelayService {
                     }
                 })
                 .doOnComplete(() -> {
-                    // 清理流式内容累积
-                    streamContentManager.clearContent(traceId);
                     int[] usage = streamUsageMap.remove(traceId);
                     int pt = usage != null ? usage[0] : 0;
                     int ct = usage != null ? usage[1] : 0;
                     int tt = usage != null ? usage[2] : 0;
+                    String resultMsg = "流式请求成功";
+                    // 降级：provider 未返回 usage 时，从累积内容做粗略估算，避免仪表盘展示 0 tokens
+                    if (pt == 0 && ct == 0 && tt == 0) {
+                        String content = streamContentManager.getContent(traceId);
+                        if (content != null && !content.isEmpty()) {
+                            // 混合中英文场景下粗略估算：约 2 字符 / token
+                            ct = Math.max(1, content.length() / 2);
+                            tt = ct;
+                            resultMsg = "流式请求成功（用量为估算值）";
+                            log.info("流式 token 用量降级估算 - traceId={} 内容长度={} 估算completionTokens={}",
+                                    traceId, content.length(), ct);
+                        }
+                    }
+                    // 清理流式内容累积
+                    streamContentManager.clearContent(traceId);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(),
                             req.getModel(), candidate.getChannelModel().getModelName(),
                             candidate.getChannel().getName(),
-                            "success", "success", "流式请求成功",
+                            "success", "success", resultMsg,
                             System.currentTimeMillis() - startTime, retryIndex,
                             pt, ct, tt);
                     log.info("流式候选调用完成 - traceId={} channel={} model={} key={}",
@@ -896,8 +909,15 @@ public class RelayService {
                 JsonNode choices = json.get("choices");
                 if (choices != null && choices.isArray() && choices.size() > 0) {
                     JsonNode delta = choices.get(0).get("delta");
-                    if (delta != null && delta.has("content")) {
-                        return delta.get("content").asText();
+                    if (delta != null) {
+                        // 提取 content（常规文本）
+                        if (delta.has("content")) {
+                            return delta.get("content").asText();
+                        }
+                        // 提取 reasoning_content（思考/推理过程），确保上下文重试时不丢失推理内容
+                        if (delta.has("reasoning_content")) {
+                            return delta.get("reasoning_content").asText();
+                        }
                     }
                 }
             }
@@ -1169,7 +1189,7 @@ public class RelayService {
                 if (channelBroken || modelBroken) {
                     String scope = channelBroken ? "渠道级熔断" : "模型级熔断";
                     logPhase(traceId, new RoutingCandidate(rel, channel, channelModel, apiKey),
-                            req, "skip", scope + "跳过 " + channel.getName() + "/" + channelModel.getModelName(), 0);
+                            req, "skip", scope + "跳过 " + channel.getName() + "/" + apiKey.getKeyName() + "/" + channelModel.getModelName(), 0);
                 }
             }
         }
@@ -1215,9 +1235,7 @@ public class RelayService {
                 int ct = usage.has("completion_tokens") ? usage.get("completion_tokens").asInt()
                         : usage.has("output_tokens") ? usage.get("output_tokens").asInt() : 0;
                 int tt = usage.has("total_tokens") ? usage.get("total_tokens").asInt() : pt + ct;
-                if (pt > 0 || ct > 0 || tt > 0) {
-                    return new int[]{pt, ct, tt};
-                }
+                return new int[]{pt, ct, tt};
             }
         } catch (Exception e) {
             log.debug("提取 SSE token 用量失败: {}", e.getMessage());

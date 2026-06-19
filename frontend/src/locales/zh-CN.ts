@@ -347,8 +347,12 @@ export default {
   'playground.inputPlaceholder': '输入消息... (Enter 发送, Shift+Enter 换行)',
   'playground.selectModelFirst': '请先选择一个模型',
   'playground.requestFailed': '请求失败',
+  'playground.configComplete': '配置已完成',
   'playground.error': '错误',
   'playground.tokenUsage': '本轮: {tokens} tokens / {elapsed}s',
+'playground.thinking': '思考中...',
+'playground.thinkingClick': '点击展开详情',
+'playground.thinkingCollapse': '思考过程',
 
   /* ========== Share ========== */
   'share.loading': '加载中...',

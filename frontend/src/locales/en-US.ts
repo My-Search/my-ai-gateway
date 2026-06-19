@@ -347,8 +347,12 @@ export default {
   'playground.inputPlaceholder': 'Enter message... (Enter to send, Shift+Enter for new line)',
   'playground.selectModelFirst': 'Please select a model first',
   'playground.requestFailed': 'Request failed',
+  'playground.configComplete': 'Config complete',
   'playground.error': 'Error',
   'playground.tokenUsage': 'This turn: {tokens} tokens / {elapsed}s',
+'playground.thinking': 'Thinking...',
+'playground.thinkingClick': 'Click to expand',
+'playground.thinkingCollapse': 'Thinking process',
 
   /* ========== Share ========== */
   'share.loading': 'Loading...',

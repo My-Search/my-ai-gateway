@@ -5,7 +5,8 @@
       {{ showSidebar ? t('playground.toggleConfig') : t('playground.showConfig') }}
     </button>
 
-    <div v-if="!compact" class="playground-sidebar" :class="{ 'mobile-hidden': !showSidebar }">
+    <!-- 侧栏 -->
+    <div v-if="!compact && !sidebarCollapsed" class="playground-sidebar" :class="{ 'mobile-hidden': !showSidebar }">
       <div class="card">
         <div class="card-title mb-3">{{ t('playground.testConfig') }}</div>
 
@@ -61,8 +62,13 @@
           </span>
           <span class="chat-header-title">{{ t('playground.title') }}</span>
         </div>
-        <div class="chat-header-right" v-if="selectedModel">
-          {{ t('playground.currentModel') }}: <code>{{ selectedModel }}</code>
+        <div class="chat-header-right">
+          <template v-if="selectedModel">
+            <span class="current-model-label">{{ t('playground.currentModel') }}: <code>{{ selectedModel }}</code></span>
+          </template>
+          <button class="btn-config-toggle" @click="toggleSidebar" :title="sidebarCollapsed ? t('playground.showConfig') : t('playground.toggleConfig')">
+            <SvgIcon name="settings" :size="14" />
+          </button>
         </div>
       </div>
 
@@ -100,6 +106,20 @@
               <span v-else-if="routingProgress.phase === 'retrying'">{{ t('playground.retrying').replace('{channel}', routingProgress.channel).replace('{channelModel}', routingProgress.channel_model).replace('{msg}', routingProgress.message || '') }}</span>
               <span v-else-if="routingProgress.phase === 'switching'">{{ t('playground.switching').replace('{msg}', routingProgress.message || '') }}</span>
             </div>
+            <!-- 思考/推理过程：思考时自动展开，完成时自动收起 -->
+            <div v-if="msg.role === 'assistant' && msg.reasoningContent" class="chat-thinking">
+              <div class="thinking-header" @click="toggleThinking(idx)">
+                <template v-if="idx === messages.length - 1 && streaming">
+                  <span class="thinking-dot streaming"></span>
+                  <span class="thinking-label">{{ t('playground.thinking') }}</span>
+                </template>
+                <template v-else>
+                  <span class="thinking-arrow" :class="{ open: expandedThinking[idx] }">▶</span>
+                  <span class="thinking-label">{{ t('playground.thinkingCollapse') }}</span>
+                </template>
+              </div>
+              <div v-if="expandedThinking[idx]" class="thinking-content markdown-body" v-html="renderMarkdown(msg.reasoningContent)"></div>
+            </div>
             <div class="chat-bubble" :class="{ 'cursor-blink': idx === messages.length - 1 && streaming }">
               <div v-if="msg.role === 'assistant'" class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
               <template v-else>{{ msg.content }}</template>
@@ -123,7 +143,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick, onMounted, watch, shallowRef, triggerRef } from 'vue'
+import { ref, computed, nextTick, onMounted, watch, shallowRef, triggerRef } from 'vue'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { chatStream } from '@/api/chat'
 import { marked } from 'marked'
@@ -151,6 +171,8 @@ const props = withDefaults(defineProps<{
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system-msg'
   content: string
+  /** 思考/推理过程内容（如 reasoning_content），展开后可查看 */
+  reasoningContent?: string
   meta?: string
   channelInfo?: any
   /** 回答因 max_tokens 限制被截断 */
@@ -172,6 +194,32 @@ const streaming = ref(false)
 const tokenUsage = ref('')
 const routingProgress = ref<{ phase: string; channel: string; channel_model: string; message?: string } | null>(null)
 const showSidebar = ref(false)
+/** 每条消息的推理内容展开状态 */
+const expandedThinking = ref<Record<number, boolean>>({})
+
+/** 是否已选好模型（必要配置），用于自动收起侧栏
+ *  selectedApiKey 默认 0 = 自动选择，也是有效配置 */
+const isFullyConfigured = computed(() => {
+  return !!selectedModel.value
+})
+
+/** 侧栏折叠状态（初始展开，onMounted 中根据配置状态决定是否折叠） */
+const sidebarCollapsed = ref(false)
+
+/** 展开/折叠侧栏 */
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+}
+
+// 配置完整时自动折叠侧栏，配置不完整时自动展开
+watch(isFullyConfigured, (configured) => {
+  sidebarCollapsed.value = configured
+})
+
+/** 切换推理内容的展开/收起 */
+function toggleThinking(idx: number) {
+  expandedThinking.value = { ...expandedThinking.value, [idx]: !expandedThinking.value[idx] }
+}
 
 /** 加载 API 密钥列表（仅管理端模式） */
 async function loadApiKeys() {
@@ -255,6 +303,8 @@ onMounted(() => {
   if (!isShareMode.value) {
     restoreConfig()
   }
+  // 初始检查：如果已配置好则自动折叠侧栏
+  sidebarCollapsed.value = isFullyConfigured.value
 })
 
 async function scrollToBottom() {
@@ -331,6 +381,11 @@ async function sendMessage() {
   } finally {
     streaming.value = false
     routingProgress.value = null
+    // 流式生成结束 → 自动收起思考过程
+    const lastIdx = messages.value.length - 1
+    if (lastIdx >= 0 && expandedThinking.value[lastIdx]) {
+      expandedThinking.value = { ...expandedThinking.value, [lastIdx]: false }
+    }
     await scrollToBottom()
   }
 }
@@ -399,6 +454,20 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
               fullContent += delta.content
               tokenNum++
               targetMsg.content = fullContent
+              hasNewContent = true
+            }
+            // 处理 reasoning_content（思考/推理过程）
+            if (delta?.reasoning_content) {
+              if (!targetMsg.reasoningContent) {
+                targetMsg.reasoningContent = ''
+                // 首次收到推理内容 → 自动展开
+                const msgIdx = messages.value.indexOf(targetMsg)
+                if (msgIdx >= 0) {
+                  expandedThinking.value = { ...expandedThinking.value, [msgIdx]: true }
+                }
+              }
+              targetMsg.reasoningContent += delta.reasoning_content
+              // 即使没有 content 也要触发渲染，让 UI 显示思考内容
               hasNewContent = true
             }
             // 检测截断：finish_reason=length 表示上游 API 因 token 限制截断了回答
@@ -489,11 +558,6 @@ function renderMarkdown(text: string): string {
 .test-status-icon.testing { animation: pulse 1.5s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 .chat-header-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
-.chat-header-right { font-size: 12px; color: var(--text-muted); }
-.chat-header-right code {
-  background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px;
-  font-size: 12px; color: var(--accent-purple);
-}
 
 .chat-messages {
   flex: 1;
@@ -590,6 +654,95 @@ function renderMarkdown(text: string): string {
 
 .cursor-blink::after { content: '▋'; animation: blink 1s infinite; color: var(--accent-purple); }
 @keyframes blink { 0%, 50% { opacity: 1; } 51%, 100% { opacity: 0; } }
+
+/* 思考/推理过程区块 */
+.chat-thinking {
+  margin-bottom: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-tertiary);
+}
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  user-select: none;
+  transition: background 0.15s;
+}
+.thinking-header:hover {
+  background: color-mix(in srgb, var(--accent-purple) 8%, transparent);
+}
+.thinking-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent-purple);
+}
+.thinking-dot.streaming {
+  animation: pulse 1.2s infinite;
+}
+.thinking-label {
+  font-weight: 500;
+  color: var(--accent-purple);
+}
+.thinking-arrow {
+  font-size: 9px;
+  transition: transform 0.2s;
+  margin-left: 4px;
+}
+.thinking-arrow.open {
+  transform: rotate(90deg);
+}
+.thinking-content {
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--bg-secondary) 50%, transparent);
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+/* ===== 配置切换按钮（右上角） ===== */
+.btn-config-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.btn-config-toggle:hover {
+  background: var(--bg-tertiary);
+  color: var(--accent-purple);
+  border-color: var(--accent-purple);
+}
+.chat-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.chat-header-right .current-model-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.chat-header-right code {
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--accent-purple);
+}
 
 /* 移动端配置栏切换按钮 - 默认隐藏 */
 .mobile-sidebar-toggle {

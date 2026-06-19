@@ -299,7 +299,10 @@ public class MessageTransformer {
         if (req.getTemperature() != null) root.put("temperature", req.getTemperature());
         if (req.getTopP() != null) root.put("top_p", req.getTopP());
         if (req.getMaxTokens() != null) root.put("max_tokens", req.getMaxTokens());
-        if (req.isStream()) root.put("stream", true);
+        if (req.isStream()) {
+            root.put("stream", true);
+            root.putObject("stream_options").put("include_usage", true);
+        }
 
         if (req.getStop() != null && !req.getStop().isEmpty()) {
             if (req.getStop().size() == 1) {
@@ -760,18 +763,19 @@ public class MessageTransformer {
                     }
                 }
             } else if ("message_delta".equals(eventType)) {
-                // 结束信号
+                // 结束信号：拷贝 usage（OpenAI 格式使用 prompt_tokens / completion_tokens / total_tokens）
                 String stopReason = json.has("delta") && json.get("delta").has("stop_reason") ?
                         json.get("delta").get("stop_reason").asText() : "stop";
                 ObjectNode delta = objectMapper.createObjectNode();
                 ObjectNode chunk = createOpenAiStreamChunk(originalModel, mapAnthropicStopReason(stopReason), delta);
-                // 添加 usage
                 if (json.has("usage")) {
                     ObjectNode usage = chunk.putObject("usage");
-                    usage.put("prompt_tokens", 0);
-                    int outTokens = json.get("usage").has("output_tokens") ? json.get("usage").get("output_tokens").asInt() : 0;
+                    JsonNode src = json.get("usage");
+                    int inTokens = src.has("input_tokens") ? src.get("input_tokens").asInt() : 0;
+                    int outTokens = src.has("output_tokens") ? src.get("output_tokens").asInt() : 0;
+                    usage.put("prompt_tokens", inTokens);
                     usage.put("completion_tokens", outTokens);
-                    usage.put("total_tokens", outTokens);
+                    usage.put("total_tokens", inTokens + outTokens);
                 }
                 return objectMapper.writeValueAsString(chunk);
             }
@@ -798,13 +802,18 @@ public class MessageTransformer {
                     choice.get("finish_reason").asText() : null;
 
             if (finishReason != null) {
-                // 结束事件
+                // 结束事件：拷贝 usage（Anthropic 格式使用 input_tokens / output_tokens）
                 ObjectNode msgDelta = objectMapper.createObjectNode();
                 msgDelta.put("type", "message_delta");
                 ObjectNode deltaObj = msgDelta.putObject("delta");
                 deltaObj.put("stop_reason", mapOpenAiStopReason(finishReason));
                 deltaObj.putNull("stop_sequence");
-                msgDelta.putObject("usage");
+                ObjectNode usageObj = msgDelta.putObject("usage");
+                if (json.has("usage")) {
+                    JsonNode src = json.get("usage");
+                    usageObj.put("input_tokens", src.has("prompt_tokens") ? src.get("prompt_tokens").asInt() : 0);
+                    usageObj.put("output_tokens", src.has("completion_tokens") ? src.get("completion_tokens").asInt() : 0);
+                }
                 return objectMapper.writeValueAsString(msgDelta);
             }
 

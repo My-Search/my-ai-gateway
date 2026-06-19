@@ -307,6 +307,9 @@ public class ProtocolTransformer {
         if ("openai".equals(req.getClientApiFormat()) && req.getOriginalRequestJson() != null) {
             ObjectNode modified = req.getOriginalRequestJson().deepCopy();
             modified.put("model", upstreamModelName);
+            if (req.isStream() && !modified.has("stream_options")) {
+                modified.putObject("stream_options").put("include_usage", true);
+            }
             // 处理 system 字段：从 systemPrompt 注入
             if (req.getSystemPrompt() != null && !req.getSystemPrompt().isEmpty()) {
                 ensureOpenAiSystemMessage(modified, req.getSystemPrompt());
@@ -321,6 +324,9 @@ public class ProtocolTransformer {
         if (req.getTemperature() != null) root.put("temperature", req.getTemperature());
         if (req.getTopP() != null) root.put("top_p", req.getTopP());
         root.put("stream", req.isStream());
+        if (req.isStream()) {
+            root.putObject("stream_options").put("include_usage", true);
+        }
 
         // Stop
         if (req.getStop() != null && !req.getStop().isEmpty()) {

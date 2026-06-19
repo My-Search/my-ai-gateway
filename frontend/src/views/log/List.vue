@@ -38,6 +38,7 @@
           </span>
           <span class="log-info">
             <template v-if="group.logs[0].channelName">{{ group.logs[0].channelName }}/</template>
+            <template v-if="group.logs[0].apiKeyName">{{ group.logs[0].apiKeyName }}/</template>
             <template v-if="group.logs[0].channelModelName">{{ group.logs[0].channelModelName }}</template>
             <template v-else-if="group.logs[0].modelName">{{ group.logs[0].modelName }}</template>
             <template v-if="group.logs[group.logs.length - 1].responseTimeMs != null"> · {{ group.logs[group.logs.length - 1].responseTimeMs }}ms</template>
@@ -209,9 +210,12 @@ function recalcTrace(trace: LogTrace) {
 
 /* ========== 工具函数 ========== */
 
-/** 获取日志条目的模型标识（channelName/modelName 或 modelName） */
+/** 获取日志条目的模型标识（channelName/apiKeyName/channelModelName 或 modelName） */
 function getModelKey(log: RequestLog): string {
-  if (log.channelName && log.channelModelName) return `${log.channelName}/${log.channelModelName}`
+  if (log.channelName && log.channelModelName) {
+    if (log.apiKeyName) return `${log.channelName}/${log.apiKeyName}/${log.channelModelName}`
+    return `${log.channelName}/${log.channelModelName}`
+  }
   return log.modelName || '-'
 }
 
