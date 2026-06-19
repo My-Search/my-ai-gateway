@@ -58,7 +58,7 @@ public class ChannelService {
 
     public List<Channel> listAll() {
         return channelMapper.selectList(
-                new LambdaQueryWrapper<Channel>().orderByAsc(Channel::getSortOrder));
+                new LambdaQueryWrapper<Channel>().orderByAsc(Channel::getCreatedAt));
     }
 
     public Channel getById(Long id) {

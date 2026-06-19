@@ -1,14 +1,13 @@
 <template>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">{{ t('channel.list.title') }}</div>
+      <div class="card-title"><SvgIcon name="channel" :size="18" /> {{ t('channel.list.title') }}</div>
       <router-link to="/admin/channel/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> {{ t('channel.list.add') }}</router-link>
     </div>
     <div class="table-container">
       <table>
         <thead>
           <tr>
-            <th>ID</th>
             <th>{{ t('channel.list.name') }}</th>
             <th>{{ t('channel.list.type') }}</th>
             <th>{{ t('channel.list.endpoint') }}</th>
@@ -22,7 +21,6 @@
         </thead>
         <tbody>
           <tr v-for="ch in channels" :key="ch.id">
-            <td style="color:var(--text-muted);">{{ ch.id }}</td>
             <td><strong>{{ ch.name }}</strong></td>
             <td><span class="badge badge-info">{{ ch.channelType }}</span></td>
             <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text-muted);">
@@ -67,7 +65,7 @@
             </td>
           </tr>
           <tr v-if="!channels.length">
-            <td colspan="10" style="text-align:center;color:var(--text-muted);padding:40px;">
+            <td colspan="9" style="text-align:center;color:var(--text-muted);padding:40px;">
               {{ t('channel.list.empty') }}
             </td>
           </tr>

@@ -189,7 +189,7 @@ export default {
   'channel.models.linked': '已关联',
 
   /* ========== Model List ========== */
-  'model.list.title': '自定义模型列表',
+  'model.list.title': '入口模型',
   'model.list.add': '添加模型',
   'model.list.modelName': '模型名称',
   'model.list.description': '描述',
@@ -200,7 +200,7 @@ export default {
   'model.list.createdAt': '创建时间',
   'model.list.actions': '操作',
   'model.list.manageRels': '管理关联',
-  'model.list.config': '配置',
+  'model.list.config': '熔断配置',
   'model.list.edit': '编辑',
   'model.list.delete': '删除',
   'model.list.empty': '暂无自定义模型，点击右上角「添加模型」创建',

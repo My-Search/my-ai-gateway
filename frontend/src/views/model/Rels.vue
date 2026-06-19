@@ -32,21 +32,8 @@
             <th>{{ t('model.rels.actions') }}</th>
           </tr>
         </thead>
-        <tbody>
-          <tr
-            v-for="(rel, index) in rels"
-            :key="rel.id"
-            draggable="true"
-            :class="{
-              dragging: draggingIndex === index,
-              'drag-over-before': dragOverIndex === index && insertPosition === 'before' && draggingIndex !== index,
-              'drag-over-after': dragOverIndex === index && insertPosition === 'after' && draggingIndex !== index
-            }"
-            @dragstart="onDragStart(index)"
-            @dragover="onDragOver(index, $event)"
-            @drop="onDrop(index)"
-            @dragend="onDragEnd"
-          >
+        <tbody ref="tbodyRef">
+          <tr v-for="(rel, index) in rels" :key="rel.id" :data-index="index">
             <td><span class="drag-handle" :title="t('model.rels.dragSort')">≡</span></td>
             <td>{{ rel.channelName }}</td>
             <td><code class="model-tag">{{ rel.channelModelName }}</code></td>
@@ -75,12 +62,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { modelApi, type CustomModel, type ModelChannelRel } from '@/api/model'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
 import Dialog from '@/components/common/Dialog.vue'
+import Sortable from 'sortablejs'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -90,10 +78,9 @@ const rels = ref<ModelChannelRel[]>([])
 const availableModels = ref<any[]>([])
 const selectedModelIds = ref<number[]>([])
 
-  // Drag and drop sort state
-const draggingIndex = ref<number | null>(null)
-const dragOverIndex = ref<number | null>(null)
-const insertPosition = ref<'before' | 'after'>('before')
+const tbodyRef = ref<HTMLElement | null>(null)
+let sortableInstance: Sortable | null = null
+
 const isDirty = ref(false)
 const originalRelIds = ref<number[]>([])
 const isSaving = ref(false)
@@ -184,43 +171,32 @@ function removeRel(rel: ModelChannelRel) {
   })
 }
 
-function onDragStart(index: number) {
-  draggingIndex.value = index
-}
-
-function onDragOver(index: number, e: DragEvent) {
-  e.preventDefault()
-  dragOverIndex.value = index
-  const tr = e.currentTarget as HTMLElement
-  const rect = tr.getBoundingClientRect()
-  insertPosition.value = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
-}
-
-function onDrop(index: number) {
-  if (draggingIndex.value === null || draggingIndex.value === index) return
-
-  const newRels = [...rels.value]
-  const [moved] = newRels.splice(draggingIndex.value, 1)
-
-  // Calculate insert position: before → insert before target, after → insert after target
-  // Note: array has changed after splice, need to adjust index
-  let insertAt = insertPosition.value === 'after' ? index + 1 : index
-  if (draggingIndex.value < index && insertAt > 0) {
-    insertAt-- // One item removed above, target position shifted up
+function initSortable() {
+  if (sortableInstance) {
+    sortableInstance.destroy()
+    sortableInstance = null
   }
-  newRels.splice(insertAt, 0, moved)
-  rels.value = newRels
+  const tbody = tbodyRef.value
+  if (!tbody) return
 
-  const currentIds = rels.value.map(r => r.id)
-  isDirty.value = JSON.stringify(currentIds) !== JSON.stringify(originalRelIds.value)
+  sortableInstance = new Sortable(tbody, {
+    handle: '.drag-handle',
+    animation: 150,
+    easing: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+    ghostClass: 'sortable-ghost',
+    dragClass: 'sortable-drag',
+    onEnd: (evt) => {
+      if (evt.oldIndex === undefined || evt.newIndex === undefined || evt.oldIndex === evt.newIndex) return
 
-  draggingIndex.value = null
-  dragOverIndex.value = null
-}
+      const newRels = [...rels.value]
+      const [moved] = newRels.splice(evt.oldIndex, 1)
+      newRels.splice(evt.newIndex, 0, moved)
+      rels.value = newRels
 
-function onDragEnd() {
-  draggingIndex.value = null
-  dragOverIndex.value = null
+      const currentIds = rels.value.map(r => r.id)
+      isDirty.value = JSON.stringify(currentIds) !== JSON.stringify(originalRelIds.value)
+    }
+  })
 }
 
 async function saveOrder() {
@@ -238,31 +214,37 @@ async function saveOrder() {
   }
 }
 
-onMounted(loadData)
+// Initialize Sortable after data is loaded and DOM is updated
+watch(rels, () => {
+  nextTick(() => initSortable())
+})
+
+onMounted(async () => {
+  await loadData()
+  await nextTick()
+  initSortable()
+})
 </script>
 
 <style scoped>
-tr[draggable="true"] {
-  cursor: grab;
+/* SortableJS drag states */
+.sortable-ghost {
+  opacity: 0.35;
+  background-color: color-mix(in srgb, var(--accent-blue) 10%, transparent);
 }
 
-tr[draggable="true"]:active {
-  cursor: grabbing;
-}
-
-tr.dragging {
-  opacity: 0.5;
-  background-color: var(--bg-hover);
-}
-
-tr.drag-over-before {
+.sortable-ghost td {
   box-shadow: inset 0 2px 0 var(--accent-blue);
-  background-color: color-mix(in srgb, var(--accent-blue) 6%, transparent);
 }
 
-tr.drag-over-after {
-  box-shadow: inset 0 -2px 0 var(--accent-blue);
-  background-color: color-mix(in srgb, var(--accent-blue) 6%, transparent);
+.sortable-drag {
+  opacity: 0.8;
+  background-color: var(--bg-card);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.sortable-drag td {
+  cursor: grabbing;
 }
 
 .drag-handle {
@@ -271,6 +253,7 @@ tr.drag-over-after {
   user-select: none;
   font-size: 18px;
   line-height: 1;
+  touch-action: none; /* Prevent touch scroll on handle */
 }
 
 .drag-handle:active {

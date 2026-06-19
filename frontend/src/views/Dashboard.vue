@@ -344,8 +344,8 @@ onMounted(async () => {
   align-self: start;
 }
 .channel-rank-list {
-  min-height: 196px; /* 固定高度显示3项，不足也占位 */
-  max-height: 196px;
+  min-height: 392px; /* 固定高度显示3项，不足也占位 */
+  max-height: 392px;
 }
 
 /* Tab switch */

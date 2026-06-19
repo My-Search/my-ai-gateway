@@ -1,19 +1,16 @@
 <template>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">{{ t('model.list.title') }}</div>
+      <div class="card-title"><SvgIcon name="model" :size="18" /> {{ t('model.list.title') }}</div>
       <router-link to="/admin/model/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> {{ t('model.list.add') }}</router-link>
     </div>
     <div class="table-container">
       <table>
         <thead>
           <tr>
-            <th>ID</th>
             <th>{{ t('model.list.modelName') }}</th>
             <th>{{ t('model.list.description') }}</th>
             <th>{{ t('model.list.strategy') }}</th>
-            <th>{{ t('model.list.linkedModels') }}</th>
-            <th>{{ t('model.list.circuitBreaker') }}</th>
             <th>{{ t('model.list.status') }}</th>
             <th>{{ t('model.list.createdAt') }}</th>
             <th>{{ t('model.list.actions') }}</th>
@@ -21,7 +18,6 @@
         </thead>
         <tbody>
           <tr v-for="m in models" :key="m.id">
-            <td style="color:var(--text-muted);">{{ m.id }}</td>
             <td><strong>{{ m.modelName }}</strong></td>
             <td style="font-size:12px;color:var(--text-secondary);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
               {{ m.description }}
@@ -32,25 +28,21 @@
               </span>
             </td>
             <td>
-              <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> {{ t('model.list.manageRels') }}</router-link>
-            </td>
-            <td>
-              <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="zap" :size="14" /> {{ t('model.list.config') }}</router-link>
-            </td>
-            <td>
               <span v-if="m.enabled === 1" class="badge badge-success">{{ t('common.enabled') }}</span>
               <span v-else class="badge badge-danger">{{ t('common.disabled') }}</span>
             </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ m.createdAt }}</td>
             <td>
               <div style="display:flex;gap:6px;">
+                <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> {{ t('model.list.manageRels') }}</router-link>
+                <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="zap" :size="14" /> {{ t('model.list.config') }}</router-link>
                 <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('model.list.edit') }}</router-link>
                 <button class="btn btn-sm btn-danger" @click="confirmDelete(m)"><SvgIcon name="trash" :size="14" /> {{ t('model.list.delete') }}</button>
               </div>
             </td>
           </tr>
           <tr v-if="!models.length">
-            <td colspan="9" style="text-align:center;color:var(--text-muted);padding:40px;">
+            <td colspan="6" style="text-align:center;color:var(--text-muted);padding:40px;">
               {{ t('model.list.empty') }}
             </td>
           </tr>

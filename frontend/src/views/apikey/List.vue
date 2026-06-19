@@ -1,7 +1,7 @@
 <template>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">{{ t('apikey.list.title') }}</div>
+      <div class="card-title"><SvgIcon name="key" :size="18" /> {{ t('apikey.list.title') }}</div>
       <button class="btn btn-primary" @click="openForm()"><SvgIcon name="plus" :size="14" /> {{ t('apikey.list.add') }}</button>
     </div>
     <div class="alert alert-info">
@@ -11,7 +11,6 @@
       <table>
         <thead>
           <tr>
-            <th>ID</th>
             <th>{{ t('apikey.list.keyName') }}</th>
             <th>{{ t('apikey.list.keyValue') }}</th>
             <th>{{ t('apikey.list.status') }}</th>
@@ -23,7 +22,6 @@
         </thead>
         <tbody>
           <tr v-for="key in apiKeys" :key="key.id">
-            <td style="color:var(--text-muted);">{{ key.id }}</td>
             <td><strong>{{ key.keyName }}</strong></td>
             <td>
               <code class="model-tag" style="user-select:all;cursor:pointer;" @click="copyKey(key.keyValue)">
@@ -58,7 +56,7 @@
             </td>
           </tr>
           <tr v-if="!apiKeys.length">
-            <td colspan="8" style="text-align:center;color:var(--text-muted);padding:40px;">
+            <td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;">
               {{ t('apikey.list.empty') }}
             </td>
           </tr>

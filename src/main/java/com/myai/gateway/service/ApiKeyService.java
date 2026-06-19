@@ -30,7 +30,7 @@ public class ApiKeyService {
 
     public List<ApiKey> listAll() {
         return apiKeyMapper.selectList(
-                new LambdaQueryWrapper<ApiKey>().orderByDesc(ApiKey::getCreatedAt));
+                new LambdaQueryWrapper<ApiKey>().orderByAsc(ApiKey::getCreatedAt));
     }
 
     public ApiKey getById(Long id) {
