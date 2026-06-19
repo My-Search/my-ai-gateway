@@ -135,6 +135,20 @@
           {{ t('channel.list.name') }}: {{ testChannel?.name }}
         </div>
         <div class="form-group">
+          <label>{{ t('channel.list.testModel') }}</label>
+          <SearchableSelect
+            v-if="testModels.length"
+            v-model="selectedModelId"
+            :options="modelSelectOptions"
+            :placeholder="t('model.rels.selectModel')"
+            :width="0"
+            :dropdown-width="380"
+          />
+          <div v-else style="font-size:12px;color:var(--text-muted);">
+            {{ t('channel.list.noModels') }}
+          </div>
+        </div>
+        <div class="form-group">
           <label>{{ t('channel.list.testMessage') }}</label>
           <textarea v-model="testMessage" class="form-control" rows="3"></textarea>
         </div>
@@ -171,11 +185,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
-import { channelApi, type Channel } from '@/api/channel'
+import { channelApi, type Channel, type ChannelModel } from '@/api/channel'
 import Dialog from '@/components/common/Dialog.vue'
+import SearchableSelect from '@/components/common/SearchableSelect.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -185,6 +200,11 @@ const testChannel = ref<Channel | null>(null)
 const testMessage = ref('Hello, this is a test message.')
 const testResult = ref<{ success: boolean; response?: string; responseTime?: number; error?: string } | null>(null)
 const testLoading = ref(false)
+const testModels = ref<ChannelModel[]>([])
+const selectedModelId = ref(0)
+const modelSelectOptions = computed(() =>
+  testModels.value.map(m => ({ value: m.id, label: m.displayName || m.modelName }))
+)
 
 /* ---------- Dialog state ---------- */
 const dialogVisible = ref(false)
@@ -228,7 +248,21 @@ async function quickTest(ch: Channel) {
   testChannel.value = ch
   testMessage.value = 'Hello, this is a test message.'
   testResult.value = null
+  selectedModelId.value = 0
+  testModels.value = []
   showTestModal.value = true
+  // 加载渠道的模型列表供选择
+  if (ch.id) {
+    try {
+      const res = await channelApi.getModels(ch.id)
+      testModels.value = res.data.models
+      if (testModels.value.length > 0) {
+        selectedModelId.value = testModels.value[0].id
+      }
+    } catch {
+      // 忽略加载失败，使用空列表
+    }
+  }
 }
 
 function closeTestModal() {
@@ -240,7 +274,10 @@ async function sendTestRequest() {
   if (!testChannel.value?.id) return
   testLoading.value = true
   try {
-    const res = await channelApi.quickTest(testChannel.value.id, testMessage.value, undefined)
+    // 根据选中的 model id 查找对应的 modelName
+    const selected = testModels.value.find(m => m.id === selectedModelId.value)
+    const modelName = selected?.modelName || undefined
+    const res = await channelApi.quickTest(testChannel.value.id, testMessage.value, modelName)
     testResult.value = res.data
   } catch (e: any) {
     testResult.value = { success: false, error: e.message }
