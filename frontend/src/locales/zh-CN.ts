@@ -261,6 +261,8 @@ export default {
   'model.rels.addFailed': '添加失败',
   'model.rels.deleteFailed': '删除失败',
   'model.rels.saveFailed': '保存失败',
+  'model.rels.responseTime': '平均响应',
+  'model.rels.noData': '暂无数据',
 
   /* ========== Circuit Breaker ========== */
   'cb.title': '熔断配置 - {name}',

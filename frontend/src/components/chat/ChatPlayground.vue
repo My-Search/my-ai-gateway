@@ -120,7 +120,7 @@
                   <span class="thinking-label">{{ t('playground.thinkingCollapse') }}</span>
                 </template>
               </div>
-              <div v-if="expandedThinking[idx]" class="thinking-content markdown-body" v-html="renderMarkdown(msg.reasoningContent)"></div>
+              <div v-if="expandedThinking[idx]" class="thinking-content markdown-body" v-html="renderReasoningMarkdown(msg.reasoningContent)"></div>
             </div>
             <div class="chat-bubble" :class="{ 'cursor-blink': idx === messages.length - 1 && streaming }">
               <div v-if="msg.role === 'assistant'" class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
@@ -507,6 +507,16 @@ function renderMarkdown(text: string): string {
     return text
   }
 }
+
+/** 将 reasoning_content（思考/推理过程）渲染为 HTML，开启 breaks 保留换行 */
+function renderReasoningMarkdown(text: string): string {
+  if (!text) return ''
+  try {
+    return (marked.parse(text, { async: false, breaks: true }) as string).trimEnd()
+  } catch {
+    return text
+  }
+}
 </script>
 
 <style scoped>
@@ -712,7 +722,8 @@ function renderMarkdown(text: string): string {
   margin-bottom: 8px;
   border: 1px solid var(--border-color);
   border-radius: 8px;
-  overflow: hidden;
+  /* 使用 isolation 保持圆角裁剪，但不裁剪内容，让列表标记能显示在 padding 区域 */
+  isolation: isolate;
   background: var(--bg-tertiary);
 }
 .thinking-header {
@@ -749,12 +760,13 @@ function renderMarkdown(text: string): string {
   transform: rotate(90deg);
 }
 .thinking-content {
-  padding: 8px 12px;
+  padding: 8px 20px;
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--bg-secondary) 50%, transparent);
 }
+/* 思考/推理内容的 white-space 在全局块中设置（见下文），此处不再重复 */
 
 /* ===== 配置切换按钮（右上角） ===== */
 .btn-config-toggle {
@@ -848,14 +860,23 @@ function renderMarkdown(text: string): string {
 .chat-playground .markdown-body h2 { font-size: 16px; }
 .chat-playground .markdown-body h3 { font-size: 15px; }
 .chat-playground .markdown-body h4 { font-size: 14px; }
-/* —— 列表 —— */
-.chat-playground .markdown-body ul,
-.chat-playground .markdown-body ol {
-  margin: 0 0 10px;
-  padding-left: 20px;
-}
-.chat-playground .markdown-body li { margin-bottom: 4px; }
+
 .chat-playground .markdown-body li:last-child { margin-bottom: 0; }
+/* 修复嵌套列表缩进 */
+.chat-playground .markdown-body li > ul,
+.chat-playground .markdown-body li > ol {
+  margin-top: 0.25em;
+  margin-bottom: 0;
+}
+/* 消除 li 内部 <p> 的多余间距 */
+.chat-playground .markdown-body li > p {
+  margin: 0;
+  display: inline;
+}
+/* 思考/推理内容保留换行和前导空格（v-html内容无法使用scoped CSS） */
+.chat-playground .thinking-content.markdown-body {
+  white-space: pre-wrap;
+}
 /* —— 代码块 —— */
 .chat-playground .markdown-body pre {
   margin: 0 0 12px;

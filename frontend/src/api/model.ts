@@ -21,6 +21,10 @@ export interface ModelChannelRel {
   channelId?: number
   /** 渠道是否启用 */
   channelEnabled?: number
+  /** 该渠道模型的平均响应时间 (ms) */
+  ttftMs?: number | null
+  /** 样本数 */
+  sampleCount?: number | null
 }
 
 export interface CircuitBreakerConfig {

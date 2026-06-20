@@ -420,6 +420,28 @@ textarea.form-control {
 }
 
 /* Responsive */
+/* ── ChatPlayground Markdown 列表样式（在此全局文件中，避免 Vue scoped 属性导致 v-html 元素匹配失败） ── */
+.chat-playground .markdown-body > ol,
+.chat-playground .markdown-body > ul {
+  margin: 0 0 10px;
+  padding-left: 1.5em;
+  text-indent: -1.5em;
+}
+.chat-playground .markdown-body > ol > li,
+.chat-playground .markdown-body > ul > li {
+  padding-left: 1.5em;
+  text-indent: -1.5em;
+}
+.chat-playground .markdown-body li > ul,
+.chat-playground .markdown-body li > ol {
+  margin-top: 0.25em;
+  margin-bottom: 0;
+}
+.chat-playground .markdown-body li > p {
+  margin: 0;
+  display: inline;
+}
+
 @media (max-width: 768px) {
   .main-content {
     margin-left: 0;

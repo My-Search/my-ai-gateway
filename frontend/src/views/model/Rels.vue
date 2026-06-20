@@ -29,6 +29,7 @@
             <th>{{ t('model.rels.sort') }}</th>
             <th>{{ t('model.rels.channel') }}</th>
             <th>{{ t('model.rels.model') }}</th>
+            <th>{{ t('model.rels.responseTime') }}</th>
             <th>{{ t('model.rels.actions') }}</th>
           </tr>
         </thead>
@@ -43,11 +44,18 @@
               <code class="model-tag" :class="{ 'text-disabled': rel.channelEnabled !== 1 }">{{ rel.channelModelName }}</code>
             </td>
             <td>
+              <span v-if="rel.ttftMs != null" class="resp-time">
+                {{ formatRespTime(rel.ttftMs) }}
+                <span v-if="rel.sampleCount != null" class="sample-count">({{ rel.sampleCount }})</span>
+              </span>
+              <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
+            </td>
+            <td>
               <button class="btn btn-sm btn-danger" @click="removeRel(rel)"><SvgIcon name="trash" :size="14" /> {{ t('model.rels.delete') }}</button>
             </td>
           </tr>
           <tr v-if="!rels.length">
-            <td colspan="4" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
+            <td colspan="5" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
           </tr>
         </tbody>
       </table>
@@ -89,6 +97,11 @@ let sortableInstance: Sortable | null = null
 const isDirty = ref(false)
 const originalRelIds = ref<number[]>([])
 const isSaving = ref(false)
+
+function formatRespTime(ms: number): string {
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + 's'
+  return ms + 'ms'
+}
 
 /* ---------- Dialog state ---------- */
 const dialogVisible = ref(false)
@@ -283,5 +296,21 @@ onMounted(async () => {
 
 .drag-handle:active {
   cursor: grabbing;
+}
+
+.resp-time {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.resp-time-none {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.sample-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-left: 2px;
 }
 </style>

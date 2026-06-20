@@ -37,6 +37,7 @@ class RelayServiceTest {
     private ObjectMapper objectMapper;
     private MessageTransformer messageTransformer;
     private StreamContentManager streamContentManager;
+    private LatencyTracker latencyTracker;
 
     private RelayService relayService;
 
@@ -51,10 +52,12 @@ class RelayServiceTest {
         objectMapper = new ObjectMapper();
         messageTransformer = mock(MessageTransformer.class);
         streamContentManager = new StreamContentManager();
+        latencyTracker = mock(LatencyTracker.class);
+        when(latencyTracker.getTimeout(any(), any())).thenReturn(60_000L);
 
         relayService = new RelayService(channelService, channelApiKeyService, modelService,
                 circuitBreakerService, requestLogService, loadBalancerFactory,
-                objectMapper, messageTransformer, streamContentManager);
+                objectMapper, messageTransformer, streamContentManager, latencyTracker);
 
         when(loadBalancerFactory.getBalancer(anyString())).thenReturn(new FailoverBalancer());
         when(requestLogService.startTrace()).thenReturn("trace-1");

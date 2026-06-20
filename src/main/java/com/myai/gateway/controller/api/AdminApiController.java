@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.myai.gateway.entity.*;
+import com.myai.gateway.mapper.RequestLogMapper;
 import com.myai.gateway.relay.RelayService;
+import com.myai.gateway.relay.LatencyTracker;
 import com.myai.gateway.service.*;
 import com.myai.gateway.config.JwtTokenProvider;
 import jakarta.servlet.http.HttpServletRequest;
@@ -19,9 +21,12 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 
 /**
  * 管理后台 REST API 控制器
@@ -45,13 +50,17 @@ public class AdminApiController {
     private final RelayService relayService;
     private final ObjectMapper objectMapper;
     private final JwtTokenProvider jwtTokenProvider;
+    private final LatencyTracker latencyTracker;
+    private final RequestLogMapper requestLogMapper;
 
     public AdminApiController(StatsService statsService, ChannelService channelService,
                               ChannelApiKeyService channelApiKeyService, ModelService modelService,
                               ApiKeyService apiKeyService, RequestLogService requestLogService,
                               LogSseService logSseService, AdminConfigService adminConfigService,
                               RelayService relayService, ObjectMapper objectMapper,
-                              JwtTokenProvider jwtTokenProvider) {
+                              JwtTokenProvider jwtTokenProvider,
+                              LatencyTracker latencyTracker,
+                              RequestLogMapper requestLogMapper) {
         this.statsService = statsService;
         this.channelService = channelService;
         this.channelApiKeyService = channelApiKeyService;
@@ -63,6 +72,8 @@ public class AdminApiController {
         this.relayService = relayService;
         this.objectMapper = objectMapper;
         this.jwtTokenProvider = jwtTokenProvider;
+        this.latencyTracker = latencyTracker;
+        this.requestLogMapper = requestLogMapper;
     }
 
     // ==================== Auth ====================
@@ -570,6 +581,48 @@ public class AdminApiController {
         if (m == null) return ResponseEntity.status(404).body(Map.of("error", "模型不存在"));
         List<ModelChannelRel> rels = modelService.getChannelRels(id);
         List<ChannelModel> availableModels = modelService.getAllAvailableChannelModels();
+
+        // 按 (channelName, channelModelName) 分组计算最近 24h 内每个模型最近 30 条请求的平均响应时间
+        // 加时间窗口避免全表扫描，24h 对个人网关足够覆盖低频访问场景
+        LocalDateTime since = LocalDateTime.now().minusHours(24);
+        Map<String, List<RequestLog>> logsByKey = new HashMap<>();
+        List<RequestLog> allLogs = requestLogMapper.selectList(
+                new LambdaQueryWrapper<RequestLog>()
+                        .in(RequestLog::getPhase, "success", "fail")
+                        .isNotNull(RequestLog::getChannelName)
+                        .isNotNull(RequestLog::getChannelModelName)
+                        .ne(RequestLog::getChannelName, "")
+                        .ne(RequestLog::getChannelModelName, "")
+                        .isNotNull(RequestLog::getResponseTimeMs)
+                        .gt(RequestLog::getResponseTimeMs, 0)
+                        .ge(RequestLog::getCreatedAt, since)
+                        .orderByDesc(RequestLog::getCreatedAt));
+        for (RequestLog log : allLogs) {
+            String key = log.getChannelName() + "||" + log.getChannelModelName();
+            logsByKey.computeIfAbsent(key, k -> new ArrayList<>()).add(log);
+        }
+
+        // 为每个关联模型计算最近 30 条的平均响应时间和样本数
+        for (ModelChannelRel rel : rels) {
+            String channelName = rel.getChannelName();
+            String channelModelName = rel.getChannelModelName();
+            if (channelName != null && channelModelName != null) {
+                String key = channelName + "||" + channelModelName;
+                List<RequestLog> modelLogs = logsByKey.getOrDefault(key, new ArrayList<>());
+                List<RequestLog> recent30 = modelLogs.stream().limit(30).toList();
+                if (!recent30.isEmpty()) {
+                    double avg = recent30.stream()
+                            .mapToInt(RequestLog::getResponseTimeMs)
+                            .average()
+                            .orElse(0.0);
+                    rel.setTtftMs(Math.round(avg));
+                    rel.setSampleCount(recent30.size());
+                } else {
+                    rel.setTtftMs(null);
+                    rel.setSampleCount(null);
+                }
+            }
+        }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("model", m);
         result.put("rels", rels);

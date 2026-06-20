@@ -65,6 +65,7 @@ public class RelayService {
     private final WebClient webClient;
     private final MessageTransformer messageTransformer;
     private final StreamContentManager streamContentManager;
+    private final LatencyTracker latencyTracker;
 
     /** 流式请求 token 用量累积器：traceId -> [promptTokens, completionTokens, totalTokens] */
     private final ConcurrentHashMap<String, int[]> streamUsageMap = new ConcurrentHashMap<>();
@@ -77,7 +78,8 @@ public class RelayService {
                         LoadBalancerFactory loadBalancerFactory,
                         ObjectMapper objectMapper,
                         MessageTransformer messageTransformer,
-                        StreamContentManager streamContentManager) {
+                        StreamContentManager streamContentManager,
+                        LatencyTracker latencyTracker) {
         this.channelService = channelService;
         this.channelApiKeyService = channelApiKeyService;
         this.modelService = modelService;
@@ -87,6 +89,7 @@ public class RelayService {
         this.objectMapper = objectMapper;
         this.messageTransformer = messageTransformer;
         this.streamContentManager = streamContentManager;
+        this.latencyTracker = latencyTracker;
         this.webClient = WebClient.builder()
                 .codecs(config -> config.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
                 .build();
@@ -253,6 +256,9 @@ public class RelayService {
                     balancer.markSuccess(candidate);
                     // 更新渠道模型最后使用时间（用于轮询 LRU 排序）
                     modelService.updateChannelModelLastUsed(candidate.getChannelModel().getId());
+                    // 非流式：响应时间 ≈ TTFT，记录到自适应超时统计
+                    latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(),
+                            System.currentTimeMillis() - startTime);
                     String transformed = transformResponse(body, candidate, req, provider, false);
                     int[] usage = extractUsageFromProviderResponse(body);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(),
@@ -292,16 +298,20 @@ public class RelayService {
      * 对单个候选按重试次数进行调用，每次失败立即重试同一候选
      */
     private Mono<String> invokeCandidateWithRetries(String traceId, String authHeader, InternalRequest req,
-                                                     RoutingCandidate candidate, String provider,
-                                                     int retryIndex, int attempt, int maxAttempts) {
+                                                      RoutingCandidate candidate, String provider,
+                                                      int retryIndex, int attempt, int maxAttempts) {
+        long timeoutMs = latencyTracker.getTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId());
         return callProviderNonStream(authHeader, req, candidate, provider)
-                .timeout(Duration.ofSeconds(60))
-                .doOnError(err -> log.warn("候选尝试 {}/{} 失败 channel={} key={} model={}: {}",
-                        attempt, maxAttempts,
-                        candidate.getChannel().getName(),
-                        candidate.getChannelApiKey().getKeyName(),
-                        candidate.getChannelModel().getModelName(),
-                        err.getMessage()))
+                .timeout(Duration.ofMillis(timeoutMs))
+                .doOnError(err -> {
+                    latencyTracker.recordTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId(), timeoutMs);
+                    log.warn("候选尝试 {}/{} 失败 channel={} key={} model={}: {}",
+                            attempt, maxAttempts,
+                            candidate.getChannel().getName(),
+                            candidate.getChannelApiKey().getKeyName(),
+                            candidate.getChannelModel().getModelName(),
+                            err.getMessage());
+                })
                 .onErrorResume(err -> {
                     if (attempt < maxAttempts) {
                         // 重试前检查熔断：若已被其他并发请求熔断，跳过剩余重试，直接让外层重路由
@@ -401,9 +411,20 @@ public class RelayService {
         Flux<SseEvent> routingStart = internalClient
                 ? Flux.just(new SseEvent(null, buildRoutingProgressJson("trying", candidate, retryIndex, null)))
                 : Flux.empty();
+        // 标记该候选的首次 SSE 数据事件，用于记录 TTFT
+        // 注意：此 Flux 由方法直接返回（单订阅），不会被多个 Subscriber 共享，AtomicBoolean 状态安全
+        java.util.concurrent.atomic.AtomicBoolean firstDataEvent = new java.util.concurrent.atomic.AtomicBoolean(true);
         return Flux.concat(routingStart,
                 invokeStreamCandidateWithRetries(traceId, authHeader, req, candidate, provider, retryIndex, 1, maxAttempts, internalClient))
                 .doOnNext(event -> {
+                    // 记录 TTFT：跳过后端自定义事件（_routing_progress、_gateway_meta），仅对用户数据事件测量
+                    if (firstDataEvent.getAndSet(false)
+                            && !"[DONE]".equals(event.data())
+                            && !(event.data() != null && event.data().contains("_gateway_meta"))
+                            && !(event.data() != null && event.data().contains("_routing_progress"))) {
+                        long ttft = System.currentTimeMillis() - startTime;
+                        latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(), ttft);
+                    }
                     int[] usage = extractUsageFromSseData(event.data());
                     if (usage != null) {
                         streamUsageMap.put(traceId, usage);
@@ -500,22 +521,27 @@ public class RelayService {
      * @param internalClient 是否为内部客户端，true 时发送 _routing_progress 重试事件
      */
     private Flux<SseEvent> invokeStreamCandidateWithRetries(String traceId, String authHeader, InternalRequest req,
-                                                             RoutingCandidate candidate, String provider,
-                                                             int retryIndex, int attempt, int maxAttempts,
-                                                             boolean internalClient) {
-        log.info("开始调用流式候选 - traceId={} attempt={}/{} channel={} model={} key={}",
+                                                              RoutingCandidate candidate, String provider,
+                                                              int retryIndex, int attempt, int maxAttempts,
+                                                              boolean internalClient) {
+        long timeoutMs = latencyTracker.getTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId());
+        log.info("开始调用流式候选 - traceId={} attempt={}/{} channel={} model={} key={} timeout={}ms",
                 traceId, attempt, maxAttempts,
                 candidate.getChannel().getName(),
                 candidate.getChannelModel().getModelName(),
-                candidate.getChannelApiKey().getKeyName());
+                candidate.getChannelApiKey().getKeyName(),
+                timeoutMs);
         return callProviderStream(authHeader, req, candidate, provider, internalClient, traceId)
-                .timeout(Duration.ofSeconds(60))
-                .doOnError(err -> log.warn("流式候选尝试 {}/{} 失败 channel={} key={} model={}: {}",
-                        attempt, maxAttempts,
-                        candidate.getChannel().getName(),
-                        candidate.getChannelApiKey().getKeyName(),
-                        candidate.getChannelModel().getModelName(),
-                        err.getMessage()))
+                .timeout(Duration.ofMillis(timeoutMs))
+                .doOnError(err -> {
+                    latencyTracker.recordTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId(), timeoutMs);
+                    log.warn("流式候选尝试 {}/{} 失败 channel={} key={} model={}: {}",
+                            attempt, maxAttempts,
+                            candidate.getChannel().getName(),
+                            candidate.getChannelApiKey().getKeyName(),
+                            candidate.getChannelModel().getModelName(),
+                            err.getMessage());
+                })
                 .onErrorResume(err -> {
                     if (attempt < maxAttempts) {
                         // 重试前检查熔断：若已被其他并发请求熔断，跳过剩余重试，直接让外层重路由

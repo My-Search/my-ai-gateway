@@ -262,6 +262,8 @@ export default {
   'model.rels.addFailed': 'Add failed',
   'model.rels.deleteFailed': 'Delete failed',
   'model.rels.saveFailed': 'Save failed',
+  'model.rels.responseTime': 'Avg Resp',
+  'model.rels.noData': 'No data',
 
   /* ========== Circuit Breaker ========== */
   'cb.title': 'Circuit Breaker - {name}',

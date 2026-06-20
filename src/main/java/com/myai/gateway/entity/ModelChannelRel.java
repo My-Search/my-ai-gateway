@@ -50,6 +50,14 @@ public class ModelChannelRel {
     @TableField(exist = false)
     private Integer channelEnabled;
 
+    /** 该渠道模型的平均响应时间 ms（非数据库字段，从 TtftTracker 读取） */
+    @TableField(exist = false)
+    private Long ttftMs;
+
+    /** 样本数（非数据库字段，从 TtftTracker 读取） */
+    @TableField(exist = false)
+    private Integer sampleCount;
+
     public ModelChannelRel() {}
 
     public ModelChannelRel(Long modelId, Long channelModelId) {
@@ -96,4 +104,10 @@ public class ModelChannelRel {
 
     public Integer getChannelEnabled() { return channelEnabled; }
     public void setChannelEnabled(Integer channelEnabled) { this.channelEnabled = channelEnabled; }
+
+    public Long getTtftMs() { return ttftMs; }
+    public void setTtftMs(Long ttftMs) { this.ttftMs = ttftMs; }
+
+    public Integer getSampleCount() { return sampleCount; }
+    public void setSampleCount(Integer sampleCount) { this.sampleCount = sampleCount; }
 }
