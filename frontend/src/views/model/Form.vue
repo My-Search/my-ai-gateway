@@ -15,7 +15,7 @@
         <textarea id="description" v-model="form.description" class="form-control" :placeholder="t('model.form.descriptionPlaceholder')"></textarea>
       </div>
       <div class="form-group">
-        <label for="strategy">{{ t('model.form.strategy') }}</label>
+        <label for="strategy">{{ t('model.form.strategy') }} <span class="question-icon" @click="showStrategyInfo = true">?</span></label>
         <select id="strategy" v-model="form.strategy" class="form-control">
           <option value="">{{ t('model.form.strategyFailover') }}</option>
           <option value="random">{{ t('model.form.strategyRandom') }}</option>
@@ -36,6 +36,15 @@
       </div>
     </form>
   </div>
+
+  <!-- Strategy Info Dialog -->
+  <Dialog
+    v-model="showStrategyInfo"
+    :title="t('model.form.strategy')"
+    type="alert"
+  >
+    <div style="white-space:pre-line;line-height:1.7;">{{ t('model.form.strategyExplain') }}</div>
+  </Dialog>
 
   <!-- Common Dialog -->
   <Dialog
@@ -61,6 +70,7 @@ const router = useRouter()
 const isEdit = computed(() => !!route.params.id)
 const saving = ref(false)
 const form = ref<Partial<CustomModel>>({ modelName: '', description: '', strategy: '', enabled: 1 })
+const showStrategyInfo = ref(false)
 
 /* ---------- Dialog state ---------- */
 const dialogVisible = ref(false)
@@ -117,3 +127,27 @@ async function handleSave() {
   }
 }
 </script>
+
+<style scoped>
+.question-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--text-muted);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: help;
+  line-height: 1;
+  vertical-align: middle;
+  margin-left: 4px;
+  transition: all 0.15s;
+}
+.question-icon:hover {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+</style>

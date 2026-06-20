@@ -66,7 +66,7 @@
             <SvgIcon name="plus" :size="14" /> {{ t('channel.form.manualAdd') }}
           </button>
           <div class="toolbar-right">
-            <span class="model-stats">{{ t('channel.form.modelCount', models.length) }}</span>
+            <span class="model-stats">{{ t('channel.form.modelCount', { count: models.length }) }}</span>
             <button v-if="models.length" type="button" class="btn btn-danger btn-sm" @click="clearAllModels"><SvgIcon name="trash" :size="14" /> {{ t('channel.form.clearAll') }}</button>
           </div>
         </div>
@@ -387,7 +387,7 @@ function clearAllModels() {
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: () => {
-      models.value.forEach(m => { m._deleted = true })
+      models.value = []
     }
   })
 }

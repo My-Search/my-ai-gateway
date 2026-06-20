@@ -46,6 +46,10 @@ public class ModelChannelRel {
     @TableField(exist = false)
     private Long channelId;
 
+    /** 渠道是否启用（非数据库字段，用于前端显示） */
+    @TableField(exist = false)
+    private Integer channelEnabled;
+
     public ModelChannelRel() {}
 
     public ModelChannelRel(Long modelId, Long channelModelId) {
@@ -89,4 +93,7 @@ public class ModelChannelRel {
 
     public Long getChannelId() { return channelId; }
     public void setChannelId(Long channelId) { this.channelId = channelId; }
+
+    public Integer getChannelEnabled() { return channelEnabled; }
+    public void setChannelEnabled(Integer channelEnabled) { this.channelEnabled = channelEnabled; }
 }

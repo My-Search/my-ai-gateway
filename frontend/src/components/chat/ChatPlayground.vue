@@ -6,7 +6,8 @@
     </button>
 
     <!-- 侧栏 -->
-    <div v-if="!compact && !sidebarCollapsed" class="playground-sidebar" :class="{ 'mobile-hidden': !showSidebar }">
+    <div v-show="!compact" class="playground-sidebar" :class="{ collapsed: sidebarCollapsed }">
+      <div class="playground-sidebar-inner">
       <div class="card">
         <div class="card-title mb-3">{{ t('playground.testConfig') }}</div>
 
@@ -52,6 +53,7 @@
         <div v-if="tokenUsage" class="text-muted mt-2" style="font-size:12px;">{{ tokenUsage }}</div>
       </div>
     </div>
+    </div>
 
     <div class="playground-main">
       <div v-if="!compact" class="chat-header">
@@ -66,7 +68,7 @@
           <template v-if="selectedModel">
             <span class="current-model-label">{{ t('playground.currentModel') }}: <code>{{ selectedModel }}</code></span>
           </template>
-          <button class="btn-config-toggle" @click="toggleSidebar" :title="sidebarCollapsed ? t('playground.showConfig') : t('playground.toggleConfig')">
+          <button type="button" class="btn-config-toggle" @click="toggleSidebar()" :title="sidebarCollapsed ? t('playground.showConfig') : t('playground.toggleConfig')">
             <SvgIcon name="settings" :size="14" />
           </button>
         </div>
@@ -131,7 +133,7 @@
       </div>
 
       <div v-if="!compact" class="chat-quick-actions">
-        <button class="btn btn-secondary btn-quick" :disabled="streaming || !selectedModel" @click="quickSend('hello')">hello</button>
+        <button class="btn btn-secondary btn-quick" :disabled="streaming || !selectedModel" @click="quickSend('hello')"><SvgIcon name="hello" :size="14" /> hello</button>
       </div>
 
       <div class="chat-input-area">
@@ -508,11 +510,17 @@ function renderMarkdown(text: string): string {
 </script>
 
 <style scoped>
-.chat-playground {
-  display: flex;
-  gap: 16px;
-  height: calc(100vh - 130px);
-}
+  .chat-playground {
+    display: flex;
+    gap: 0;
+    height: calc(100vh - 130px);
+  }
+  .playground-sidebar {
+    margin-right: 16px;
+  }
+  .playground-sidebar.collapsed {
+    margin-right: 0;
+  }
 .chat-playground.compact {
   flex-direction: column;
   height: auto;
@@ -522,7 +530,51 @@ function renderMarkdown(text: string): string {
 .playground-sidebar {
   width: 280px;
   flex-shrink: 0;
-  overflow-y: auto;
+  overflow: hidden;
+  transition: width 0.25s ease, margin 0.25s ease, padding 0.25s ease;
+}
+.playground-sidebar.collapsed {
+  width: 0;
+}
+.playground-sidebar > .playground-sidebar-inner {
+  min-width: 280px;
+}
+@media (max-width: 768px) {
+  .chat-playground {
+    flex-direction: column;
+    height: calc(100vh - 130px);
+  }
+  .chat-playground.compact {
+    height: auto;
+  }
+  .mobile-sidebar-toggle {
+    display: none;
+  }
+  .playground-sidebar {
+    width: 100%;
+    overflow: hidden;
+    margin-bottom: 12px;
+    transition: max-height 0.25s ease, opacity 0.25s ease, margin-bottom 0.25s ease, padding 0.25s ease;
+  }
+  .playground-sidebar:not(.collapsed) {
+    max-height: 500px;
+    opacity: 1;
+  }
+  .playground-sidebar.collapsed {
+    max-height: 0;
+    opacity: 0;
+    margin-bottom: 0;
+    padding: 0;
+  }
+  .playground-sidebar > .playground-sidebar-inner {
+    min-width: 0;
+    overflow-y: auto;
+    max-height: 40vh;
+  }
+  .playground-main {
+    flex: 1;
+    min-height: 0;
+  }
 }
 .playground-main {
   flex: 1;
@@ -718,6 +770,7 @@ function renderMarkdown(text: string): string {
   cursor: pointer;
   transition: all 0.15s;
   flex-shrink: 0;
+  z-index: 10;
 }
 .btn-config-toggle:hover {
   background: var(--bg-tertiary);
@@ -728,6 +781,9 @@ function renderMarkdown(text: string): string {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
 }
 .chat-header-right .current-model-label {
   font-size: 12px;
@@ -762,31 +818,7 @@ function renderMarkdown(text: string): string {
   background: var(--bg-tertiary);
 }
 
-@media (max-width: 768px) {
-  .chat-playground {
-    flex-direction: column;
-    height: calc(100vh - 130px);
-  }
-  .chat-playground.compact {
-    height: auto;
-  }
-  .mobile-sidebar-toggle {
-    display: flex;
-  }
-  .playground-sidebar {
-    width: 100%;
-    max-height: 40vh;
-    overflow-y: auto;
-  }
-  .playground-sidebar.mobile-hidden {
-    display: none;
-  }
-  .playground-main {
-    flex: 1;
-    min-height: 0;
-  }
-}
-</style>
+
 
 <style>
 /* Markdown 渲染样式（v-html 注入内容，无法用 scoped，故使用全局 style block）

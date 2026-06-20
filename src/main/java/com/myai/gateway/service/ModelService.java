@@ -101,6 +101,7 @@ public class ModelService {
                     rel.setChannelName(channel.getName());
                     rel.setChannelType(channel.getChannelType());
                     rel.setChannelId(channel.getId());
+                    rel.setChannelEnabled(channel.getEnabled());
                 }
             }
         }

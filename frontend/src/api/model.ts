@@ -14,10 +14,13 @@ export interface ModelChannelRel {
   modelId: number
   channelModelId: number
   sortOrder: number
+  enabled?: number
   channelName?: string
   channelModelName?: string
   channelType?: string
   channelId?: number
+  /** 渠道是否启用 */
+  channelEnabled?: number
 }
 
 export interface CircuitBreakerConfig {

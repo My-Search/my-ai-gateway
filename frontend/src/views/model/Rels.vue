@@ -33,10 +33,15 @@
           </tr>
         </thead>
         <tbody ref="tbodyRef">
-          <tr v-for="(rel, index) in rels" :key="rel.id" :data-index="index">
+          <tr v-for="(rel, index) in rels" :key="rel.id" :data-index="index" :class="{ 'row-disabled': rel.channelEnabled !== 1 }">
             <td><span class="drag-handle" :title="t('model.rels.dragSort')">≡</span></td>
-            <td>{{ rel.channelName }}</td>
-            <td><code class="model-tag">{{ rel.channelModelName }}</code></td>
+            <td>
+              <span :class="{ 'text-disabled': rel.channelEnabled !== 1 }">{{ rel.channelName }}</span>
+              <span v-if="rel.channelEnabled !== 1" class="badge badge-disabled">{{ t('common.disabled') }}</span>
+            </td>
+            <td>
+              <code class="model-tag" :class="{ 'text-disabled': rel.channelEnabled !== 1 }">{{ rel.channelModelName }}</code>
+            </td>
             <td>
               <button class="btn btn-sm btn-danger" @click="removeRel(rel)"><SvgIcon name="trash" :size="14" /> {{ t('model.rels.delete') }}</button>
             </td>
@@ -227,6 +232,26 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* Row disabled state */
+.row-disabled {
+  opacity: 0.5;
+  background-color: var(--bg-muted);
+}
+
+.text-disabled {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.badge-disabled {
+  margin-left: 8px;
+  font-size: 10px;
+  padding: 2px 6px;
+  background: var(--text-muted);
+  color: var(--bg-primary);
+  border-radius: 4px;
+}
+
 /* SortableJS drag states */
 .sortable-ghost {
   opacity: 0.35;

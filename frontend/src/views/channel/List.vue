@@ -27,12 +27,18 @@
               {{ ch.baseUrl }}
             </td>
             <td>
-              <span v-if="ch.enabled === 1" class="badge badge-success">
-                <span class="status-dot active"></span>{{ t('common.enabled') }}
-              </span>
-              <span v-else class="badge badge-danger">
-                <span class="status-dot inactive"></span>{{ t('common.disabled') }}
-              </span>
+              <button 
+                class="toggle-btn" 
+                :class="ch.enabled === 1 ? 'active' : 'inactive'"
+                :title="ch.enabled === 1 ? t('channel.list.clickToDisable') : t('channel.list.clickToEnable')"
+                @click.stop="toggleEnabled(ch)"
+                :disabled="toggleLoading === ch.id"
+              >
+                <span class="toggle-track">
+                  <span class="toggle-thumb"></span>
+                </span>
+                <span class="toggle-label">{{ ch.enabled === 1 ? t('common.enabled') : t('common.disabled') }}</span>
+              </button>
             </td>
             <td>
               <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary">{{ t('channel.list.view') }}</router-link>
@@ -78,12 +84,18 @@
       <div v-for="ch in channels" :key="'m-' + ch.id" class="mobile-card">
         <div class="mobile-card-header">
           <strong class="mobile-card-title">{{ ch.name }}</strong>
-          <span v-if="ch.enabled === 1" class="badge badge-success">
-            <span class="status-dot active"></span>{{ t('common.enabled') }}
-          </span>
-          <span v-else class="badge badge-danger">
-            <span class="status-dot inactive"></span>{{ t('common.disabled') }}
-          </span>
+          <button 
+            class="toggle-btn toggle-btn-sm" 
+            :class="ch.enabled === 1 ? 'active' : 'inactive'"
+            :title="ch.enabled === 1 ? t('channel.list.clickToDisable') : t('channel.list.clickToEnable')"
+            @click.stop="toggleEnabled(ch)"
+            :disabled="toggleLoading === ch.id"
+          >
+            <span class="toggle-track">
+              <span class="toggle-thumb"></span>
+            </span>
+            <span class="toggle-label">{{ ch.enabled === 1 ? t('common.enabled') : t('common.disabled') }}</span>
+          </button>
         </div>
         <div class="mobile-card-body">
           <div class="mobile-card-row">
@@ -203,6 +215,7 @@ const testResult = ref<{ success: boolean; response?: string; responseTime?: num
 const testLoading = ref(false)
 const testModels = ref<ChannelModel[]>([])
 const selectedModelId = ref(0)
+const toggleLoading = ref<number | null>(null)
 const modelSelectOptions = computed(() =>
   testModels.value.map(m => ({ value: m.id, label: m.displayName || m.modelName }))
 )
@@ -318,6 +331,29 @@ function confirmDelete(ch: Channel) {
   })
 }
 
+async function toggleEnabled(ch: Channel) {
+  const newEnabled = ch.enabled === 1 ? 0 : 1
+  const action = newEnabled === 1 ? t('channel.list.enableConfirm') : t('channel.list.disableConfirm')
+  openDialog({
+    title: t('channel.list.toggleTitle'),
+    message: t('channel.list.toggleMessage').replace('{name}', ch.name).replace('{action}', action),
+    type: 'confirm',
+    confirmClass: newEnabled === 1 ? 'btn-success' : 'btn-warning',
+    onConfirm: async () => {
+      toggleLoading.value = ch.id!
+      try {
+        await channelApi.update(ch.id!, { enabled: newEnabled })
+        ch.enabled = newEnabled
+        openDialog({ message: t('channel.list.toggleSuccess') })
+      } catch (e: any) {
+        openDialog({ title: t('error.updateFailed'), message: e.message })
+      } finally {
+        toggleLoading.value = null
+      }
+    }
+  })
+}
+
 /** Format number with thousands separator */
 function formatNumber(n: number | undefined): string {
   if (n == null) return '0'
@@ -336,6 +372,81 @@ onMounted(loadChannels)
 </script>
 
 <style scoped>
+/* Toggle button */
+.toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 20px;
+  transition: all 0.2s;
+}
+.toggle-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.toggle-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.toggle-track {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  position: relative;
+  transition: background 0.2s;
+}
+.toggle-btn.active .toggle-track {
+  background: var(--accent-green);
+}
+.toggle-btn.inactive .toggle-track {
+  background: var(--text-muted);
+}
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.toggle-btn.active .toggle-thumb {
+  transform: translateX(14px);
+}
+.toggle-label {
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 40px;
+}
+.toggle-btn.active .toggle-label {
+  color: var(--accent-green);
+}
+.toggle-btn.inactive .toggle-label {
+  color: var(--text-muted);
+}
+
+/* Small toggle for mobile */
+.toggle-btn-sm .toggle-track {
+  width: 28px;
+  height: 16px;
+}
+.toggle-btn-sm .toggle-thumb {
+  width: 12px;
+  height: 12px;
+}
+.toggle-btn-sm .toggle-label {
+  font-size: 11px;
+  min-width: 32px;
+}
+.toggle-btn-sm.active .toggle-thumb {
+  transform: translateX(12px);
+}
+
 .modal-overlay {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,0.6); z-index: 1000;

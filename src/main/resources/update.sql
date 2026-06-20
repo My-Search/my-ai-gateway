@@ -258,4 +258,12 @@ UPDATE api_keys SET shared = 0 WHERE shared IS NULL;
 -- channel_models 添加 last_used_at 字段，支持 LRU 轮询（按模型最后的最后使用时间排序）
 -- ========================================
 
-ALTER TABLE channel_models ADD COLUMN last_used_at TIMESTAMP;
+-- ========================================
+-- VERSION:v1.11.0
+-- channel_models 添加 source 字段，区分手动添加 / API 获取的模型
+-- ========================================
+
+ALTER TABLE channel_models ADD COLUMN source TEXT DEFAULT 'manual';
+
+-- 为历史数据设置默认值：手动创建的设为 'manual'，自动获取的这里不做覆盖
+-- 新版本创建/加载时会正确设置 source 字段

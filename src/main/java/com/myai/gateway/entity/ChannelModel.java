@@ -34,6 +34,9 @@ public class ChannelModel {
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
     private LocalDateTime lastUsedAt;
 
+    /** 来源：'api' = 接口获取，'manual' = 手动添加 */
+    private String source;
+
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
     private LocalDateTime createdAt;
 
@@ -90,4 +93,7 @@ public class ChannelModel {
 
     public String getApiKeyName() { return apiKeyName; }
     public void setApiKeyName(String apiKeyName) { this.apiKeyName = apiKeyName; }
+
+    public String getSource() { return source; }
+    public void setSource(String source) { this.source = source; }
 }

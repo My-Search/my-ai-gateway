@@ -192,16 +192,31 @@ public class ChannelService {
 
     @Transactional
     public void delete(Long id) {
-        // 级联删除渠道模型（由外键 CASCADE 处理）
+        // Explicitly delete associated ChannelModel entries before deleting the channel
+        // This ensures the model association list is cleared when a channel is removed
+        try {
+            channelModelMapper.delete(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.myai.gateway.entity.ChannelModel>()
+                .eq(com.myai.gateway.entity.ChannelModel::getChannelId, id));
+        } catch (Exception e) {
+            log.warn("Failed to delete associated ChannelModel entries for channel {}: {}", id, e.getMessage());
+        }
+        // Delete the channel itself
         channelMapper.deleteById(id);
     }
 
     /**
      * 根据渠道类型加载模型列表（保存到数据库）
-     * 仅更新从API获取的模型，保留手动添加的模型
+     * 先删除所有 source='api' 的模型，再插入从 API 获取的新模型，
+     * 保留手动添加的模型不动
      */
     @Transactional
     public List<ChannelModel> loadModels(Channel channel, String apiKey) {
+        // 先删除该渠道下所有 source='api' 的模型（接口获取的）
+        channelModelMapper.delete(
+                new LambdaQueryWrapper<ChannelModel>()
+                        .eq(ChannelModel::getChannelId, channel.getId())
+                        .eq(ChannelModel::getSource, "api"));
+
         List<ChannelModel> newModels;
         if (apiKey != null && !apiKey.isEmpty()) {
             // 创建临时 channel 对象，设置指定的 apiKey 用于获取模型列表
@@ -219,28 +234,29 @@ public class ChannelService {
             newModels = getDefaultModels(channel);
         }
         
-        // 获取当前已存在的模型名称（从数据库）
-        List<ChannelModel> existingModels = channelModelMapper.selectList(
-                new LambdaQueryWrapper<ChannelModel>().eq(ChannelModel::getChannelId, channel.getId()));
-        List<String> existingModelNames = existingModels.stream()
+        // 获取当前手动添加的模型名称（数据库中还存在的，但不包括刚删除的 API 模型）
+        List<ChannelModel> existingManualModels = channelModelMapper.selectList(
+                new LambdaQueryWrapper<ChannelModel>()
+                        .eq(ChannelModel::getChannelId, channel.getId()));
+        Set<String> existingManualModelNameSet = existingManualModels.stream()
                 .map(ChannelModel::getModelName)
-                .toList();
+                .collect(Collectors.toSet());
         
-        // 标记哪些是手动添加的模型（数据库中已存在但不在新获取列表中的）
-        Set<String> existingModelNameSet = new HashSet<>(existingModelNames);
-        
-        // 插入新获取的模型（跳过已存在的）
+        // 插入新获取的模型，跳过与手动添加模型重名的
         int addedCount = 0;
         for (ChannelModel model : newModels) {
-            if (!existingModelNameSet.contains(model.getModelName())) {
+            if (!existingManualModelNameSet.contains(model.getModelName())) {
                 model.setChannelId(channel.getId());
+                if (model.getSource() == null) {
+                    model.setSource("api");
+                }
                 channelModelMapper.insert(model);
                 addedCount++;
             }
         }
         
-        log.info("渠道 {} 加载了 {} 个新模型（保留 {} 个已有模型）", 
-                channel.getName(), addedCount, existingModelNames.size());
+        log.info("渠道 {} 重新加载了 {} 个模型（保留 {} 个手动模型）", 
+                channel.getName(), addedCount, existingManualModels.size());
         
         // 返回更新后的所有模型
         return channelModelMapper.selectList(
@@ -318,6 +334,7 @@ public class ChannelService {
                     for (JsonNode node : dataArray) {
                         String modelId = node.get("id").asText();
                         ChannelModel cm = new ChannelModel(null, modelId, modelId);
+                        cm.setSource("api");
                         models.add(cm);
                     }
                 }
@@ -363,6 +380,7 @@ public class ChannelService {
                 String displayName = m.getOrDefault("displayName", modelName);
                 if (modelName != null && !modelName.isEmpty()) {
                     ChannelModel cm = new ChannelModel(channel.getId(), modelName, displayName);
+                    cm.setSource("manual");
                     channelModelMapper.insert(cm);
                 }
             }
@@ -379,6 +397,7 @@ public class ChannelService {
     @Transactional
     public ChannelModel addManualModel(Long channelId, String modelName, String displayName) {
         ChannelModel cm = new ChannelModel(channelId, modelName, displayName);
+        cm.setSource("manual");
         channelModelMapper.insert(cm);
         return cm;
     }

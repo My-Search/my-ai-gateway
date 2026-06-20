@@ -20,7 +20,7 @@
           <tr v-for="m in models" :key="m.id">
             <td><strong>{{ m.modelName }}</strong></td>
             <td style="font-size:12px;color:var(--text-secondary);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-              {{ m.description }}
+              {{ m.description || '--' }}
             </td>
             <td>
               <span class="badge" :class="strategyBadge(m.strategy)">
