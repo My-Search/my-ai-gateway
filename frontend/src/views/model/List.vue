@@ -42,7 +42,7 @@
             </td>
           </tr>
           <tr v-if="!models.length">
-            <td colspan="6" style="text-align:center;color:var(--text-muted);padding:40px;">
+            <td colspan="6" style="color:var(--text-muted);padding:40px;">
               {{ t('model.list.empty') }}
             </td>
           </tr>
