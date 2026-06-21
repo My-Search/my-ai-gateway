@@ -28,7 +28,6 @@ services:
     container_name: my-ai-frontend
     restart: unless-stopped
     depends_on:
-      my-ai-gateway:
-        condition: service_healthy
+      - my-ai-gateway
     ports:
       - "${FRONTEND_PORT:-3990}:80"
