@@ -42,7 +42,7 @@
             <template v-if="group.logs[0].apiKeyName">{{ group.logs[0].apiKeyName }}/</template>
             <template v-if="group.logs[0].channelModelName">{{ group.logs[0].channelModelName }}</template>
             <template v-else-if="group.logs[0].modelName">{{ group.logs[0].modelName }}</template>
-            <template v-if="group.logs[group.logs.length - 1].responseTimeMs != null"> · {{ group.logs[group.logs.length - 1].responseTimeMs }}ms</template>
+            <template v-if="group.logs[group.logs.length - 1].responseTimeMs != null && group.logs[group.logs.length - 1].responseTimeMs > 0"> · {{ group.logs[group.logs.length - 1].responseTimeMs }}ms</template>
           </span>
           <span class="log-time">{{ formatTime(group.logs[group.logs.length - 1].createdAt) }}</span>
           <div v-if="group.logs.some(l => l.errorMessage)" class="log-error">{{ group.logs.filter(l => l.errorMessage).map(l => l.errorMessage).join('\n') }}</div>

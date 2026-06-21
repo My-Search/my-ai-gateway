@@ -4,25 +4,27 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
-import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 自适应延迟追踪器
+ * 自适应超时追踪器
  *
- * <p>维护每个 {@code (channelId, channelModelId)} 组合的平均首次响应时间（EMA），
- * 用于计算自适应超时时间。超时时间 = TTFT × 2，上限 40 秒。</p>
+ * <p>维护每个 {@code (channelId, channelModelId)} 组合的平均响应时间（EMA），
+ * 用于计算自适应超时时间。</p>
  *
- * <p>适用于流式场景（首 token 延迟）和非流式场景（完整响应时间），
- * 两者均用于指导超时窗口的调整。</p>
+ * <p>超时计算：</p>
+ * <ul>
+ *   <li>样本数 ≤ {@link #SAMPLE_THRESHOLD} 时：返回默认 {@value #DEFAULT_TIMEOUT_MS}ms 超时</li>
+ *   <li>样本数 > {@link #SAMPLE_THRESHOLD} 时：{@code timeout = clamp(ema × 3, MIN_TIMEOUT, MAX_TIMEOUT)}</li>
+ *   <li>最终超时限制在 {@link #MIN_TIMEOUT_MS} ~ {@link #MAX_TIMEOUT_MS} 之间</li>
+ * </ul>
  *
  * <p>更新规则：</p>
  * <ul>
  *   <li>首次记录：直接使用测量值（但不低于 {@link #MIN_LATENCY_MS}）</li>
  *   <li>后续更新：{@code ema = α × measurement + (1 - α) × ema}，α = {@value #ALPHA}</li>
  *   <li>超时时：将实际等待的超时时间作为测量值记录，使平均值逐渐上移以扩大窗口</li>
- *   <li>无历史时返回默认值 {@value #DEFAULT_LATENCY_MS}ms</li>
- *   <li>自适应超时仅在样本数超过 {@value #SAMPLE_THRESHOLD} 时生效，否则返回默认 {@value #DEFAULT_LATENCY_MS}ms</li>
+ *   <li>无历史时返回默认值 {@value #DEFAULT_TIMEOUT_MS}ms</li>
  * </ul>
  */
 @Component
@@ -33,20 +35,20 @@ public class LatencyTracker {
     /** EMA 平滑因子 */
     static final double ALPHA = 0.3;
 
-    /** 默认延迟（40 秒） */
-    static final long DEFAULT_LATENCY_MS = 40_000L;
+    /** 默认超时时间（样本数不足时使用，60 秒） */
+    static final long DEFAULT_TIMEOUT_MS = 60_000L;
 
-    /** 最小延迟（2.5 秒），避免 avg 过低导致超时过于激进 */
+    /** 最小延迟（2.5 秒），避免 ema 过低 */
     static final long MIN_LATENCY_MS = 2_500L;
 
-    /** 最大超时时间（40 秒） */
-    static final long MAX_TIMEOUT_MS = 40_000L;
+    /** 最小超时时间（20 秒） */
+    static final long MIN_TIMEOUT_MS = 20_000L;
 
-    /** 最小超时时间（5 秒） */
-    static final long MIN_TIMEOUT_MS = 5_000L;
+    /** 最大超时时间（60 秒） */
+    static final long MAX_TIMEOUT_MS = 60_000L;
 
     /** 样本数阈值：样本数超过此值才启用自适应超时，否则返回默认超时 */
-    static final int SAMPLE_THRESHOLD = 3;
+    static final int SAMPLE_THRESHOLD = 5;
 
     private final ConcurrentHashMap<Key, Entry> map = new ConcurrentHashMap<>();
 
@@ -81,39 +83,40 @@ public class LatencyTracker {
     /**
      * 获取指定 (channel, channelModel) 的当前 EMA 延迟
      *
-     * @return EMA 延迟（毫秒），无历史时返回 {@link #DEFAULT_LATENCY_MS}
+     * @return EMA 延迟（毫秒），无历史时返回 {@link #DEFAULT_TIMEOUT_MS}
      */
     public long getLatency(Long channelId, Long channelModelId) {
         if (channelId == null || channelModelId == null) {
-            return DEFAULT_LATENCY_MS;
+            return DEFAULT_TIMEOUT_MS;
         }
         Entry entry = map.get(new Key(channelId, channelModelId));
-        return entry != null ? (long) entry.ema : DEFAULT_LATENCY_MS;
+        return entry != null ? (long) entry.ema : DEFAULT_TIMEOUT_MS;
     }
 
     /**
      * 获取指定 (channel, channelModel) 的延迟统计信息
      *
-     * @return [latencyMs, sampleCount]，无历史时 latencyMs 为 {@link #DEFAULT_LATENCY_MS}，sampleCount 为 0
+     * @return [latencyMs, sampleCount]，无历史时 latencyMs 为 {@link #DEFAULT_TIMEOUT_MS}，sampleCount 为 0
      */
     public long[] getStats(Long channelId, Long channelModelId) {
         if (channelId == null || channelModelId == null) {
-            return new long[]{DEFAULT_LATENCY_MS, 0};
+            return new long[]{DEFAULT_TIMEOUT_MS, 0};
         }
         Entry entry = map.get(new Key(channelId, channelModelId));
         if (entry != null) {
             return new long[]{(long) entry.ema, entry.sampleCount};
         }
-        return new long[]{DEFAULT_LATENCY_MS, 0};
+        return new long[]{DEFAULT_TIMEOUT_MS, 0};
     }
 
     /**
-     * 获取指定 (channel, channelModel) 的自适应超时时间
+     * 获取自适应超时时间
      *
-     * <p>计算公式：{@code min(max(ema × 2, MIN_TIMEOUT), MAX_TIMEOUT)}</p>
+     * <p>样本数不超过 {@link #SAMPLE_THRESHOLD} 时返回默认超时 {@value #DEFAULT_TIMEOUT_MS}ms（60 秒），
+     * 避免数据稀疏时产生激进的超时窗口。</p>
      *
-     * <p>当样本数不超过 {@link #SAMPLE_THRESHOLD} 时，直接返回 {@link #DEFAULT_LATENCY_MS}（默认 40 秒），
-     * 避免在数据不足时产生过于激进或不可预测的超时窗口。</p>
+     * <p>样本数超过阈值后：{@code timeout = clamp(ema × 3, MIN_TIMEOUT, MAX_TIMEOUT)}，
+     * 即基于 EMA 平均延迟的 3 倍计算，最终限制在 20 秒 ~ 60 秒之间。</p>
      *
      * @return 超时时间（毫秒），介于 {@link #MIN_TIMEOUT_MS} ~ {@link #MAX_TIMEOUT_MS} 之间
      */
@@ -121,11 +124,11 @@ public class LatencyTracker {
         long[] stats = getStats(channelId, channelModelId);
         long latency = stats[0];
         int sampleCount = (int) stats[1];
-        // 样本数不足时返回默认超时（40s），避免数据稀疏导致激进的超时窗口
+        // 样本数不足时返回默认超时（60s），避免数据稀疏导致激进的超时窗口
         if (sampleCount <= SAMPLE_THRESHOLD) {
-            return DEFAULT_LATENCY_MS;
+            return DEFAULT_TIMEOUT_MS;
         }
-        long timeout = Math.min(latency * 2, MAX_TIMEOUT_MS);
+        long timeout = Math.min(latency * 3, MAX_TIMEOUT_MS);
         return Math.max(timeout, MIN_TIMEOUT_MS);
     }
 

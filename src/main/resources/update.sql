@@ -267,3 +267,15 @@ ALTER TABLE channel_models ADD COLUMN source TEXT DEFAULT 'manual';
 
 -- 为历史数据设置默认值：手动创建的设为 'manual'，自动获取的这里不做覆盖
 -- 新版本创建/加载时会正确设置 source 字段
+
+-- ========================================
+-- VERSION:v1.12.0
+-- 修复请求日志 response_time_ms 默认值为 0 导致前端显示异常的问题
+-- phase 为 start/retry/skip/reroute 的记录本无时间数据，不应显示响应时间
+-- ========================================
+
+-- 清除 phase 日志（非 success/fail 终结记录）中误存的 0 值，设为 NULL
+-- 这些记录本无响应时间，SQLite 默认值 0 导致前端错误显示 "0ms"
+UPDATE request_logs SET response_time_ms = NULL WHERE phase NOT IN ('success', 'fail') AND response_time_ms = 0;
+-- 同时清理 success/fail 记录中可能误存的 0（真实响应时间至少 >0ms）
+UPDATE request_logs SET response_time_ms = NULL WHERE phase IN ('success', 'fail') AND response_time_ms = 0;

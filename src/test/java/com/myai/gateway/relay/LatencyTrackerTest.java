@@ -7,7 +7,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * LatencyTracker 单元测试
- * 验证 EMA 计算、自适应超时、超时记录、样本数阈值
+ * 验证 EMA 计算、自适应超时（ema×3, 20s~60s）、样本数阈值（5）
  */
 class LatencyTrackerTest {
 
@@ -21,60 +21,75 @@ class LatencyTrackerTest {
     @Test
     void getTimeout_returnsDefaultWhenNoData() {
         long timeout = tracker.getTimeout(1L, 100L);
-        // 无样本时返回默认 40s
-        assertThat(timeout).isEqualTo(40_000L);
+        // 无样本时返回默认 60s
+        assertThat(timeout).isEqualTo(60_000L);
     }
 
     @Test
     void getTimeout_returnsDefaultWhenSampleCountNotExceedThreshold() {
-        // 1 ~ 3 个样本时，样本数 ≤ 阈值，应返回默认 40s（而非自适应值）
+        // 1 ~ 5 个样本时，样本数 ≤ 阈值（5），应返回默认 60s
         tracker.record(1L, 100L, 5_000L);
-        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(40_000L);
+        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(60_000L);
 
-        tracker.record(1L, 100L, 10_000L);
-        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(40_000L);
+        tracker.record(1L, 100L, 5_000L);
+        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(60_000L);
 
-        tracker.record(1L, 100L, 15_000L);
-        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(40_000L);
+        tracker.record(1L, 100L, 5_000L);
+        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(60_000L);
+
+        tracker.record(1L, 100L, 5_000L);
+        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(60_000L);
+
+        tracker.record(1L, 100L, 5_000L); // 第5个，仍未超过阈值
+        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(60_000L);
     }
 
     @Test
     void getTimeout_usesAdaptiveValueAfterThreshold() {
-        // 4 个样本后（>3），应使用自适应超时
-        tracker.record(1L, 100L, 5_000L);
-        tracker.record(1L, 100L, 5_000L);
-        tracker.record(1L, 100L, 5_000L);
-        tracker.record(1L, 100L, 5_000L); // 第4个，ema=5000
+        // 6 个样本后（>5），应使用自适应超时
+        for (int i = 0; i < 6; i++) {
+            tracker.record(1L, 100L, 5_000L); // ema ≈ 5000
+        }
 
         long timeout = tracker.getTimeout(1L, 100L);
-        // max(min(5000*2, 40000), 5000) = 10000
-        assertThat(timeout).isEqualTo(10_000L);
+        // clamp(5000*3=15000, 20000, 60000) = 20000（受最小超时 20s 限制）
+        assertThat(timeout).isEqualTo(20_000L);
+    }
+
+    @Test
+    void getTimeout_adaptiveFormula_emaTimes3() {
+        // 6 个样本，ema ≈ 10000
+        for (int i = 0; i < 6; i++) {
+            tracker.record(1L, 100L, 10_000L);
+        }
+
+        long timeout = tracker.getTimeout(1L, 100L);
+        // clamp(10000*3=30000, 20000, 60000) = 30000
+        assertThat(timeout).isEqualTo(30_000L);
     }
 
     @Test
     void getTimeout_capsAtMax() {
-        // 4 个高延迟样本，使自适应超时生效
-        tracker.record(1L, 100L, 30_000L);
-        tracker.record(1L, 100L, 30_000L);
-        tracker.record(1L, 100L, 30_000L);
-        tracker.record(1L, 100L, 30_000L);
+        // 6 个高延迟样本，ema ≈ 30000
+        for (int i = 0; i < 6; i++) {
+            tracker.record(1L, 100L, 30_000L);
+        }
 
         long timeout = tracker.getTimeout(1L, 100L);
-        // ema≈30000 → 30000*2=60000 > 40000, 但上限 40s
-        assertThat(timeout).isEqualTo(40_000L);
+        // clamp(30000*3=90000, 20000, 60000) = 60000（受最大超时 60s 限制）
+        assertThat(timeout).isEqualTo(60_000L);
     }
 
     @Test
     void getTimeout_hasMinFloor() {
-        // 4 个极低值样本（会被 clamp 到 MIN_LATENCY_MS=2500）
-        tracker.record(1L, 100L, 500L);
-        tracker.record(1L, 100L, 500L);
-        tracker.record(1L, 100L, 500L);
-        tracker.record(1L, 100L, 500L);
+        // 6 个极低值样本（会被 clamp 到 MIN_LATENCY_MS=2500）
+        for (int i = 0; i < 6; i++) {
+            tracker.record(1L, 100L, 500L);
+        }
 
         long timeout = tracker.getTimeout(1L, 100L);
-        // min(max(2500*2, 5000), 40000) = 5000
-        assertThat(timeout).isEqualTo(5_000L);
+        // ema ≈ 2500 → 2500*3=7500 → clamp(7500, 20000, 60000) = 20000
+        assertThat(timeout).isEqualTo(20_000L);
     }
 
     @Test
@@ -82,33 +97,34 @@ class LatencyTrackerTest {
         tracker.record(1L, 100L, 10_000L); // ema=10000
         tracker.record(1L, 100L, 20_000L); // ema=0.3*20000 + 0.7*10000 = 13000
         tracker.record(1L, 100L, 5_000L);  // ema=0.3*5000 + 0.7*13000 = 10600
-        tracker.record(1L, 100L, 10_000L); // ema=0.3*10000 + 0.7*10600 = 10420（第4个，超过阈值）
+        tracker.record(1L, 100L, 10_000L); // ema=0.3*10000 + 0.7*10600 = 10420
+        tracker.record(1L, 100L, 10_000L); // ema=0.3*10000 + 0.7*10420 = 10294
+        tracker.record(1L, 100L, 10_000L); // ema=0.3*10000 + 0.7*10294 = 10206（第6个，超过阈值）
 
         long timeout = tracker.getTimeout(1L, 100L);
-        // ema=10420 → max(min(10420*2, 40000), 5000) = 20840
-        assertThat(timeout).isEqualTo(20_840L);
+        // ema≈10205.8 → clamp(floor(10205.8)*3=30615, 20000, 60000) = 30615
+        assertThat(timeout).isEqualTo(30_615L);
     }
 
     @Test
     void recordTimeout_increasesTimeoutForNextCall() {
-        // 累积 4 个样本使自适应生效
-        tracker.record(1L, 100L, 5_000L);
-        tracker.record(1L, 100L, 5_000L);
-        tracker.record(1L, 100L, 5_000L);
-        tracker.record(1L, 100L, 5_000L); // ema=5000, timeout=10000
+        // 累积 6 个样本使自适应生效
+        for (int i = 0; i < 6; i++) {
+            tracker.record(1L, 100L, 5_000L); // ema=5000, timeout=20000
+        }
 
-        // 超时发生：记录 actual timeout 值
-        tracker.recordTimeout(1L, 100L, 10_000L);
-        // 新的 ema = 0.3*10000 + 0.7*5000 = 6500
-        // timeout = max(min(6500*2, 40000), 5000) = 13000
+        // 超时发生：记录实际 timeout 值
+        tracker.recordTimeout(1L, 100L, 20_000L);
+        // 新的 ema = 0.3*20000 + 0.7*5000 = 9500
+        // timeout = clamp(9500*3=28500, 20000, 60000) = 28500
         long newTimeout = tracker.getTimeout(1L, 100L);
-        assertThat(newTimeout).isGreaterThan(10_000L); // 窗口扩大
-        assertThat(newTimeout).isEqualTo(13_000L);
+        assertThat(newTimeout).isGreaterThan(20_000L); // 窗口扩大
+        assertThat(newTimeout).isEqualTo(28_500L);
     }
 
     @Test
     void getLatency_returnsDefaultWhenNoData() {
-        assertThat(tracker.getLatency(99L, 999L)).isEqualTo(40_000L);
+        assertThat(tracker.getLatency(99L, 999L)).isEqualTo(60_000L);
     }
 
     @Test
@@ -123,14 +139,14 @@ class LatencyTrackerTest {
 
     @Test
     void differentChannelModelPairs_areIndependent() {
-        // 每个 pair 累积 4 个样本使自适应生效
-        for (int i = 0; i < 4; i++) {
+        // 每个 pair 累积 6 个样本使自适应生效
+        for (int i = 0; i < 6; i++) {
             tracker.record(1L, 100L, 5_000L);
             tracker.record(2L, 200L, 20_000L);
         }
 
-        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(10_000L);
-        assertThat(tracker.getTimeout(2L, 200L)).isEqualTo(40_000L); // 20*2=40, capped
+        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(20_000L); // 5*3=15 → 20(min)
+        assertThat(tracker.getTimeout(2L, 200L)).isEqualTo(60_000L); // 20*3=60 → 60(max)
         assertThat(tracker.size()).isEqualTo(2);
     }
 
@@ -147,19 +163,19 @@ class LatencyTrackerTest {
         assertThat(tracker.size()).isEqualTo(1);
         tracker.reset();
         assertThat(tracker.size()).isEqualTo(0);
-        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(40_000L);
+        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(60_000L);
     }
 
     @Test
     void key_withLargeIds_worksCorrectly() {
-        // 验证大 ID 不会因 32-bit 溢出导致碰撞，每个 pair 累积 4 个样本
-        for (int i = 0; i < 4; i++) {
+        // 验证大 ID 不会因 32-bit 溢出导致碰撞，每个 pair 累积 6 个样本
+        for (int i = 0; i < 6; i++) {
             tracker.record(Integer.MAX_VALUE + 1L, 999L, 5_000L);
             tracker.record(1L, Integer.MAX_VALUE + 1L, 10_000L);
         }
 
-        assertThat(tracker.getTimeout(Integer.MAX_VALUE + 1L, 999L)).isEqualTo(10_000L);
-        assertThat(tracker.getTimeout(1L, Integer.MAX_VALUE + 1L)).isEqualTo(20_000L);
+        assertThat(tracker.getTimeout(Integer.MAX_VALUE + 1L, 999L)).isEqualTo(20_000L); // 5*3=15 → 20(min)
+        assertThat(tracker.getTimeout(1L, Integer.MAX_VALUE + 1L)).isEqualTo(30_000L);   // 10*3=30
         assertThat(tracker.size()).isEqualTo(2);
     }
 }
