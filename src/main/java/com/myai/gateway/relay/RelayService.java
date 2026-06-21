@@ -10,6 +10,7 @@ import com.myai.gateway.relay.balancer.RoutingCandidate;
 import com.myai.gateway.relay.transformer.InternalMessage;
 import com.myai.gateway.relay.transformer.InternalRequest;
 import com.myai.gateway.relay.transformer.MessageTransformer;
+import com.myai.gateway.entity.ApiKey;
 import com.myai.gateway.service.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,6 +58,7 @@ public class RelayService {
 
     private final ChannelService channelService;
     private final ChannelApiKeyService channelApiKeyService;
+    private final ApiKeyService apiKeyService;
     private final ModelService modelService;
     private final CircuitBreakerService circuitBreakerService;
     private final RequestLogService requestLogService;
@@ -72,6 +74,7 @@ public class RelayService {
 
     public RelayService(ChannelService channelService,
                         ChannelApiKeyService channelApiKeyService,
+                        ApiKeyService apiKeyService,
                         ModelService modelService,
                         CircuitBreakerService circuitBreakerService,
                         RequestLogService requestLogService,
@@ -82,6 +85,7 @@ public class RelayService {
                         LatencyTracker latencyTracker) {
         this.channelService = channelService;
         this.channelApiKeyService = channelApiKeyService;
+        this.apiKeyService = apiKeyService;
         this.modelService = modelService;
         this.circuitBreakerService = circuitBreakerService;
         this.requestLogService = requestLogService;
@@ -256,6 +260,8 @@ public class RelayService {
                     balancer.markSuccess(candidate);
                     // 更新渠道模型最后使用时间（用于轮询 LRU 排序）
                     modelService.updateChannelModelLastUsed(candidate.getChannelModel().getId());
+                    // 更新网关 API Key 最后使用时间
+                    updateGatewayApiKeyLastUsed(authHeader);
                     // 非流式：响应时间 ≈ TTFT，记录到自适应超时统计
                     latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(),
                             System.currentTimeMillis() - startTime);
@@ -451,6 +457,8 @@ public class RelayService {
                     // 标记成功并更新渠道模型最后使用时间（用于轮询 LRU 排序）
                     balancer.markSuccess(candidate);
                     modelService.updateChannelModelLastUsed(candidate.getChannelModel().getId());
+                    // 更新网关 API Key 最后使用时间
+                    updateGatewayApiKeyLastUsed(authHeader);
                     // 清理流式内容累积
                     streamContentManager.clearContent(traceId);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(),
@@ -960,6 +968,25 @@ public class RelayService {
             log.debug("从原始SSE数据提取文本内容失败: {}", e.getMessage());
         }
         return null;
+    }
+
+    /**
+     * 更新网关 API Key 的最后使用时间
+     * <p>从 Authorization 头中提取 Bearer token，验证并更新 lastUsedAt</p>
+     */
+    private void updateGatewayApiKeyLastUsed(String authHeader) {
+        if (authHeader == null || authHeader.isBlank()) {
+            return;
+        }
+        try {
+            ApiKey apiKey = apiKeyService.validateKey(authHeader);
+            if (apiKey != null && apiKey.getId() != null) {
+                apiKeyService.updateLastUsed(apiKey.getId());
+                log.debug("已更新网关 API Key lastUsedAt: id={}, name={}", apiKey.getId(), apiKey.getKeyName());
+            }
+        } catch (Exception e) {
+            log.warn("更新网关 API Key lastUsedAt 失败: {}", e.getMessage());
+        }
     }
 
     /**

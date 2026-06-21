@@ -30,6 +30,7 @@ class RelayServiceTest {
 
     private ChannelService channelService;
     private ChannelApiKeyService channelApiKeyService;
+    private ApiKeyService apiKeyService;
     private ModelService modelService;
     private CircuitBreakerService circuitBreakerService;
     private RequestLogService requestLogService;
@@ -45,6 +46,7 @@ class RelayServiceTest {
     void setUp() {
         channelService = mock(ChannelService.class);
         channelApiKeyService = mock(ChannelApiKeyService.class);
+        apiKeyService = mock(ApiKeyService.class);
         modelService = mock(ModelService.class);
         circuitBreakerService = mock(CircuitBreakerService.class);
         requestLogService = mock(RequestLogService.class);
@@ -55,8 +57,8 @@ class RelayServiceTest {
         latencyTracker = mock(LatencyTracker.class);
         when(latencyTracker.getTimeout(any(), any())).thenReturn(60_000L);
 
-        relayService = new RelayService(channelService, channelApiKeyService, modelService,
-                circuitBreakerService, requestLogService, loadBalancerFactory,
+        relayService = new RelayService(channelService, channelApiKeyService, apiKeyService,
+                modelService, circuitBreakerService, requestLogService, loadBalancerFactory,
                 objectMapper, messageTransformer, streamContentManager, latencyTracker);
 
         when(loadBalancerFactory.getBalancer(anyString())).thenReturn(new FailoverBalancer());
