@@ -467,6 +467,7 @@ onMounted(loadKeys)
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .mobile-card-empty {

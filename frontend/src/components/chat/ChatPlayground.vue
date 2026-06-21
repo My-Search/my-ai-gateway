@@ -316,6 +316,9 @@ onMounted(() => {
     }
     // 有已保存配置但模型列表尚未加载时保持折叠，
     // 等模型加载完成后由 models watcher 决定是否展开
+  } else {
+    // 分享模式无本地存储配置，默认展开配置面板让用户选择模型
+    sidebarCollapsed.value = false
   }
 })
 

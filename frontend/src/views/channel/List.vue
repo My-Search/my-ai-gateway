@@ -62,10 +62,10 @@
             <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(ch.createdAt) }}</td>
             <td>
               <div style="display:flex;gap:6px;flex-wrap:nowrap;">
-                <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('common.edit') }}</router-link>
                 <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> {{ t('channel.list.quickTest') }}</button>
                 <router-link :to="`/admin/channel/reload/${ch.id}`" class="btn btn-sm btn-secondary"
                   @click.prevent="reloadModels(ch.id!)"><SvgIcon name="refresh" :size="14" /> {{ t('channel.list.refreshModels') }}</router-link>
+                <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('common.edit') }}</router-link>
                 <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)"><SvgIcon name="trash" :size="14" /> {{ t('common.delete') }}</button>
               </div>
             </td>
@@ -124,10 +124,10 @@
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
-          <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('common.edit') }}</router-link>
           <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> {{ t('channel.list.quickTest') }}</button>
           <router-link :to="`/admin/channel/reload/${ch.id}`" class="btn btn-sm btn-secondary"
             @click.prevent="reloadModels(ch.id!)"><SvgIcon name="refresh" :size="14" /> {{ t('channel.list.refresh') }}</router-link>
+          <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('common.edit') }}</router-link>
           <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)"><SvgIcon name="trash" :size="14" /> {{ t('common.delete') }}</button>
         </div>
       </div>
@@ -574,7 +574,7 @@ onMounted(loadChannels)
 .mobile-card-actions {
   display: flex;
   gap: 6px;
-  justify-content: center;
+  justify-content: flex-end;
   flex-wrap: wrap;
 }
 
