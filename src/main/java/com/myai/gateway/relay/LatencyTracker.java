@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>后续更新：{@code ema = α × measurement + (1 - α) × ema}，α = {@value #ALPHA}</li>
  *   <li>超时时：将实际等待的超时时间作为测量值记录，使平均值逐渐上移以扩大窗口</li>
  *   <li>无历史时返回默认值 {@value #DEFAULT_LATENCY_MS}ms</li>
+ *   <li>自适应超时仅在样本数超过 {@value #SAMPLE_THRESHOLD} 时生效，否则返回默认 {@value #DEFAULT_LATENCY_MS}ms</li>
  * </ul>
  */
 @Component
@@ -43,6 +44,9 @@ public class LatencyTracker {
 
     /** 最小超时时间（5 秒） */
     static final long MIN_TIMEOUT_MS = 5_000L;
+
+    /** 样本数阈值：样本数超过此值才启用自适应超时，否则返回默认超时 */
+    static final int SAMPLE_THRESHOLD = 3;
 
     private final ConcurrentHashMap<Key, Entry> map = new ConcurrentHashMap<>();
 
@@ -108,10 +112,19 @@ public class LatencyTracker {
      *
      * <p>计算公式：{@code min(max(ema × 2, MIN_TIMEOUT), MAX_TIMEOUT)}</p>
      *
+     * <p>当样本数不超过 {@link #SAMPLE_THRESHOLD} 时，直接返回 {@link #DEFAULT_LATENCY_MS}（默认 40 秒），
+     * 避免在数据不足时产生过于激进或不可预测的超时窗口。</p>
+     *
      * @return 超时时间（毫秒），介于 {@link #MIN_TIMEOUT_MS} ~ {@link #MAX_TIMEOUT_MS} 之间
      */
     public long getTimeout(Long channelId, Long channelModelId) {
-        long latency = getLatency(channelId, channelModelId);
+        long[] stats = getStats(channelId, channelModelId);
+        long latency = stats[0];
+        int sampleCount = (int) stats[1];
+        // 样本数不足时返回默认超时（40s），避免数据稀疏导致激进的超时窗口
+        if (sampleCount <= SAMPLE_THRESHOLD) {
+            return DEFAULT_LATENCY_MS;
+        }
         long timeout = Math.min(latency * 2, MAX_TIMEOUT_MS);
         return Math.max(timeout, MIN_TIMEOUT_MS);
     }

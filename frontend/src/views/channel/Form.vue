@@ -35,8 +35,13 @@
         <div class="form-hint">{{ t('channel.form.apiKeysHint') }}</div>
         <div class="api-keys-list">
           <div v-for="(ak, idx) in apiKeys" :key="idx" class="api-key-item">
-            <span style="flex:1;font-size:13px;"><strong>{{ ak.keyName }}</strong>: {{ maskKey(ak.apiKey) }}</span>
-            <button type="button" class="btn btn-sm btn-danger" @click="removeApiKey(idx)"><SvgIcon name="trash" :size="14" /> {{ t('common.delete') }}</button>
+            <span class="api-key-left"><strong>{{ ak.keyName }}</strong><code class="api-key-masked">{{ maskKey(ak.apiKey) }}</code></span>
+            <span class="api-key-actions">
+              <button type="button" class="copy-btn" @click="copyKey(ak.apiKey)" :title="t('common.copy')">
+                <SvgIcon name="copy" :size="14" />
+              </button>
+              <button type="button" class="btn btn-sm btn-danger" @click="removeApiKey(idx)"><SvgIcon name="trash" :size="14" /> {{ t('common.delete') }}</button>
+            </span>
           </div>
           <div v-if="!apiKeys.length" style="color:var(--text-muted);font-size:13px;padding:8px 0;">
             {{ t('channel.form.noKeys') }}
@@ -143,13 +148,13 @@
     </div>
     <div class="form-group" style="margin-bottom:0;">
       <label>{{ t('channel.form.keyValueLabel') }}</label>
-      <input v-model="newApiKeyValue" class="form-control" :placeholder="t('channel.form.keyValuePlaceholder')" @keydown.enter.prevent="confirmAddApiKey" />
+      <input ref="apiKeyInputRef" v-model="newApiKeyValue" class="form-control" :placeholder="t('channel.form.keyValuePlaceholder')" @keydown.enter.prevent="confirmAddApiKey" />
     </div>
   </Dialog>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { channelApi, type Channel, type ChannelApiKey, type ChannelModel } from '@/api/channel'
@@ -199,9 +204,17 @@ function onDialogConfirm() {
 const apiKeyDialogVisible = ref(false)
 const newApiKeyName = ref('')
 const newApiKeyValue = ref('')
+const apiKeyInputRef = ref<HTMLInputElement>()
+
+watch(apiKeyDialogVisible, (visible) => {
+  if (visible) {
+    nextTick(() => apiKeyInputRef.value?.focus())
+  }
+})
 
 function openApiKeyDialog() {
-  newApiKeyName.value = ''
+  const count = apiKeys.value.length
+  newApiKeyName.value = count === 0 ? 'master' : `slave${count}`
   newApiKeyValue.value = ''
   apiKeyDialogVisible.value = true
 }
@@ -244,7 +257,7 @@ interface ModelItem {
 
 const form = ref<Partial<Channel>>({
   name: '',
-  channelType: '',
+  channelType: 'openai',
   baseUrl: '',
   enabled: 1
 })
@@ -272,7 +285,26 @@ onMounted(async () => {
 })
 
 function maskKey(key: string) {
-  return key ? '•'.repeat(Math.min(key.length, 20)) : ''
+  if (!key) return ''
+  if (key.length <= 10) return '•'.repeat(key.length)
+  return key.substring(0, 6) + '••••' + key.substring(key.length - 4)
+}
+
+async function copyKey(val: string) {
+  try {
+    await navigator.clipboard.writeText(val)
+    const toast = document.createElement('div')
+    toast.textContent = t('common.copySuccess')
+    Object.assign(toast.style, {
+      position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
+      background: '#10b981', color: '#fff', padding: '8px 20px', borderRadius: '8px',
+      fontSize: '14px', zIndex: '9999', transition: 'opacity .3s'
+    })
+    document.body.appendChild(toast)
+    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300) }, 1500)
+  } catch {
+    openDialog({ message: t('common.copyFailed') })
+  }
 }
 
 function removeApiKey(index: number) {
@@ -438,6 +470,26 @@ async function handleSave() {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
   background: var(--bg-tertiary); border-radius: 6px;
 }
+.api-key-left {
+  flex: 1; display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px;
+}
+.api-key-actions {
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+.api-key-masked {
+  font-size: 13px; font-family: var(--font-mono, monospace);
+  user-select: all; cursor: pointer;
+  padding: 2px 8px; background: var(--bg-secondary);
+  border-radius: 4px; letter-spacing: 0.5px;
+}
+.copy-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; cursor: pointer; color: var(--text-muted);
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  border-radius: 4px; padding: 0; vertical-align: middle;
+}
+.copy-btn:hover { color: var(--accent-blue); border-color: var(--accent-blue); }
 .model-toolbar {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;
 }

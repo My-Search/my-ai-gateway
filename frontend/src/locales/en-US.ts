@@ -333,6 +333,7 @@ export default {
   /* ========== Log List ========== */
   'log.list.title': 'Request Logs',
   'log.list.realtime': 'Live',
+  'log.list.connecting': 'Connecting',
   'log.list.loadMore': 'Scroll up to load more',
   'log.list.loadedAll': 'Loaded all {total} records',
   'log.list.cleanOld': 'Clean Old Logs',

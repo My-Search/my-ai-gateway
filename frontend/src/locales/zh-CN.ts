@@ -147,6 +147,7 @@ export default {
   'channel.form.typeHint': '选择渠道 API 兼容类型',
   'channel.form.endpointLabel': '接口地址',
   'channel.form.endpointHint': '必填路径前缀，OpenAI 兼容格式为 https://xxx.com/v1',
+  'channel.form.endpointPlaceholder': '例如 https://example.com/v1',
   'channel.form.apiKeys': '渠道 API Keys',
   'channel.form.apiKeysHint': '添加多个 API Key，系统会自动在它们之间进行故障转移',
   'channel.form.noKeys': '暂无 API Key，点击下方按钮添加',
@@ -332,6 +333,7 @@ export default {
   /* ========== Log List ========== */
   'log.list.title': '请求日志',
   'log.list.realtime': '实时',
+  'log.list.connecting': '连接中',
   'log.list.loadMore': '上滑加载更多',
   'log.list.loadedAll': '已加载全部 {total} 条记录',
   'log.list.cleanOld': '清理旧日志',

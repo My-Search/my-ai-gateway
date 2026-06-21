@@ -188,7 +188,7 @@ const apiKeys = ref<ApiKey[]>([])
 const selectedModel = ref('')
 const selectedApiKey = ref(0)
 const temperature = ref(0.7)
-const maxTokens = ref(128000)
+const maxTokens = ref(65536)
 const userInput = ref('')
 // 使用 shallowRef 避免深层响应式追踪，配合 triggerRef 实现精确控制的流式渲染
 const messages = shallowRef<ChatMessage[]>([])
@@ -205,8 +205,8 @@ const isFullyConfigured = computed(() => {
   return !!selectedModel.value
 })
 
-/** 侧栏折叠状态（初始展开，onMounted 中根据配置状态决定是否折叠） */
-const sidebarCollapsed = ref(false)
+/** 侧栏折叠状态（默认折叠，onMounted 中根据配置状态决定是否展开） */
+const sidebarCollapsed = ref(true)
 
 /** 展开/折叠侧栏 */
 function toggleSidebar() {
@@ -236,6 +236,9 @@ async function loadApiKeys() {
 
 /** 保存所有测试配置到 localStorage */
 function saveConfig() {
+  // 未选择模型时不保存，避免恢复过程中因模型列表尚未加载导致 selectedModel 为空，
+  // 进而覆盖已保存的有效配置
+  if (!selectedModel.value) return
   const config = {
     selectedModel: selectedModel.value,
     selectedApiKey: selectedApiKey.value,
@@ -285,6 +288,9 @@ watch(() => props.models.length, (len) => {
       const config = JSON.parse(saved)
       if (config.selectedModel && props.models.some(m => m.modelName === config.selectedModel)) {
         selectedModel.value = config.selectedModel
+      } else if (!isShareMode.value) {
+        // 保存的模型已不存在 → 展开配置面板让用户重新选择
+        sidebarCollapsed.value = false
       }
     } catch { /* ignore */ }
   }
@@ -304,9 +310,13 @@ onMounted(() => {
   loadApiKeys()
   if (!isShareMode.value) {
     restoreConfig()
+    // 默认不显示配置项；没有已保存配置时展开配置面板让用户设置
+    if (!localStorage.getItem('playground_config')) {
+      sidebarCollapsed.value = false
+    }
+    // 有已保存配置但模型列表尚未加载时保持折叠，
+    // 等模型加载完成后由 models watcher 决定是否展开
   }
-  // 初始检查：如果已配置好则自动折叠侧栏
-  sidebarCollapsed.value = isFullyConfigured.value
 })
 
 async function scrollToBottom() {

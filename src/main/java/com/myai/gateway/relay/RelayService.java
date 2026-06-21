@@ -417,26 +417,18 @@ public class RelayService {
         Flux<SseEvent> routingStart = internalClient
                 ? Flux.just(new SseEvent(null, buildRoutingProgressJson("trying", candidate, retryIndex, null)))
                 : Flux.empty();
-        // 标记该候选的首次 SSE 数据事件，用于记录 TTFT
-        // 注意：此 Flux 由方法直接返回（单订阅），不会被多个 Subscriber 共享，AtomicBoolean 状态安全
-        java.util.concurrent.atomic.AtomicBoolean firstDataEvent = new java.util.concurrent.atomic.AtomicBoolean(true);
         return Flux.concat(routingStart,
                 invokeStreamCandidateWithRetries(traceId, authHeader, req, candidate, provider, retryIndex, 1, maxAttempts, internalClient))
                 .doOnNext(event -> {
-                    // 记录 TTFT：跳过后端自定义事件（_routing_progress、_gateway_meta），仅对用户数据事件测量
-                    if (firstDataEvent.getAndSet(false)
-                            && !"[DONE]".equals(event.data())
-                            && !(event.data() != null && event.data().contains("_gateway_meta"))
-                            && !(event.data() != null && event.data().contains("_routing_progress"))) {
-                        long ttft = System.currentTimeMillis() - startTime;
-                        latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(), ttft);
-                    }
                     int[] usage = extractUsageFromSseData(event.data());
                     if (usage != null) {
                         streamUsageMap.put(traceId, usage);
                     }
                 })
                 .doOnComplete(() -> {
+                    // 记录流式完成的总响应时间（从开始路由到流结束），而非 TTFT
+                    latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(),
+                            System.currentTimeMillis() - startTime);
                     int[] usage = streamUsageMap.remove(traceId);
                     int pt = usage != null ? usage[0] : 0;
                     int ct = usage != null ? usage[1] : 0;

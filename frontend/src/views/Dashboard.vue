@@ -361,7 +361,12 @@ onMounted(async () => {
 
 @media (max-width: 1400px) { .stats-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 1000px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 768px) { .stats-grid { grid-template-columns: 1fr; } }
+@media (max-width: 768px) {
+  .stats-grid { grid-template-columns: 1fr; }
+  .rank-meta-time { display: none; }
+  .rank-item { gap: 8px; }
+  .rank-bar-bg { width: 60px; margin-left: auto; }
+}
 
 /* Loading spinner */
 .loading-spinner {

@@ -3,7 +3,8 @@
     <div class="card-header">
       <div class="card-title">
         {{ t('log.list.title') }}
-        <span v-if="sseConnected" class="badge badge-sse">{{ t('log.list.realtime') }}</span>
+        <span v-if="sseReconnecting" class="badge badge-sse-connecting">{{ t('log.list.connecting') }}</span>
+        <span v-else-if="sseConnected" class="badge badge-sse">{{ t('log.list.realtime') }}</span>
       </div>
       <div style="display:flex;gap:8px;">
         <button class="btn btn-sm btn-secondary" @click="loadLogs" :disabled="loading">
@@ -73,7 +74,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { logApi, subscribeLogStream, type LogTrace, type RequestLog } from '@/api/log'
+import { logApi, subscribeLogStream, type LogTrace, type RequestLog, type LogSseSubscription } from '@/api/log'
 import Dialog from '@/components/common/Dialog.vue'
 import { useI18n } from '@/composables/useI18n'
 import { formatLocalDateTime, formatLocalFullTime } from '@/utils/date'
@@ -85,6 +86,7 @@ const expandedTraces = ref(new Set<string>())
 const loading = ref(false)
 const loadingMore = ref(false)
 const sseConnected = ref(false)
+const sseReconnecting = ref(false)
 
 // 分页状态
 const offset = ref(0)
@@ -122,7 +124,7 @@ function onDialogConfirm() {
 }
 /* ------------------------------ */
 
-let eventSource: EventSource | null = null
+let eventSource: LogSseSubscription | null = null
 
 function startSse() {
   stopSse()
@@ -133,15 +135,20 @@ function startSse() {
     onError: () => {
       sseConnected.value = false
     },
-  })
-  // 连接建立时标记
-  eventSource.addEventListener('open', () => {
-    sseConnected.value = true
+    onReconnecting: () => {
+      sseConnected.value = false
+      sseReconnecting.value = true
+    },
+    onReconnected: () => {
+      sseConnected.value = true
+      sseReconnecting.value = false
+    },
   })
 }
 
 function stopSse() {
   sseConnected.value = false
+  sseReconnecting.value = false
   eventSource?.close()
   eventSource = null
 }
@@ -183,8 +190,9 @@ function upsertTraceFromSse(log: RequestLog) {
     // 新推送的 trace 必然是进行中的，默认展开
     expandedTraces.value.add(trace.traceId)
   }
-  // 新日志插入后总是把连接标记为活跃（EventSource 自动重连场景）
+  // 收到数据说明连接活跃，清除重连状态
   sseConnected.value = true
+  sseReconnecting.value = false
 }
 
 /** 重新计算 trace 的统计摘要 */
@@ -418,6 +426,17 @@ onUnmounted(() => {
   margin-left: 8px;
   vertical-align: middle;
   animation: pulse-badge 2s ease-in-out infinite;
+}
+.badge-sse-connecting {
+  background: color-mix(in srgb, var(--accent-yellow) 20%, transparent);
+  color: var(--accent-yellow);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 3px;
+  margin-left: 8px;
+  vertical-align: middle;
+  animation: pulse-badge 1s ease-in-out infinite;
 }
 @keyframes pulse-badge {
   0%, 100% { opacity: 1; }
