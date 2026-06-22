@@ -33,7 +33,7 @@
         </div>
       </div>
       <div v-if="expandedTraces.has(trace.traceId)" class="trace-detail">
-        <div v-for="(group, gIdx) in groupedTraceLogs.get(trace.traceId) || []" :key="group.key + '-' + gIdx" class="log-entry" :style="{ paddingLeft: `calc(var(--indent-base, 12px) + ${gIdx} * var(--indent-step, 16px))` }">
+        <div v-for="(group, gIdx) in groupedTraceLogs.get(trace.traceId) || []" :key="group.key + '-' + gIdx" class="log-entry" :class="{ 'log-entry-clickable': group.logs.some(l => l.message) }" :style="{ paddingLeft: `calc(var(--indent-base, 12px) + ${gIdx} * var(--indent-step, 16px))` }" @click.stop="openLogDetail(group)">
           <span class="phase" :class="'phase-' + group.logs[0].phase">
             {{ group.logs[0].phase }}<span v-if="group.logs.length > 1" class="retry-count">(x{{ group.logs.length }})</span>
           </span>
@@ -43,9 +43,9 @@
             <template v-if="group.logs[0].channelModelName">{{ group.logs[0].channelModelName }}</template>
             <template v-else-if="group.logs[0].modelName">{{ group.logs[0].modelName }}</template>
             {{ groupDurationText(group) }}
+            <span v-if="group.logs[0].message" class="log-message" :class="{ 'log-message-error': group.logs[0].phase === 'fail' }"> — {{ group.logs[0].message }}</span>
           </span>
           <span class="log-time">{{ formatTime(group.logs[group.logs.length - 1].createdAt) }}</span>
-          <div v-if="group.logs.some(l => l.errorMessage)" class="log-error">{{ group.logs.filter(l => l.errorMessage).map(l => l.errorMessage).join('\n') }}</div>
         </div>
       </div>
     </template>
@@ -66,9 +66,10 @@
     :title="dialogTitle"
     :type="dialogType"
     :confirm-class="dialogConfirmClass"
+    :width="dialogWidth"
     @confirm="onDialogConfirm"
   >
-    {{ dialogMessage }}
+    <pre class="dialog-pre">{{ dialogMessage }}</pre>
   </Dialog>
 </template>
 
@@ -101,6 +102,7 @@ const dialogTitle = ref(t('dialog.title'))
 const dialogMessage = ref('')
 const dialogType = ref<'alert' | 'confirm'>('alert')
 const dialogConfirmClass = ref('btn-primary')
+const dialogWidth = ref('420px')
 let dialogOnConfirm: (() => void) | null = null
 
 function openDialog(opts: {
@@ -109,13 +111,58 @@ function openDialog(opts: {
   type?: 'alert' | 'confirm'
   confirmClass?: string
   onConfirm?: () => void
+  width?: string
 }) {
   dialogTitle.value = opts.title ?? t('dialog.title')
   dialogMessage.value = opts.message
   dialogType.value = opts.type ?? 'alert'
   dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
+  dialogWidth.value = opts.width ?? '420px'
   dialogOnConfirm = opts.onConfirm ?? null
   dialogVisible.value = true
+}
+
+/** 打开日志详情弹框，完整展示日志消息内容 */
+function openLogDetail(group: { key: string; logs: RequestLog[] }) {
+  if (!group.logs.some(l => l.message)) return
+  const first = group.logs[0]
+  const parts: string[] = []
+  parts.push(`阶段: ${first.phase}`)
+  const modelParts: string[] = []
+  if (first.channelName) modelParts.push(first.channelName)
+  if (first.apiKeyName) modelParts.push(first.apiKeyName)
+  if (first.channelModelName) modelParts.push(first.channelModelName)
+  else if (first.modelName) modelParts.push(first.modelName)
+  if (modelParts.length) parts.push(`路由: ${modelParts.join(' / ')}`)
+
+  // 构建完整消息内容
+  let detailText = ''
+  for (const log of group.logs) {
+    if (log.message) {
+      if (detailText) detailText += '\n---\n'
+      detailText += log.message
+    }
+  }
+  if (detailText) {
+    parts.push('')
+    parts.push(detailText)
+  }
+
+  // 显示耗时
+  const durations = group.logs
+    .filter(l => l.responseTimeMs != null && l.responseTimeMs > 0)
+    .map(l => l.responseTimeMs)
+  if (durations.length) {
+    parts.push(`\n耗时: ${durations.map(d => d + 'ms').join(' / ')}`)
+  }
+
+  openDialog({
+    title: `请求详情 [${first.phase}]`,
+    message: parts.join('\n'),
+    type: 'alert',
+    confirmClass: 'btn-primary',
+    width: '640px',
+  })
 }
 
 function onDialogConfirm() {
@@ -418,9 +465,28 @@ onUnmounted(() => {
   gap: 8px;
 }
 .log-entry:last-child { border-bottom: none; }
+.log-entry-clickable { cursor: pointer; }
+.log-entry-clickable:hover { background: var(--bg-hover); }
 .log-info { color: var(--text-secondary); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .log-time { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
-.log-error { color: var(--accent-red); font-size: 11px; margin-top: 4px; white-space: pre-wrap; }
+.log-message { color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; flex-shrink: 1; }
+.log-message-error { color: var(--accent-red); }
+
+.dialog-pre {
+  margin: 0;
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 60vh;
+  overflow-y: auto;
+  color: var(--text-primary);
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
 
 .phase { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; white-space: nowrap; }
 .phase-start { background: color-mix(in srgb, var(--accent-blue) 20%, transparent); color: var(--accent-blue); }

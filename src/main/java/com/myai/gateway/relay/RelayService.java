@@ -208,12 +208,24 @@ public class RelayService {
     Mono<String> tryCandidates(String traceId, List<RoutingCandidate> remaining,
                                         String authHeader, InternalRequest req,
                                         String provider, int retryIndex, long startTime) {
+        return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex, startTime, null);
+    }
+
+    /**
+     * 顺序尝试候选，失败后按配置进行候选内重试；重试耗尽后触发熔断并移除候选，继续下一个。
+     * 携带 lastErrorMsg 用于在全部候选失败时展示具体的失败原因。
+     */
+    private Mono<String> tryCandidates(String traceId, List<RoutingCandidate> remaining,
+                                        String authHeader, InternalRequest req,
+                                        String provider, int retryIndex, long startTime,
+                                        String lastErrorMsg) {
         if (remaining.isEmpty()) {
+            String failMsg = buildFailMessage(lastErrorMsg);
             requestLogService.logComplete(traceId, null, req.getModel(), null, null,
-                    "fail", "error", "所有候选均失败", System.currentTimeMillis() - startTime, retryIndex);
-            log.warn("所有候选均失败，无法完成请求 - traceId={}", traceId);
+                    "fail", "error", failMsg, System.currentTimeMillis() - startTime, retryIndex);
+            log.warn("所有候选均失败，无法完成请求 - traceId={}, lastError={}", traceId, lastErrorMsg);
             return Mono.just(messageTransformer.buildErrorResponse(req.getClientApiFormat(),
-                    "所有候选均失败，无法完成请求", "api_error", 503));
+                    failMsg, "api_error", 503));
         }
 
         // 根据模型的选择策略获取负载均衡器（不传 provider，传模型定义的 strategy）
@@ -238,7 +250,7 @@ public class RelayService {
             logPhase(traceId, candidate, req, "skip",
                     "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
-            return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime);
+            return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, lastErrorMsg);
         }
 
         log.info("路由决策 - traceId={} retryIndex={} 选中候选: channel={} model={} key={} (剩余{}个候选)",
@@ -293,7 +305,7 @@ public class RelayService {
                         log.info("  剩余候选[{}]: channel={} model={} key={}", i,
                                 c.getChannel().getName(), c.getChannelModel().getModelName(), c.getChannelApiKey().getKeyName());
                     }
-                    return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime);
+                    return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, err.getMessage());
                 });
     }
 
@@ -339,12 +351,16 @@ public class RelayService {
                                     candidate.getChannelApiKey().getKeyName(),
                                     candidate.getChannelModel().getModelName(),
                                     attempt, err.getMessage());
-                            logPhase(traceId, candidate, req, "retry",
-                                    "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）", retryIndex, attemptDurationMs);
+                        String retryErrDetail = err.getMessage() != null ? err.getMessage() : "";
+                        retryErrDetail = retryErrDetail.length() > 150 ? retryErrDetail.substring(0, 150) + "..." : retryErrDetail;
+                        logPhase(traceId, candidate, req, "retry",
+                                "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）: " + retryErrDetail, retryIndex, attemptDurationMs);
                             return Mono.error(err);
                         }
+                        String retryErrDetail2 = err.getMessage() != null ? err.getMessage() : "";
+                        retryErrDetail2 = retryErrDetail2.length() > 150 ? retryErrDetail2.substring(0, 150) + "..." : retryErrDetail2;
                         logPhase(traceId, candidate, req, "retry",
-                                "同一候选第 " + attempt + " 次失败，准备第 " + (attempt + 1) + " 次重试", retryIndex, attemptDurationMs);
+                                "第 " + attempt + " 次失败: " + retryErrDetail2 + "，准备第 " + (attempt + 1) + " 次重试", retryIndex, attemptDurationMs);
                         return invokeCandidateWithRetries(traceId, authHeader, req, candidate, provider,
                                 retryIndex, attempt + 1, maxAttempts);
                     }
@@ -380,14 +396,26 @@ public class RelayService {
                                                 String authHeader, InternalRequest req,
                                                 String provider, int retryIndex, long startTime,
                                                 boolean internalClient) {
+        return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex, startTime, internalClient, null);
+    }
+
+    /**
+     * 顺序尝试流式候选，失败后按配置进行候选内重试；重试耗尽后触发熔断并移除候选，继续下一个。
+     * 携带 lastErrorMsg 用于在全部候选失败时展示具体的失败原因。
+     */
+    private Flux<SseEvent> tryStreamCandidates(String traceId, List<RoutingCandidate> remaining,
+                                                String authHeader, InternalRequest req,
+                                                String provider, int retryIndex, long startTime,
+                                                boolean internalClient, String lastErrorMsg) {
         if (remaining.isEmpty()) {
             // 清理流式内容累积
             streamContentManager.clearContent(traceId);
             String extraInfo = req.isContextRetry() ? "（已拼接上下文但无剩余候选）" : "";
+            String failMsg = buildFailMessage(lastErrorMsg);
             requestLogService.logComplete(traceId, null, req.getModel(), null, null,
-                    "fail", "error", "所有流式候选均失败" + extraInfo, System.currentTimeMillis() - startTime, retryIndex);
-            log.warn("所有流式候选均失败 - traceId={}{}", traceId, extraInfo);
-            return Flux.error(new RuntimeException("所有流式候选均失败"));
+                    "fail", "error", failMsg, System.currentTimeMillis() - startTime, retryIndex);
+            log.warn("所有流式候选均失败 - traceId={}{}, lastError={}", traceId, extraInfo, lastErrorMsg);
+            return Flux.error(new RuntimeException(failMsg));
         }
 
         // 根据模型的选择策略获取负载均衡器（不传 provider，传模型定义的 strategy）
@@ -410,7 +438,7 @@ public class RelayService {
             logPhase(traceId, candidate, req, "skip",
                     "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
-            return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient);
+            return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
         }
 
         log.info("流式路由决策 - traceId={} retryIndex={} 选中候选: channel={} model={} key={} (剩余{}个候选){}",
@@ -520,7 +548,7 @@ public class RelayService {
                                 "switching", candidate, retryIndex + 1, failReason)));
                     }
                     return Flux.concat(routingSwitch,
-                            tryStreamCandidates(traceId, remaining, authHeader, contextReq, provider, retryIndex + 1, startTime, internalClient));
+                            tryStreamCandidates(traceId, remaining, authHeader, contextReq, provider, retryIndex + 1, startTime, internalClient, err.getMessage()));
                 });
     }
 
@@ -563,8 +591,10 @@ public class RelayService {
                                     candidate.getChannelApiKey().getKeyName(),
                                     candidate.getChannelModel().getModelName(),
                                     attempt, err.getMessage());
+                            String streamRetryErrDetail = err.getMessage() != null ? err.getMessage() : "";
+                            streamRetryErrDetail = streamRetryErrDetail.length() > 150 ? streamRetryErrDetail.substring(0, 150) + "..." : streamRetryErrDetail;
                             logPhase(traceId, candidate, req, "retry",
-                                    "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）", retryIndex, attemptDurationMs);
+                                    "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）: " + streamRetryErrDetail, retryIndex, attemptDurationMs);
                             return Flux.error(err);
                         }
                         // 获取已累积的流式内容，携带到重试请求中
@@ -575,8 +605,10 @@ public class RelayService {
                             log.warn("同一候选重试携带已累积内容 - traceId={} attempt={}/{} 累积长度={}",
                                     traceId, attempt, maxAttempts, accumulatedContent.length());
                         }
-                        logPhase(traceId, candidate, retryReq, "retry",
-                                "同一流式候选第 " + attempt + " 次失败，准备第 " + (attempt + 1) + " 次重试", retryIndex, attemptDurationMs);
+                        String streamRetryErrDetail2 = err.getMessage() != null ? err.getMessage() : "";
+                            streamRetryErrDetail2 = streamRetryErrDetail2.length() > 150 ? streamRetryErrDetail2.substring(0, 150) + "..." : streamRetryErrDetail2;
+                            logPhase(traceId, candidate, retryReq, "retry",
+                                    "第 " + attempt + " 次失败: " + streamRetryErrDetail2 + "，准备第 " + (attempt + 1) + " 次重试", retryIndex, attemptDurationMs);
                         // 仅内部客户端发送路由进度事件：候选内重试
                         Flux<SseEvent> routingRetry = internalClient
                                 ? Flux.just(new SseEvent(null, buildRoutingProgressJson(
@@ -1038,6 +1070,62 @@ public class RelayService {
                 candidate.getChannel().getId(),
                 candidate.getChannelApiKey().getId(),
                 candidate.getChannelModel().getId());
+    }
+
+    /**
+     * 构建失败消息文本，根据最后一条错误信息区分超时和 AI 返回错误。
+     * <ul>
+     *   <li>超时 / 空响应 → "请求超时"</li>
+     *   <li>Provider 返回错误（含 status code）→ 提取 AI 返回的错误 message</li>
+     *   <li>其他 → 原样截取显示</li>
+     * </ul>
+     */
+    private String buildFailMessage(String errorMsg) {
+        if (errorMsg == null || errorMsg.isBlank()) {
+            return "所有候选均失败";
+        }
+        String lower = errorMsg.toLowerCase();
+        // 超时检测
+        if (lower.contains("timeout") || lower.contains("did not observe")
+                || lower.contains("read timed out") || lower.contains("connect timed out")) {
+            return "请求超时";
+        }
+        // Provider 返回错误（如 401, 429 等）：提取有意义的错误信息
+        if (errorMsg.startsWith("Provider error:")) {
+            int bodyIdx = errorMsg.indexOf("body: ");
+            if (bodyIdx > 0) {
+                String body = errorMsg.substring(bodyIdx + 6);
+                // 尝试从 JSON body 中提取 error.message
+                try {
+                    JsonNode json = objectMapper.readTree(body);
+                    if (json.has("error")) {
+                        JsonNode errorNode = json.get("error");
+                        if (errorNode.has("message")) {
+                            String msg = errorNode.get("message").asText();
+                            if (errorNode.has("type") && !errorNode.get("type").isNull()
+                                    && !"null".equals(errorNode.get("type").asText())) {
+                                return "[" + errorNode.get("type").asText() + "] " + msg;
+                            }
+                            return msg;
+                        }
+                        if (errorNode.isTextual()) {
+                            return errorNode.asText();
+                        }
+                    }
+                } catch (Exception ignored) {
+                    // 解析失败回退到截取错误描述
+                }
+                String statusPart = errorMsg.substring("Provider error:".length(), bodyIdx).trim();
+                return statusPart + " " + (body.length() > 120 ? body.substring(0, 120) + "..." : body);
+            }
+            return errorMsg;
+        }
+        // 空响应视为超时
+        if (lower.contains("empty response") || lower.contains("treated as timeout")) {
+            return "请求超时";
+        }
+        // 其他错误：截取过长消息
+        return errorMsg.length() > 200 ? errorMsg.substring(0, 200) + "..." : errorMsg;
     }
 
     /**

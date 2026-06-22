@@ -48,7 +48,6 @@ mybatis-plus:
 logging:
   level:
     com.myai.gateway: INFO
-    com.myai.gateway.relay: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] [%X{traceId}] %-5level %logger{36} - %msg%n"
 
