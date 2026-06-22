@@ -41,10 +41,11 @@ http.interceptors.response.use(
         })
         // 10秒后重置标志
         setTimeout(() => { isRedirectingToLogin = false }, 10000)
-        return Promise.reject(new Error('未登录，请先登录'))
+        return Promise.reject(Object.assign(new Error('未登录，请先登录'), { status: 401 }))
       }
       const msg = error.response.data?.error || error.response.data?.message || `请求失败 (${error.response.status})`
-      return Promise.reject(new Error(msg))
+      // 保留 status 码到 Error 对象上，方便调用方区分（404 跳回 vs 其他错误留页）
+      return Promise.reject(Object.assign(new Error(msg), { status: error.response.status }))
     }
     if (error.request) {
       return Promise.reject(new Error('网络错误，请检查服务器是否正常运行'))

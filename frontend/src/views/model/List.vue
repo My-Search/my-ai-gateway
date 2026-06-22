@@ -11,6 +11,7 @@
             <th>{{ t('model.list.modelName') }}</th>
             <th>{{ t('model.list.description') }}</th>
             <th>{{ t('model.list.strategy') }}</th>
+            <th>{{ t('model.list.relMode') }}</th>
             <th>{{ t('model.list.status') }}</th>
             <th>{{ t('model.list.createdAt') }}</th>
             <th>{{ t('model.list.actions') }}</th>
@@ -28,6 +29,11 @@
               </span>
             </td>
             <td>
+              <span class="mode-badge" :class="`mode-${m.relMode || 'self_add'}`">
+                {{ (m.relMode || 'self_add') === 'inherit' ? t('model.rels.modeInherit') : t('model.rels.modeSelfAdd') }}
+              </span>
+            </td>
+            <td>
               <span v-if="m.enabled === 1" class="badge badge-success">{{ t('common.enabled') }}</span>
               <span v-else class="badge badge-danger">{{ t('common.disabled') }}</span>
             </td>
@@ -42,7 +48,7 @@
             </td>
           </tr>
           <tr v-if="!models.length">
-            <td colspan="6" style="color:var(--text-muted);padding:40px;">
+            <td colspan="7" style="color:var(--text-muted);padding:40px;">
               {{ t('model.list.empty') }}
             </td>
           </tr>
@@ -68,6 +74,12 @@
         <div class="mobile-card-row">
           <span class="mobile-card-label">{{ t('model.list.strategy') }}:</span>
           <span class="badge" :class="strategyBadge(m.strategy)">{{ strategyLabel(m.strategy) }}</span>
+        </div>
+        <div class="mobile-card-row">
+          <span class="mobile-card-label">{{ t('model.list.relMode') }}:</span>
+          <span class="mode-badge" :class="`mode-${m.relMode || 'self_add'}`">
+            {{ (m.relMode || 'self_add') === 'inherit' ? t('model.rels.modeInherit') : t('model.rels.modeSelfAdd') }}
+          </span>
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
@@ -230,6 +242,24 @@ onMounted(loadModels)
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+}
+
+/* Mode badge */
+.mode-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+.mode-badge.mode-self_add {
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--accent-blue, #58a6ff);
+}
+.mode-badge.mode-inherit {
+  background: rgba(210, 153, 34, 0.15);
+  color: #d29922;
 }
 
 /* Responsive toggle */

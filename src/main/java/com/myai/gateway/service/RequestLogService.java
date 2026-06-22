@@ -87,6 +87,36 @@ public class RequestLogService {
     }
 
     /**
+     * 记录请求阶段（带响应时间），用于 start/retry/skip 等中间阶段需要展示"该次尝试耗时"的场景
+     */
+    public void logWithResponseTime(String traceId, String apiKeyName, String modelName,
+                                    String channelModelName, String channelName,
+                                    String phase, String message, int retryIndex, long responseTimeMs) {
+        RequestLog record = new RequestLog();
+        record.setTraceId(traceId);
+        record.setApiKeyName(apiKeyName);
+        record.setModelName(modelName);
+        record.setChannelModelName(channelModelName);
+        record.setChannelName(channelName);
+        record.setPhase(phase);
+        record.setStatus("pending");
+        record.setMessage(message);
+        record.setResponseTimeMs((int) responseTimeMs);
+        record.setRetryIndex(retryIndex);
+        record.setCreatedAt(LocalDateTime.now());
+        requestLogMapper.insert(record);
+        logSseService.publish(record);
+
+        String indent = "  ".repeat(retryIndex);
+        String logMsg = "[{}] {}[{}] {} -> {} -> {}: {} ({}ms)";
+        if ("fail".equals(phase)) {
+            log.warn(logMsg, traceId, indent, phase, modelName, channelModelName, channelName, message, responseTimeMs);
+        } else {
+            log.info(logMsg, traceId, indent, phase, modelName, channelModelName, channelName, message, responseTimeMs);
+        }
+    }
+
+    /**
      * 记录请求完成（成功或最终失败），包含 token 用量
      */
     public void logComplete(String traceId, String apiKeyName, String modelName,

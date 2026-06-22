@@ -208,6 +208,90 @@ class RelayServiceTest {
     }
 
     @Test
+    void invokeCandidateWithRetries_recordsAttemptDurationOnRetryLog() {
+        // 验证：候选内重试失败时，retry 日志应带 responseTimeMs 写入，
+        // 这样前端能展示"每次真实模型请求的用时"。
+        RelayService spyService = spy(relayService);
+
+        // 重试 2 次 = 最多 3 次尝试
+        CircuitBreakerConfig config = new CircuitBreakerConfig();
+        config.setRetryCount(2);
+        config.setCircuitBreakDuration(60);
+        config.setCircuitBreakScope("model");
+        config.setEnabled(1);
+        when(modelService.getCircuitBreakerConfig(1L)).thenReturn(config);
+
+        Model model = new Model();
+        model.setId(1L);
+        model.setModelName("x");
+        when(modelService.getByModelName("x")).thenReturn(model);
+
+        Channel channel = new Channel();
+        channel.setId(10L);
+        channel.setName("A");
+        channel.setEnabled(1);
+
+        ChannelModel cm = new ChannelModel();
+        cm.setId(100L);
+        cm.setChannelId(10L);
+        cm.setModelName("a1");
+        cm.setEnabled(1);
+
+        ChannelApiKey key = new ChannelApiKey();
+        key.setId(1000L);
+        key.setChannelId(10L);
+        key.setKeyName("ak1");
+        key.setEnabled(1);
+
+        ModelChannelRel rel = new ModelChannelRel(1L, 100L);
+        rel.setSortOrder(0);
+        rel.setEnabled(1);
+
+        RoutingCandidate candidate = new RoutingCandidate(rel, channel, cm, key);
+        List<RoutingCandidate> candidates = new ArrayList<>(List.of(candidate));
+
+        InternalRequest req = new InternalRequest();
+        req.setModel("x");
+        req.setClientApiFormat("openai");
+
+        // 第二次成功（产生 1 条 retry 日志）
+        doReturn(Mono.error(new RuntimeException("fail 1")),
+                Mono.just("{\"success\":true}"))
+                .when(spyService).callProviderNonStream(any(), any(), any(), any());
+        when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
+                .thenReturn("{\"success\":true}");
+
+        spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
+                .block(Duration.ofSeconds(5));
+
+        // 1 次失败重试 → 应调用 1 次 logWithResponseTime 写入带耗时的 retry 日志
+        // attemptDuration 实际计算自 System.currentTimeMillis()，不能精确断言具体值，
+        // 因此只验证：被调用了 1 次、retryIndex=0、phase="retry"、responseTimeMs >= 0
+        verify(requestLogService, times(1)).logWithResponseTime(
+                eq("trace-1"),
+                eq("ak1"),
+                eq("x"),
+                eq("a1"),
+                eq("A"),
+                eq("retry"),
+                anyString(),
+                eq(0),
+                longThat(ms -> ms >= 0L)
+        );
+        // start 日志走普通 log()（不带耗时）
+        verify(requestLogService, atLeastOnce()).log(
+                eq("trace-1"),
+                eq("ak1"),
+                eq("x"),
+                eq("a1"),
+                eq("A"),
+                eq("start"),
+                anyString(),
+                eq(0)
+        );
+    }
+
+    @Test
     void tryCandidates_failsOverAndTriggersCircuitBreakerAfterRetriesExhausted() {
         RelayService spyService = spy(relayService);
 

@@ -56,6 +56,18 @@ public class ModelService {
                 new LambdaQueryWrapper<Model>().eq(Model::getModelName, modelName));
     }
 
+    /**
+     * 列出可作为继承源的入口模型（不含自身）。
+     * 规则：仅启用 (enabled=1) 的模型；过滤后会由调用方负责环检测。
+     */
+    public List<Model> listInheritableModels(Long excludeModelId) {
+        return modelMapper.selectList(
+                new LambdaQueryWrapper<Model>()
+                        .eq(Model::getEnabled, 1)
+                        .ne(excludeModelId != null, Model::getId, excludeModelId)
+                        .orderByAsc(Model::getModelName));
+    }
+
     @Transactional
     public Model create(Model model) {
         modelMapper.insert(model);
@@ -72,6 +84,20 @@ public class ModelService {
 
     @Transactional
     public void delete(Long id) {
+        // 阻止删除：若有其他模型正在继承本模型
+        Model self = modelMapper.selectById(id);
+        if (self != null) {
+            List<Model> inheritors = modelMapper.selectList(
+                    new LambdaQueryWrapper<Model>()
+                            .eq(Model::getRelMode, Model.RelMode.INHERIT)
+                            .eq(Model::getInheritFromModelId, id));
+            if (!inheritors.isEmpty()) {
+                String names = inheritors.stream()
+                        .map(Model::getModelName)
+                        .collect(Collectors.joining("、"));
+                throw new RuntimeException("模型「" + self.getModelName() + "」正被以下模型继承，无法删除：" + names);
+            }
+        }
         // 级联删除关联和熔断配置
         relMapper.delete(new LambdaQueryWrapper<ModelChannelRel>().eq(ModelChannelRel::getModelId, id));
         circuitBreakerConfigMapper.delete(
@@ -82,9 +108,36 @@ public class ModelService {
     // ==================== 关联渠道模型管理 ====================
 
     /**
-     * 获取自定义模型关联的所有渠道模型（含渠道信息）
+     * 获取自定义模型关联的所有渠道模型（含渠道信息）。
+     * <p>
+     * 主干流程：根据模型的 relMode 决定返回自有 rels 还是解析自源模型（递归解析 + 环检测）。
+     * 继承模式下，关联列表是源模型的实时映射，rels 内的 id 是源模型 rel 的 id（用于排障识别）。
+     * </p>
      */
     public List<ModelChannelRel> getChannelRels(Long modelId) {
+        return resolveRels(modelId, new java.util.HashSet<>());
+    }
+
+    /**
+     * 递归解析模型的关联列表。
+     * - self_add：直接查本模型自有的 rels 并填充渠道信息
+     * - inherit：递归到源模型解析（带环检测）
+     */
+    private List<ModelChannelRel> resolveRels(Long modelId, java.util.Set<Long> visited) {
+        if (modelId == null) return java.util.Collections.emptyList();
+        if (!visited.add(modelId)) {
+            log.warn("检测到模型关联的循环继承，modelId={}，已访问链路={}", modelId, visited);
+            return java.util.Collections.emptyList();
+        }
+
+        Model model = modelMapper.selectById(modelId);
+        if (model == null) return java.util.Collections.emptyList();
+
+        if (Model.RelMode.INHERIT.equals(model.getRelMode()) && model.getInheritFromModelId() != null) {
+            return resolveRels(model.getInheritFromModelId(), visited);
+        }
+
+        // 自添加模式：直接查本模型自有的 rels
         List<ModelChannelRel> rels = relMapper.selectList(
                 new LambdaQueryWrapper<ModelChannelRel>()
                         .eq(ModelChannelRel::getModelId, modelId)
@@ -106,6 +159,94 @@ public class ModelService {
             }
         }
         return rels;
+    }
+
+    /**
+     * 切换模型的关联模式。
+     * <p>
+     * 处理流程：
+     * - self_add → inherit：删除本模型自有的 rels（用户自定义的关联不再生效），设置 inheritFromModelId
+     * - inherit → self_add：把当前生效的 rels（来自源模型）复制为本模型的自有 rels，使它们可被修改
+     * - 同模式切换：仅当两端都是 inherit 且源不同时才允许切换源；同源则视为无操作
+     * </p>
+     *
+     * @param modelId      目标模型 ID
+     * @param newMode      新模式（self_add / inherit）
+     * @param sourceModelId  继承源模型 ID（仅 newMode='inherit' 时必填，且不能等于 modelId）
+     * @return 更新后的 Model
+     */
+    @Transactional
+    public Model setRelMode(Long modelId, String newMode, Long sourceModelId) {
+        Model model = modelMapper.selectById(modelId);
+        if (model == null) {
+            throw new RuntimeException("模型不存在");
+        }
+        String currentMode = model.getRelMode() == null ? Model.RelMode.SELF_ADD : model.getRelMode();
+
+        if (Model.RelMode.INHERIT.equals(newMode)) {
+            if (sourceModelId == null) {
+                throw new RuntimeException("切换到继承模式时必须指定源模型");
+            }
+            if (sourceModelId.equals(modelId)) {
+                throw new RuntimeException("不能将模型继承自自身");
+            }
+            Model source = modelMapper.selectById(sourceModelId);
+            if (source == null) {
+                throw new RuntimeException("源模型不存在");
+            }
+            // 检测切换到 inherit 后是否会产生环
+            java.util.Set<Long> visited = new java.util.HashSet<>();
+            visited.add(modelId);
+            if (wouldCreateCycle(sourceModelId, visited)) {
+                throw new RuntimeException("指定的源模型会形成循环继承");
+            }
+
+            // self_add → inherit：丢弃自有 rels
+            if (!Model.RelMode.INHERIT.equals(currentMode)) {
+                relMapper.delete(new LambdaQueryWrapper<ModelChannelRel>()
+                        .eq(ModelChannelRel::getModelId, modelId));
+            }
+            // inherit → inherit：仅更新源
+            model.setRelMode(Model.RelMode.INHERIT);
+            model.setInheritFromModelId(sourceModelId);
+        } else if (Model.RelMode.SELF_ADD.equals(newMode)) {
+            // inherit → self_add：把当前生效的 rels 复制为本模型的自有 rels
+            if (Model.RelMode.INHERIT.equals(currentMode) && model.getInheritFromModelId() != null) {
+                List<ModelChannelRel> sourceRels = resolveRels(model.getInheritFromModelId(), new java.util.HashSet<>());
+                int order = 0;
+                for (ModelChannelRel sr : sourceRels) {
+                    // 复制为新 rels（id 置空使其成为新增行）
+                    ModelChannelRel copy = new ModelChannelRel(modelId, sr.getChannelModelId());
+                    copy.setSortOrder(order++);
+                    copy.setEnabled(sr.getEnabled() == null ? 1 : sr.getEnabled());
+                    copy.setWeight(sr.getWeight() == null ? 1 : sr.getWeight());
+                    relMapper.insert(copy);
+                }
+            }
+            model.setRelMode(Model.RelMode.SELF_ADD);
+            model.setInheritFromModelId(null);
+        } else {
+            throw new RuntimeException("未知的关联模式: " + newMode);
+        }
+        model.setUpdatedAt(LocalDateTime.now());
+        modelMapper.updateById(model);
+        return model;
+    }
+
+    /**
+     * 检测从 startModelId 出发解析继承时是否会形成环。
+     * visited 集合中应已包含发起继承的 modelId。
+     */
+    private boolean wouldCreateCycle(Long startModelId, java.util.Set<Long> visited) {
+        Model m = modelMapper.selectById(startModelId);
+        if (m == null) return false;
+        if (!Model.RelMode.INHERIT.equals(m.getRelMode()) || m.getInheritFromModelId() == null) {
+            return false;
+        }
+        Long next = m.getInheritFromModelId();
+        if (visited.contains(next)) return true;
+        visited.add(next);
+        return wouldCreateCycle(next, visited);
     }
 
     /**
@@ -132,6 +273,7 @@ public class ModelService {
      */
     @Transactional
     public ModelChannelRel addChannelRel(ModelChannelRel rel) {
+        assertSelfAddMode(rel.getModelId());
         // 检查是否已存在关联
         ModelChannelRel existing = relMapper.selectOne(
                 new LambdaQueryWrapper<ModelChannelRel>()
@@ -146,7 +288,7 @@ public class ModelService {
                         .eq(ModelChannelRel::getModelId, rel.getModelId())
                         .orderByDesc(ModelChannelRel::getSortOrder)
                         .last("LIMIT 1"));
-        rel.setSortOrder((lastRel != null && lastRel.getSortOrder() != null) 
+        rel.setSortOrder((lastRel != null && lastRel.getSortOrder() != null)
                 ? lastRel.getSortOrder() + 1 : 0);
         relMapper.insert(rel);
         return rel;
@@ -157,6 +299,7 @@ public class ModelService {
      */
     @Transactional
     public int batchAddChannelRels(Long modelId, List<Long> channelModelIds) {
+        assertSelfAddMode(modelId);
         int added = 0;
         // 获取当前最大的 sortOrder
         ModelChannelRel lastRel = relMapper.selectOne(
@@ -164,9 +307,9 @@ public class ModelService {
                         .eq(ModelChannelRel::getModelId, modelId)
                         .orderByDesc(ModelChannelRel::getSortOrder)
                         .last("LIMIT 1"));
-        int nextSortOrder = (lastRel != null && lastRel.getSortOrder() != null) 
+        int nextSortOrder = (lastRel != null && lastRel.getSortOrder() != null)
                 ? lastRel.getSortOrder() + 1 : 0;
-        
+
         for (Long channelModelId : channelModelIds) {
             ModelChannelRel existing = relMapper.selectOne(
                     new LambdaQueryWrapper<ModelChannelRel>()
@@ -191,6 +334,11 @@ public class ModelService {
      */
     @Transactional
     public void removeChannelRel(Long relId) {
+        ModelChannelRel rel = relMapper.selectById(relId);
+        if (rel == null) {
+            throw new RuntimeException("关联不存在");
+        }
+        assertSelfAddMode(rel.getModelId());
         relMapper.deleteById(relId);
     }
 
@@ -203,6 +351,7 @@ public class ModelService {
         if (rel == null) {
             throw new RuntimeException("关联不存在");
         }
+        assertSelfAddMode(rel.getModelId());
         rel.setSortOrder(newSortOrder);
         relMapper.updateById(rel);
     }
@@ -213,12 +362,31 @@ public class ModelService {
      */
     @Transactional
     public void updateChannelRelSortOrders(List<Long> sortedRelIds) {
+        if (sortedRelIds == null || sortedRelIds.isEmpty()) return;
+        // 先校验所有 rels 对应的模型都不是 inherit 模式
         for (int i = 0; i < sortedRelIds.size(); i++) {
             ModelChannelRel rel = relMapper.selectById(sortedRelIds.get(i));
-            if (rel != null) {
-                rel.setSortOrder(i);
-                relMapper.updateById(rel);
+            if (rel == null) {
+                throw new RuntimeException("关联不存在: id=" + sortedRelIds.get(i));
             }
+            if (i == 0) {
+                // 仅校验第一个的 modelId（同一批次属于同一模型）
+                assertSelfAddMode(rel.getModelId());
+            }
+            rel.setSortOrder(i);
+            relMapper.updateById(rel);
+        }
+    }
+
+    /**
+     * 校验模型处于 self_add 模式，否则抛出明确错误。
+     * 继承模式下不允许手动修改关联。
+     */
+    private void assertSelfAddMode(Long modelId) {
+        if (modelId == null) return;
+        Model m = modelMapper.selectById(modelId);
+        if (m != null && Model.RelMode.INHERIT.equals(m.getRelMode())) {
+            throw new RuntimeException("模型「" + m.getModelName() + "」当前为继承模式，无法修改关联");
         }
     }
 

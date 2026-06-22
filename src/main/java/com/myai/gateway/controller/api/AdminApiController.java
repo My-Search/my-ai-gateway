@@ -623,10 +623,71 @@ public class AdminApiController {
                 }
             }
         }
+
+        // 解析继承源模型名称（仅在 inherit 模式下有意义）
+        String inheritFromModelName = null;
+        if (com.myai.gateway.entity.Model.RelMode.INHERIT.equals(m.getRelMode())
+                && m.getInheritFromModelId() != null) {
+            com.myai.gateway.entity.Model source = modelService.getById(m.getInheritFromModelId());
+            if (source != null) {
+                inheritFromModelName = source.getModelName();
+            }
+        }
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("model", m);
         result.put("rels", rels);
         result.put("availableModels", availableModels);
+        result.put("inheritFromModelName", inheritFromModelName);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 获取可作为继承源的入口模型列表（不含当前模型）
+     * GET /admin/api/models/{id}/inheritable
+     */
+    @GetMapping(value = "/models/{id}/inheritable", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<?> listInheritableModels(@PathVariable Long id) {
+        com.myai.gateway.entity.Model m = modelService.getById(id);
+        if (m == null) return ResponseEntity.status(404).body(Map.of("error", "模型不存在"));
+        List<com.myai.gateway.entity.Model> models = modelService.listInheritableModels(id);
+        return ResponseEntity.ok(models);
+    }
+
+    /**
+     * 切换模型的关联模式
+     * PUT /admin/api/models/{id}/rel-mode
+     * 请求体: { "mode": "self_add" | "inherit", "sourceModelId": 1 }
+     *   - mode='inherit' 时 sourceModelId 必填
+     *   - mode='self_add' 时 sourceModelId 忽略
+     */
+    @PutMapping(value = "/models/{id}/rel-mode", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> setRelMode(@PathVariable Long id,
+                                                          @RequestBody Map<String, Object> body) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            String mode = (String) body.get("mode");
+            if (mode == null || (!com.myai.gateway.entity.Model.RelMode.SELF_ADD.equals(mode)
+                    && !com.myai.gateway.entity.Model.RelMode.INHERIT.equals(mode))) {
+                result.put("success", false);
+                result.put("error", "mode 必须为 self_add 或 inherit");
+                return ResponseEntity.ok(result);
+            }
+            Long sourceModelId = null;
+            Object raw = body.get("sourceModelId");
+            if (raw instanceof Number) {
+                sourceModelId = ((Number) raw).longValue();
+            } else if (raw != null) {
+                sourceModelId = Long.parseLong(raw.toString());
+            }
+            com.myai.gateway.entity.Model updated = modelService.setRelMode(id, mode, sourceModelId);
+            result.put("success", true);
+            result.put("model", updated);
+        } catch (Exception e) {
+            log.warn("切换模型关联模式失败: id={}, body={}", id, body, e);
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
         return ResponseEntity.ok(result);
     }
 

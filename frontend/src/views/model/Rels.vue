@@ -1,24 +1,97 @@
 <template>
   <div class="card">
     <div class="card-header">
-      <div class="card-title">{{ t('model.rels.title').replace('{name}', model?.modelName || '') }}</div>
+      <div class="card-title">
+        {{ t('model.rels.title').replace('{name}', model?.modelName || '') }}
+        <span v-if="model" class="mode-badge" :class="`mode-${model.relMode || 'self_add'}`">
+          {{ (model.relMode || 'self_add') === 'inherit' ? t('model.rels.modeInherit') : t('model.rels.modeSelfAdd') }}
+        </span>
+      </div>
       <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
     </div>
 
     <div class="action-bar">
+      <!-- 左侧：模式相关控件（自添加=添加/排序；继承=只读提示；源选择器独立显示） -->
       <div class="left">
-        <SearchableSelect
-          v-model="selectedModelIds"
-          :options="selectOptions"
-          :placeholder="t('model.rels.selectModel')"
-          :multiple="true"
-          :width="300"
-          :dropdown-width="500"
-        />
-        <button class="btn btn-primary btn-sm" :disabled="selectedModelIds.length === 0" @click="addRel"><SvgIcon name="link" :size="14" /> {{ t('model.rels.addRel') }}</button>
-        <button v-if="isDirty" class="btn btn-primary btn-sm" :disabled="isSaving" @click="saveOrder">
-          <SvgIcon name="check" :size="14" /> {{ isSaving ? t('common.saving') : t('model.rels.saveOrder') }}
-        </button>
+        <!-- 自添加模式：添加 + 排序 -->
+        <template v-if="uiMode === 'self_add'">
+          <SearchableSelect
+            v-model="selectedModelIds"
+            :options="selectOptions"
+            :placeholder="t('model.rels.selectModel')"
+            :multiple="true"
+            :width="300"
+            :dropdown-width="500"
+          />
+          <button class="btn btn-primary btn-sm" :disabled="selectedModelIds.length === 0" @click="addRel">
+            <SvgIcon name="link" :size="14" /> {{ t('model.rels.addRel') }}
+          </button>
+          <button v-if="isDirty" class="btn btn-primary btn-sm" :disabled="isSaving" @click="saveOrder">
+            <SvgIcon name="check" :size="14" /> {{ isSaving ? t('common.saving') : t('model.rels.saveOrder') }}
+          </button>
+        </template>
+
+        <!-- 继承模式：只读提示 -->
+        <template v-else>
+          <span class="readonly-tip">
+            <SvgIcon name="info" :size="14" /> {{ t('model.rels.inheritReadonlyTip') }}
+          </span>
+        </template>
+
+        <!-- 继承模式下：显示源名 + 改源按钮（独立于源选择器状态） -->
+        <template v-if="currentMode === 'inherit' && inheritFromModelName && !showSourcePicker">
+          <span class="source-divider">|</span>
+          <span class="source-label">{{ t('model.rels.inheritFrom') }}:</span>
+          <strong class="source-name">{{ inheritFromModelName }}</strong>
+          <code class="badge-readonly">{{ t('model.rels.readonly') }}</code>
+          <button class="btn btn-sm btn-secondary" :disabled="switchingMode" @click="openSourcePicker">
+            <SvgIcon name="edit" :size="12" /> {{ t('model.rels.changeSource') }}
+          </button>
+        </template>
+
+        <!-- 源选择器（首次切换或修改源时显示，独立于 currentMode） -->
+        <template v-if="showSourcePicker">
+          <span class="source-divider">|</span>
+          <SearchableSelect
+            v-model="pendingSourceId"
+            :options="inheritableOptions"
+            :placeholder="t('model.rels.selectInheritSource')"
+            :width="240"
+          />
+          <button class="btn btn-sm btn-primary" :disabled="!pendingSourceId || switchingMode" @click="confirmInheritSource">
+            <SvgIcon name="check" :size="12" /> {{ t('model.rels.applySource') }}
+          </button>
+          <button class="btn btn-sm btn-secondary" :disabled="switchingMode" @click="cancelSourcePicker">
+            <SvgIcon name="x" :size="12" /> {{ t('common.cancel') }}
+          </button>
+        </template>
+      </div>
+
+      <!-- 右侧：模式切换（始终可见） -->
+      <div class="right">
+        <span class="mode-switch-label">{{ t('model.rels.modeSwitch') }}</span>
+        <div class="mode-tabs" role="tablist">
+          <button
+            class="mode-tab"
+            :class="{ active: uiMode === 'self_add' }"
+            :disabled="switchingMode"
+            @click="onSwitchMode('self_add')"
+            role="tab"
+            :title="t('model.rels.modeSelfAdd')"
+          >
+            <SvgIcon name="list" :size="14" /> {{ t('model.rels.modeSelfAdd') }}
+          </button>
+          <button
+            class="mode-tab"
+            :class="{ active: uiMode === 'inherit' }"
+            :disabled="switchingMode"
+            @click="onSwitchMode('inherit')"
+            role="tab"
+            :title="t('model.rels.modeInherit')"
+          >
+            <SvgIcon name="link" :size="14" /> {{ t('model.rels.modeInherit') }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -35,7 +108,10 @@
         </thead>
         <tbody ref="tbodyRef">
           <tr v-for="(rel, index) in rels" :key="rel.id" :data-index="index" :class="{ 'row-disabled': rel.channelEnabled !== 1 }">
-            <td><span class="drag-handle" :title="t('model.rels.dragSort')">≡</span></td>
+            <td>
+              <span v-if="currentMode === 'self_add'" class="drag-handle" :title="t('model.rels.dragSort')">≡</span>
+              <span v-else class="sort-index">{{ index + 1 }}</span>
+            </td>
             <td>
               <span :class="{ 'text-disabled': rel.channelEnabled !== 1 }">{{ rel.channelName }}</span>
               <span v-if="rel.channelEnabled !== 1" class="badge badge-disabled">{{ t('common.disabled') }}</span>
@@ -51,7 +127,8 @@
               <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
             </td>
             <td>
-              <button class="btn btn-sm btn-danger" @click="removeRel(rel)"><SvgIcon name="trash" :size="14" /> {{ t('model.rels.delete') }}</button>
+              <button v-if="currentMode === 'self_add'" class="btn btn-sm btn-danger" @click="removeRel(rel)"><SvgIcon name="trash" :size="14" /> {{ t('model.rels.delete') }}</button>
+              <span v-else class="text-muted">--</span>
             </td>
           </tr>
           <tr v-if="!rels.length">
@@ -61,6 +138,17 @@
       </table>
     </div>
   </div>
+
+  <!-- 模式切换二次确认 -->
+  <Dialog
+    v-model="switchDialog.visible"
+    :title="switchDialog.title"
+    :type="switchDialog.type"
+    :confirm-class="switchDialog.confirmClass"
+    @confirm="onSwitchDialogConfirm"
+  >
+    {{ switchDialog.message }}
+  </Dialog>
 
   <!-- Common Dialog -->
   <Dialog
@@ -78,7 +166,7 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
-import { modelApi, type CustomModel, type ModelChannelRel } from '@/api/model'
+import { modelApi, type CustomModel, type ModelChannelRel, type RelMode } from '@/api/model'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
 import Dialog from '@/components/common/Dialog.vue'
 import Sortable from 'sortablejs'
@@ -89,7 +177,14 @@ const router = useRouter()
 const model = ref<CustomModel | null>(null)
 const rels = ref<ModelChannelRel[]>([])
 const availableModels = ref<any[]>([])
+const inheritableModels = ref<CustomModel[]>([])
+const inheritFromModelName = ref<string | null>(null)
 const selectedModelIds = ref<number[]>([])
+const showSourcePicker = ref(false)
+// 用 0 而非 null：SearchableSelect 的 modelValue 类型不允许 null
+const pendingSourceId = ref<number>(0)
+const switchingMode = ref(false)
+const currentMode = ref<RelMode>('self_add')
 
 const tbodyRef = ref<HTMLElement | null>(null)
 let sortableInstance: Sortable | null = null
@@ -103,7 +198,7 @@ function formatRespTime(ms: number): string {
   return ms + 'ms'
 }
 
-/* ---------- Dialog state ---------- */
+/* ---------- Dialog state (common) ---------- */
 const dialogVisible = ref(false)
 const dialogTitle = ref(t('common.prompt'))
 const dialogMessage = ref('')
@@ -130,6 +225,49 @@ function onDialogConfirm() {
   dialogOnConfirm?.()
   dialogOnConfirm = null
 }
+
+/* ---------- Switch-mode confirm dialog ---------- */
+type SwitchMode = RelMode | null
+const switchDialog = ref<{
+  visible: boolean
+  title: string
+  message: string
+  type: 'alert' | 'confirm'
+  confirmClass: string
+  pending: SwitchMode
+}>({
+  visible: false,
+  title: '',
+  message: '',
+  type: 'confirm',
+  confirmClass: 'btn-primary',
+  pending: null
+})
+
+function openSwitchConfirm(mode: RelMode) {
+  let msg = ''
+  let cls = 'btn-primary'
+  if (mode === 'inherit') {
+    msg = t('model.rels.switchToInheritConfirm')
+    cls = 'btn-warning'
+  } else {
+    msg = t('model.rels.switchToSelfAddConfirm')
+  }
+  switchDialog.value = {
+    visible: true,
+    title: t('model.rels.switchModeTitle'),
+    message: msg,
+    type: 'confirm',
+    confirmClass: cls,
+    pending: mode
+  }
+}
+
+function onSwitchDialogConfirm() {
+  const target = switchDialog.value.pending
+  switchDialog.value.pending = null
+  if (target) doSetMode(target)
+}
 /* ------------------------------ */
 
 const selectOptions = computed(() => {
@@ -143,6 +281,23 @@ const selectOptions = computed(() => {
     }))
 })
 
+const inheritableOptions = computed(() => {
+  return inheritableModels.value.map(m => ({
+    value: m.id!,
+    label: m.modelName
+  }))
+})
+
+/**
+ * UI 显示用的模式：选源过程中临时切到 inherit 形态，让"添加关联"按钮消失。
+ * - currentMode 表示后端的真实模式
+ * - uiMode 表示 UI 应该呈现什么形态
+ */
+const uiMode = computed<RelMode>(() => {
+  if (showSourcePicker.value) return 'inherit'
+  return currentMode.value
+})
+
 async function loadData() {
   const id = Number(route.params.id)
   try {
@@ -152,20 +307,49 @@ async function loadData() {
     originalRelIds.value = rels.value.map(r => r.id)
     isDirty.value = false
     availableModels.value = res.data.availableModels
+    inheritFromModelName.value = res.data.inheritFromModelName ?? null
+    const mode = (model.value.relMode as RelMode) || 'self_add'
+    currentMode.value = mode
   } catch (e: any) {
-    openDialog({ title: t('error.loadFailed'), message: e.message })
-    router.push('/admin/model/list')
+    // 404：模型被删，跳回列表（不能重试）
+    if (e.status === 404) {
+      openDialog({ title: t('error.loadFailed'), message: e.message, type: 'alert' })
+      router.push('/admin/model/list')
+      return
+    }
+    // 其它错误（500 / 网络）：留页 + 提供重试入口
+    // 避免像之前那样"加载失败就静默弹回"，让用户能看到错误并主动重试
+    openDialog({
+      title: t('error.loadFailed'),
+      message: `${e.message}\n\n点击「确定」重新加载，点击「取消」留在当前页。`,
+      type: 'confirm',
+      onConfirm: () => loadData()
+    })
+  }
+}
+
+async function loadInheritableModels() {
+  const id = Number(route.params.id)
+  try {
+    const res = await modelApi.getInheritableModels(id)
+    inheritableModels.value = res.data
+  } catch (e: any) {
+    // 静默失败：仅在用户进入继承源选择时才需要
+    inheritableModels.value = []
   }
 }
 
 async function addRel() {
   if (selectedModelIds.value.length === 0) return
+  if (currentMode.value !== 'self_add') return
   const id = Number(route.params.id)
   try {
     const res = await modelApi.batchAddRels(id, selectedModelIds.value)
     if (res.data.success) {
       selectedModelIds.value = []
       await loadData()
+    } else {
+      openDialog({ title: t('model.rels.addFailed'), message: res.data.error || t('error.unknown') })
     }
   } catch (e: any) {
     openDialog({ title: t('model.rels.addFailed'), message: e.message })
@@ -173,6 +357,7 @@ async function addRel() {
 }
 
 function removeRel(rel: ModelChannelRel) {
+  if (currentMode.value !== 'self_add') return
   openDialog({
     title: t('common.confirmDelete'),
     message: t('model.rels.deleteConfirm'),
@@ -180,8 +365,12 @@ function removeRel(rel: ModelChannelRel) {
     confirmClass: 'btn-danger',
     onConfirm: async () => {
       try {
-        await modelApi.removeRel(rel.id)
-        await loadData()
+        const res = await modelApi.removeRel(rel.id)
+        if (res.data.success) {
+          await loadData()
+        } else {
+          openDialog({ title: t('model.rels.deleteFailed'), message: res.data.error || t('error.unknown') })
+        }
       } catch (e: any) {
         openDialog({ title: t('model.rels.deleteFailed'), message: e.message })
       }
@@ -194,6 +383,8 @@ function initSortable() {
     sortableInstance.destroy()
     sortableInstance = null
   }
+  // 继承模式下禁用排序
+  if (currentMode.value !== 'self_add') return
   const tbody = tbodyRef.value
   if (!tbody) return
 
@@ -218,12 +409,17 @@ function initSortable() {
 }
 
 async function saveOrder() {
+  if (currentMode.value !== 'self_add') return
   isSaving.value = true
   try {
     const sortedRelIds = rels.value.map(r => r.id)
-    await modelApi.batchUpdateSortOrders(sortedRelIds)
-    isDirty.value = false // Hide save button after successful save
-    await loadData()
+    const res = await modelApi.batchUpdateSortOrders(sortedRelIds)
+    if (res.data.success) {
+      isDirty.value = false
+      await loadData()
+    } else {
+      openDialog({ title: t('model.rels.saveFailed'), message: res.data.error || t('error.unknown') })
+    }
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e)
     openDialog({ title: t('model.rels.saveFailed'), message })
@@ -232,8 +428,78 @@ async function saveOrder() {
   }
 }
 
+/* ---------- 模式切换 ----------
+ * 流程设计：
+ * - 切到 self_add：弹模式确认框，确认后调 setRelMode('self_add') → 源 rels 复制为自有 rels
+ * - 切到 inherit：分两种情况
+ *   1) 已有继承源（model.inheritFromModelId）：弹模式确认框，确认后沿用旧源
+ *   2) 没有继承源：跳过模式确认框，直接进源选择器，选源后调 setRelMode('inherit', sourceId)
+ * 这样能避免"先确认模式再选源"导致的"切换没反应"假象。
+ */
+function onSwitchMode(target: RelMode) {
+  if (switchingMode.value) return
+  if (target === currentMode.value) return
+
+  if (target === 'inherit' && !model.value?.inheritFromModelId) {
+    // 首次切到 inherit：直接进源选择器
+    openSourcePicker()
+    return
+  }
+  // 其它情况：弹模式确认框
+  openSwitchConfirm(target)
+}
+
+/**
+ * 执行模式切换公共逻辑。
+ * @param mode       目标模式
+ * @param sourceId   继承源 ID（未传时自动从 model.value.inheritFromModelId 获取）
+ */
+async function doSetMode(mode: RelMode, sourceId?: number) {
+  switchingMode.value = true
+  try {
+    if (sourceId === undefined && mode === 'inherit' && model.value?.inheritFromModelId) {
+      sourceId = model.value.inheritFromModelId
+    }
+    const res = await modelApi.setRelMode(Number(route.params.id), mode, sourceId)
+    if (res.data.success) {
+      showSourcePicker.value = false
+      pendingSourceId.value = 0
+      await loadData()
+    } else {
+      openDialog({ title: t('error.updateFailed'), message: res.data.error || t('error.unknown') })
+    }
+  } catch (e: any) {
+    openDialog({ title: t('error.updateFailed'), message: e?.response?.data?.error || e.message || t('error.unknown') })
+  } finally {
+    switchingMode.value = false
+  }
+}
+
+async function openSourcePicker() {
+  showSourcePicker.value = true
+  pendingSourceId.value = model.value?.inheritFromModelId ?? 0
+  if (inheritableModels.value.length === 0) {
+    await loadInheritableModels()
+  }
+}
+
+function cancelSourcePicker() {
+  showSourcePicker.value = false
+  pendingSourceId.value = 0
+}
+
+async function confirmInheritSource() {
+  if (!pendingSourceId.value) return
+  await doSetMode('inherit', pendingSourceId.value)
+}
+
 // Initialize Sortable after data is loaded and DOM is updated
 watch(rels, () => {
+  nextTick(() => initSortable())
+})
+
+// 模式变化时也要重新初始化（initSortable 内部会判断）
+watch(currentMode, () => {
   nextTick(() => initSortable())
 })
 
@@ -256,6 +522,11 @@ onMounted(async () => {
   text-decoration: line-through;
 }
 
+.text-muted {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .badge-disabled {
   margin-left: 8px;
   font-size: 10px;
@@ -263,6 +534,114 @@ onMounted(async () => {
   background: var(--text-muted);
   color: var(--bg-primary);
   border-radius: 4px;
+}
+
+/* Mode badge in title */
+.mode-badge {
+  margin-left: 10px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  vertical-align: middle;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+.mode-badge.mode-self_add {
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--accent-blue, #58a6ff);
+}
+.mode-badge.mode-inherit {
+  background: rgba(210, 153, 34, 0.15);
+  color: #d29922;
+}
+
+/* Mode switch (right side of action-bar) */
+.mode-switch-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-right: 4px;
+  white-space: nowrap;
+}
+
+.mode-tabs {
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+.mode-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 4px;
+  white-space: nowrap;
+  outline: none;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+.mode-tab:not(.active):hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.mode-tab.active {
+  background: color-mix(in srgb, var(--accent-blue) 18%, transparent);
+  color: var(--accent-blue);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-blue) 35%, transparent);
+}
+.mode-tab:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 55%, transparent);
+}
+.mode-tab.active:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 70%, transparent);
+}
+.mode-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.source-divider {
+  color: var(--text-muted);
+  margin: 0 4px;
+  user-select: none;
+}
+.source-label {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.source-name {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.badge-readonly {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: var(--text-muted);
+  color: var(--bg-primary);
+  border-radius: 4px;
+  font-family: inherit;
+}
+
+.readonly-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* 继承模式下显示静态序号 */
+.sort-index {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* SortableJS drag states */

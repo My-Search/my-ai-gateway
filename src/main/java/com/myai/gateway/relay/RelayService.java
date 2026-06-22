@@ -262,9 +262,6 @@ public class RelayService {
                     modelService.updateChannelModelLastUsed(candidate.getChannelModel().getId());
                     // 更新网关 API Key 最后使用时间
                     updateGatewayApiKeyLastUsed(authHeader);
-                    // 非流式：响应时间 ≈ TTFT，记录到自适应超时统计
-                    latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(),
-                            System.currentTimeMillis() - startTime);
                     String transformed = transformResponse(body, candidate, req, provider, false);
                     int[] usage = extractUsageFromProviderResponse(body);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(),
@@ -306,19 +303,34 @@ public class RelayService {
     private Mono<String> invokeCandidateWithRetries(String traceId, String authHeader, InternalRequest req,
                                                       RoutingCandidate candidate, String provider,
                                                       int retryIndex, int attempt, int maxAttempts) {
+        long attemptStartTime = System.currentTimeMillis();
         long timeoutMs = latencyTracker.getTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId());
         return callProviderNonStream(authHeader, req, candidate, provider)
+                .flatMap(body -> {
+                    // 空响应立即失败（不等 timeout），视为与超时同等级错误，触发重试/重路由
+                    if (body == null || body.isBlank()) {
+                        log.warn("候选返回空响应 - traceId={} attempt={}/{} channel={} model={} key={} (视为超时错误，触发重路由)",
+                                traceId, attempt, maxAttempts,
+                                candidate.getChannel().getName(),
+                                candidate.getChannelApiKey().getKeyName(),
+                                candidate.getChannelModel().getModelName());
+                        return Mono.error(new RuntimeException("Provider returned empty response, treated as timeout"));
+                    }
+                    return Mono.just(body);
+                })
                 .timeout(Duration.ofMillis(timeoutMs))
                 .doOnError(err -> {
-                    latencyTracker.recordTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId(), timeoutMs);
-                    log.warn("候选尝试 {}/{} 失败 channel={} key={} model={}: {}",
+                    long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
+                    log.warn("候选尝试 {}/{} 失败 channel={} key={} model={} (耗时 {}ms): {}",
                             attempt, maxAttempts,
                             candidate.getChannel().getName(),
                             candidate.getChannelApiKey().getKeyName(),
                             candidate.getChannelModel().getModelName(),
+                            attemptDurationMs,
                             err.getMessage());
                 })
                 .onErrorResume(err -> {
+                    long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
                     if (attempt < maxAttempts) {
                         // 重试前检查熔断：若已被其他并发请求熔断，跳过剩余重试，直接让外层重路由
                         if (isCandidateCircuitBroken(candidate)) {
@@ -328,11 +340,11 @@ public class RelayService {
                                     candidate.getChannelModel().getModelName(),
                                     attempt, err.getMessage());
                             logPhase(traceId, candidate, req, "retry",
-                                    "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）", retryIndex);
+                                    "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）", retryIndex, attemptDurationMs);
                             return Mono.error(err);
                         }
                         logPhase(traceId, candidate, req, "retry",
-                                "同一候选第 " + attempt + " 次失败，准备第 " + (attempt + 1) + " 次重试", retryIndex);
+                                "同一候选第 " + attempt + " 次失败，准备第 " + (attempt + 1) + " 次重试", retryIndex, attemptDurationMs);
                         return invokeCandidateWithRetries(traceId, authHeader, req, candidate, provider,
                                 retryIndex, attempt + 1, maxAttempts);
                     }
@@ -426,9 +438,6 @@ public class RelayService {
                     }
                 })
                 .doOnComplete(() -> {
-                    // 记录流式完成的总响应时间（从开始路由到流结束），而非 TTFT
-                    latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(),
-                            System.currentTimeMillis() - startTime);
                     int[] usage = streamUsageMap.remove(traceId);
                     int pt = usage != null ? usage[0] : 0;
                     int ct = usage != null ? usage[1] : 0;
@@ -524,6 +533,7 @@ public class RelayService {
                                                               RoutingCandidate candidate, String provider,
                                                               int retryIndex, int attempt, int maxAttempts,
                                                               boolean internalClient) {
+        long attemptStartTime = System.currentTimeMillis();
         long timeoutMs = latencyTracker.getTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId());
         log.info("开始调用流式候选 - traceId={} attempt={}/{} channel={} model={} key={} timeout={}ms",
                 traceId, attempt, maxAttempts,
@@ -534,15 +544,17 @@ public class RelayService {
         return callProviderStream(authHeader, req, candidate, provider, internalClient, traceId)
                 .timeout(Duration.ofMillis(timeoutMs))
                 .doOnError(err -> {
-                    latencyTracker.recordTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId(), timeoutMs);
-                    log.warn("流式候选尝试 {}/{} 失败 channel={} key={} model={}: {}",
+                    long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
+                    log.warn("流式候选尝试 {}/{} 失败 channel={} key={} model={} (耗时 {}ms): {}",
                             attempt, maxAttempts,
                             candidate.getChannel().getName(),
                             candidate.getChannelApiKey().getKeyName(),
                             candidate.getChannelModel().getModelName(),
+                            attemptDurationMs,
                             err.getMessage());
                 })
                 .onErrorResume(err -> {
+                    long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
                     if (attempt < maxAttempts) {
                         // 重试前检查熔断：若已被其他并发请求熔断，跳过剩余重试，直接让外层重路由
                         if (isCandidateCircuitBroken(candidate)) {
@@ -552,7 +564,7 @@ public class RelayService {
                                     candidate.getChannelModel().getModelName(),
                                     attempt, err.getMessage());
                             logPhase(traceId, candidate, req, "retry",
-                                    "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）", retryIndex);
+                                    "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）", retryIndex, attemptDurationMs);
                             return Flux.error(err);
                         }
                         // 获取已累积的流式内容，携带到重试请求中
@@ -564,7 +576,7 @@ public class RelayService {
                                     traceId, attempt, maxAttempts, accumulatedContent.length());
                         }
                         logPhase(traceId, candidate, retryReq, "retry",
-                                "同一流式候选第 " + attempt + " 次失败，准备第 " + (attempt + 1) + " 次重试", retryIndex);
+                                "同一流式候选第 " + attempt + " 次失败，准备第 " + (attempt + 1) + " 次重试", retryIndex, attemptDurationMs);
                         // 仅内部客户端发送路由进度事件：候选内重试
                         Flux<SseEvent> routingRetry = internalClient
                                 ? Flux.just(new SseEvent(null, buildRoutingProgressJson(
@@ -1167,11 +1179,25 @@ public class RelayService {
      */
     private void logPhase(String traceId, RoutingCandidate candidate, InternalRequest req,
                           String phase, String message, int retryIndex) {
+        logPhase(traceId, candidate, req, phase, message, retryIndex, null);
+    }
+
+    /**
+     * 记录请求阶段日志（带响应时间）——用于"该次尝试耗时"已知但尚未走到 success/fail 的场景，
+     * 例如：候选内重试失败时，把本次尝试的耗时写入 retry 日志，让前端能展示每次真实请求的用时。
+     */
+    private void logPhase(String traceId, RoutingCandidate candidate, InternalRequest req,
+                          String phase, String message, int retryIndex, Long responseTimeMs) {
         String apiKeyName = candidate != null ? candidate.getChannelApiKey().getKeyName() : null;
         String modelName = req != null ? req.getModel() : null;
         String channelModelName = candidate != null ? candidate.getChannelModel().getModelName() : null;
         String channelName = candidate != null ? candidate.getChannel().getName() : null;
-        requestLogService.log(traceId, apiKeyName, modelName, channelModelName, channelName, phase, message, retryIndex);
+        if (responseTimeMs != null) {
+            requestLogService.logWithResponseTime(traceId, apiKeyName, modelName, channelModelName, channelName,
+                    phase, message, retryIndex, responseTimeMs);
+        } else {
+            requestLogService.log(traceId, apiKeyName, modelName, channelModelName, channelName, phase, message, retryIndex);
+        }
     }
 
     /**

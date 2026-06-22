@@ -42,7 +42,7 @@
             <template v-if="group.logs[0].apiKeyName">{{ group.logs[0].apiKeyName }}/</template>
             <template v-if="group.logs[0].channelModelName">{{ group.logs[0].channelModelName }}</template>
             <template v-else-if="group.logs[0].modelName">{{ group.logs[0].modelName }}</template>
-            <template v-if="group.logs[group.logs.length - 1].responseTimeMs != null && group.logs[group.logs.length - 1].responseTimeMs > 0"> · {{ group.logs[group.logs.length - 1].responseTimeMs }}ms</template>
+            {{ groupDurationText(group) }}
           </span>
           <span class="log-time">{{ formatTime(group.logs[group.logs.length - 1].createdAt) }}</span>
           <div v-if="group.logs.some(l => l.errorMessage)" class="log-error">{{ group.logs.filter(l => l.errorMessage).map(l => l.errorMessage).join('\n') }}</div>
@@ -241,6 +241,21 @@ function groupLogs(logs: RequestLog[]) {
     }
   }
   return groups
+}
+
+/**
+ * 获取 group 的耗时展示文本。
+ * 后端会在 retry 失败时记录本次尝试的耗时、在 success/fail 时记录最后一次的耗时，
+ * 因此一个 group 内可能有 1..N 个耗时值：单一 phase 行展示 1 个，合并的 (xN) retry 行展示 N 个，
+ * 用 " / " 拼接以体现"每次真实模型请求的用时"。
+ * 无耗时数据时返回空字符串（模板中可直接 {{ }} 插值，无需额外 v-if 判断）。
+ */
+function groupDurationText(group: { logs: RequestLog[] }): string {
+  const durations = group.logs
+    .filter(l => l.responseTimeMs != null && l.responseTimeMs > 0)
+    .map(l => l.responseTimeMs as number)
+  if (durations.length === 0) return ''
+  return ' · ' + durations.map(d => d + 'ms').join(' / ')
 }
 
 const groupedTraceLogs = computed(() => {

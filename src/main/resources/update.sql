@@ -279,3 +279,23 @@ ALTER TABLE channel_models ADD COLUMN source TEXT DEFAULT 'manual';
 UPDATE request_logs SET response_time_ms = NULL WHERE phase NOT IN ('success', 'fail') AND response_time_ms = 0;
 -- 同时清理 success/fail 记录中可能误存的 0（真实响应时间至少 >0ms）
 UPDATE request_logs SET response_time_ms = NULL WHERE phase IN ('success', 'fail') AND response_time_ms = 0;
+
+-- ========================================
+-- VERSION:v1.13.0
+-- 模型关联支持「继承」模式：入口模型可继承另一个入口模型的关联
+-- ========================================
+
+-- rel_mode: 'self_add' (默认) | 'inherit'
+--   self_add: 使用本模型在 model_channel_rels 中的自有关联
+--   inherit: 关联列表实时映射自 inherit_from_model_id 所指向的源模型（只读）
+ALTER TABLE models ADD COLUMN rel_mode TEXT DEFAULT 'self_add';
+
+-- inherit_from_model_id: 仅在 rel_mode='inherit' 时有效，指向被继承的源入口模型
+-- 注意：使用外键约束时 SQLite 会强制引用完整性，源模型被删除需由应用层处理（阻止删除）
+ALTER TABLE models ADD COLUMN inherit_from_model_id INTEGER;
+
+-- 为历史数据确保默认模式为 self_add
+UPDATE models SET rel_mode = 'self_add' WHERE rel_mode IS NULL;
+
+-- 为继承查询添加索引（按源模型查找继承者）
+CREATE INDEX IF NOT EXISTS idx_models_inherit_from ON models(inherit_from_model_id);

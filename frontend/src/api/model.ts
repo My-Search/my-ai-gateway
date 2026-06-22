@@ -1,5 +1,8 @@
 import http from './index'
 
+/** 关联模式：自添加（手动配置） / 继承（从源模型实时映射，只读） */
+export type RelMode = 'self_add' | 'inherit'
+
 export interface CustomModel {
   id?: number
   modelName: string
@@ -7,6 +10,10 @@ export interface CustomModel {
   strategy?: string
   enabled: number
   createdAt?: string
+  /** 关联模式：self_add | inherit，默认 self_add */
+  relMode?: RelMode
+  /** 继承源模型 ID（仅在 relMode='inherit' 时有值） */
+  inheritFromModelId?: number | null
 }
 
 export interface ModelChannelRel {
@@ -56,19 +63,43 @@ export const modelApi = {
     return http.delete<{ success: boolean }>(`/models/${id}`)
   },
   getRels(id: number) {
-    return http.get<{ model: CustomModel; rels: ModelChannelRel[]; availableModels: any[] }>(`/models/${id}/rels`)
+    return http.get<{
+      model: CustomModel
+      rels: ModelChannelRel[]
+      availableModels: any[]
+      /** 继承模式下，源模型名（用于展示） */
+      inheritFromModelName?: string | null
+    }>(`/models/${id}/rels`)
+  },
+  /**
+   * 获取可作为继承源的入口模型（不含自身）
+   */
+  getInheritableModels(id: number) {
+    return http.get<CustomModel[]>(`/models/${id}/inheritable`)
+  },
+  /**
+   * 切换关联模式。
+   * @param id 目标模型 ID
+   * @param mode self_add | inherit
+   * @param sourceModelId 仅 mode='inherit' 时必填
+   */
+  setRelMode(id: number, mode: RelMode, sourceModelId?: number) {
+    return http.put<{ success: boolean; model?: CustomModel; error?: string }>(
+      `/models/${id}/rel-mode`,
+      { mode, sourceModelId }
+    )
   },
   batchAddRels(modelId: number, channelModelIds: number[], sortedRelIds?: string) {
-    return http.post<{ success: boolean; count: number }>(`/models/${modelId}/rels`, { channelModelIds, sortedRelIds })
+    return http.post<{ success: boolean; count: number; error?: string }>(`/models/${modelId}/rels`, { channelModelIds, sortedRelIds })
   },
   removeRel(relId: number) {
-    return http.delete<{ success: boolean }>(`/models/rels/${relId}`)
+    return http.delete<{ success: boolean; error?: string }>(`/models/rels/${relId}`)
   },
   updateRelSort(relId: number, sortOrder: number) {
-    return http.put<{ success: boolean }>(`/models/rels/${relId}/sort`, { sortOrder })
+    return http.put<{ success: boolean; error?: string }>(`/models/rels/${relId}/sort`, { sortOrder })
   },
   batchUpdateSortOrders(sortedRelIds: number[]) {
-    return http.put<{ success: boolean }>('/models/rels/sort', { sortedRelIds })
+    return http.put<{ success: boolean; error?: string }>('/models/rels/sort', { sortedRelIds })
   },
   getCircuitBreaker(id: number) {
     return http.get<{ model: CustomModel; config: CircuitBreakerConfig }>(`/models/${id}/circuit-breaker`)
