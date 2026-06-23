@@ -274,6 +274,9 @@ public class RelayService {
                     modelService.updateChannelModelLastUsed(candidate.getChannelModel().getId());
                     // 更新网关 API Key 最后使用时间
                     updateGatewayApiKeyLastUsed(authHeader);
+                    // 非流式：响应时间 ≈ TTFT，记录到自适应超时统计
+                    latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(),
+                            System.currentTimeMillis() - startTime);
                     String transformed = transformResponse(body, candidate, req, provider, false);
                     int[] usage = extractUsageFromProviderResponse(body);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(),
@@ -289,6 +292,15 @@ public class RelayService {
                     return Mono.just(transformed);
                 })
                 .onErrorResume(err -> {
+                    // 400 请求体格式不正确：不触发熔断，直接重路由到下一候选
+                    if (err instanceof NonRetryableProviderException) {
+                        log.warn("候选返回400（不触发熔断，直接重路由）channel={} model={} key={}",
+                                candidate.getChannel().getName(),
+                                candidate.getChannelModel().getModelName(),
+                                candidate.getChannelApiKey().getKeyName());
+                        remaining.remove(candidate);
+                        return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, err.getMessage());
+                    }
                     // 仅在重试耗尽时触发熔断（doOnError会在每次重试都触发）
                     log.warn("候选失败（重试耗尽）channel={} key={} model={} (已重试{}次): {}",
                             candidate.getChannel().getName(),
@@ -333,6 +345,7 @@ public class RelayService {
                 .timeout(Duration.ofMillis(timeoutMs))
                 .doOnError(err -> {
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
+                    latencyTracker.recordTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId(), timeoutMs);
                     log.warn("候选尝试 {}/{} 失败 channel={} key={} model={} (耗时 {}ms): {}",
                             attempt, maxAttempts,
                             candidate.getChannel().getName(),
@@ -343,6 +356,14 @@ public class RelayService {
                 })
                 .onErrorResume(err -> {
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
+                    // 400 请求体格式不正确：不重试、不熔断，直接让外层重路由
+                    if (err instanceof NonRetryableProviderException) {
+                        log.warn("候选返回400（跳过候选内重试）channel={} model={} key={}",
+                                candidate.getChannel().getName(),
+                                candidate.getChannelModel().getModelName(),
+                                candidate.getChannelApiKey().getKeyName());
+                        return Mono.error(err);
+                    }
                     if (attempt < maxAttempts) {
                         // 重试前检查熔断：若已被其他并发请求熔断，跳过剩余重试，直接让外层重路由
                         if (isCandidateCircuitBroken(candidate)) {
@@ -488,6 +509,9 @@ public class RelayService {
                     modelService.updateChannelModelLastUsed(candidate.getChannelModel().getId());
                     // 更新网关 API Key 最后使用时间
                     updateGatewayApiKeyLastUsed(authHeader);
+                    // 记录流式完成的总响应时间（从开始路由到流结束），而非 TTFT
+                    latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(),
+                            System.currentTimeMillis() - startTime);
                     // 清理流式内容累积
                     streamContentManager.clearContent(traceId);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(),
@@ -509,6 +533,17 @@ public class RelayService {
                     return Flux.error(new RuntimeException("流式候选返回空响应"));
                 }))
                 .onErrorResume(err -> {
+                    // 400 请求体格式不正确：不触发熔断，直接重路由（不累积流式内容）
+                    if (err instanceof NonRetryableProviderException) {
+                        log.warn("流式候选返回400（不触发熔断，直接重路由）channel={} model={} key={}",
+                                candidate.getChannel().getName(),
+                                candidate.getChannelModel().getModelName(),
+                                candidate.getChannelApiKey().getKeyName());
+                        streamContentManager.clearContent(traceId);
+                        remaining.remove(candidate);
+                        return Flux.concat(
+                                tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient, err.getMessage()));
+                    }
                     // 仅在重试耗尽时触发熔断（doOnError会在每次重试都触发）
                     log.warn("流式候选失败（重试耗尽）channel={} key={} model={} (已重试{}次): {}",
                             candidate.getChannel().getName(),
@@ -573,6 +608,7 @@ public class RelayService {
                 .timeout(Duration.ofMillis(timeoutMs))
                 .doOnError(err -> {
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
+                    latencyTracker.recordTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId(), timeoutMs);
                     log.warn("流式候选尝试 {}/{} 失败 channel={} key={} model={} (耗时 {}ms): {}",
                             attempt, maxAttempts,
                             candidate.getChannel().getName(),
@@ -583,6 +619,14 @@ public class RelayService {
                 })
                 .onErrorResume(err -> {
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
+                    // 400 请求体格式不正确：不重试，直接让外层重路由
+                    if (err instanceof NonRetryableProviderException) {
+                        log.warn("流式候选返回400（跳过候选内重试）channel={} model={} key={}",
+                                candidate.getChannel().getName(),
+                                candidate.getChannelModel().getModelName(),
+                                candidate.getChannelApiKey().getKeyName());
+                        return Flux.error(err);
+                    }
                     if (attempt < maxAttempts) {
                         // 重试前检查熔断：若已被其他并发请求熔断，跳过剩余重试，直接让外层重路由
                         if (isCandidateCircuitBroken(candidate)) {
@@ -639,15 +683,20 @@ public class RelayService {
                 .headers(h -> headers.forEach(h::add))
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(BodyInserters.fromValue(providerReqBody))
-                .exchangeToMono(resp -> resp.bodyToMono(String.class)
-                        .flatMap(body -> {
-                            if (resp.statusCode().is2xxSuccessful()) {
-                                return Mono.just(body);
-                            }
-                            log.warn("Provider returned error status {} for channel={} keyId={}",
-                                    resp.statusCode(), candidate.getChannel().getId(), candidate.getChannelApiKey().getId());
-                            return Mono.error(new RuntimeException("Provider error: " + resp.statusCode() + " body: " + body));
-                        }));
+                .exchangeToMono(resp -> {
+                    if (resp.statusCode().is2xxSuccessful()) {
+                        return resp.bodyToMono(String.class).flatMap(Mono::just);
+                    }
+                    return resp.bodyToMono(String.class).flatMap(body -> {
+                        log.warn("Provider returned error status {} for channel={} keyId={}",
+                                resp.statusCode(), candidate.getChannel().getId(), candidate.getChannelApiKey().getId());
+                        // 400 请求体格式不正确：不重试、不熔断，直接重路由
+                        if (resp.statusCode().value() == 400) {
+                            return Mono.error(new NonRetryableProviderException(400, body));
+                        }
+                        return Mono.error(new RuntimeException("Provider error: " + resp.statusCode() + " body: " + body));
+                    });
+                });
     }
 
     /**
@@ -687,6 +736,10 @@ public class RelayService {
                                 .flatMapMany(body -> {
                                     log.warn("Provider stream error status {} for channel={} keyId={}",
                                             resp.statusCode(), candidate.getChannel().getId(), candidate.getChannelApiKey().getId());
+                                    // 400 请求体格式不正确：不重试、不熔断，直接重路由
+                                    if (resp.statusCode().value() == 400) {
+                                        return Flux.error(new NonRetryableProviderException(400, body));
+                                    }
                                     return Flux.error(new RuntimeException("Provider stream error: " + resp.statusCode() + " body: " + body));
                                 });
                     }
