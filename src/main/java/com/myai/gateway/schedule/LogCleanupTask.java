@@ -61,12 +61,12 @@ public class LogCleanupTask {
         try {
             retentionDays = Integer.parseInt(daysStr);
             if (retentionDays <= 0) {
-                log.warn("日志保留天数配置无效（{}），使用默认值 30 天", daysStr);
-                retentionDays = 30;
+                log.warn("日志保留天数配置无效（{}），使用默认值 7 天", daysStr);
+                retentionDays = 7;
             }
         } catch (NumberFormatException e) {
-            log.warn("日志保留天数配置格式错误（{}），使用默认值 30 天", daysStr);
-            retentionDays = 30;
+            log.warn("日志保留天数配置格式错误（{}），使用默认值 7 天", daysStr);
+            retentionDays = 7;
         }
 
         // 3. 执行清理

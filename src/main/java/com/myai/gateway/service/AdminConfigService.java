@@ -166,7 +166,7 @@ public class AdminConfigService {
     public Map<String, String> getSystemConfig() {
         String retentionDays = getValueByKey(KEY_LOG_RETENTION_DAYS);
         String cleanupEnabled = getValueByKey(KEY_LOG_CLEANUP_ENABLED);
-        if (retentionDays == null) retentionDays = "30";
+        if (retentionDays == null) retentionDays = "7";
         if (cleanupEnabled == null) cleanupEnabled = "1";
 
         Map<String, String> config = new LinkedHashMap<>();

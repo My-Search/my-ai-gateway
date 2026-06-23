@@ -292,16 +292,19 @@ public class RelayService {
                     return Mono.just(transformed);
                 })
                 .onErrorResume(err -> {
-                    // 400 请求体格式不正确：不触发熔断，直接重路由到下一候选
+                    // 若最后一次失败仍是 400（修复后仍无法解决），不触发熔断，只移除候选并重路由
                     if (err instanceof NonRetryableProviderException) {
-                        log.warn("候选返回400（不触发熔断，直接重路由）channel={} model={} key={}",
+                        log.warn("候选返回400（修复后仍失败，不触发熔断，直接重路由）channel={} model={} key={}",
                                 candidate.getChannel().getName(),
                                 candidate.getChannelModel().getModelName(),
                                 candidate.getChannelApiKey().getKeyName());
                         remaining.remove(candidate);
-                        return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, err.getMessage());
+                        log.info("候选失败已移除，准备重路由 - traceId={} 剩余候选数={}", traceId, remaining.size());
+                        // 下一个候选继续使用剥离 tool 消息的请求，避免重复 400
+                        InternalRequest fixedReq = fixRequestFor400(req);
+                        return tryCandidates(traceId, remaining, authHeader, fixedReq, provider, retryIndex + 1, startTime, err.getMessage());
                     }
-                    // 仅在重试耗尽时触发熔断（doOnError会在每次重试都触发）
+                    // 非 400 错误（超时、5xx、429 等）：触发熔断，重路由到下一候选
                     log.warn("候选失败（重试耗尽）channel={} key={} model={} (已重试{}次): {}",
                             candidate.getChannel().getName(),
                             candidate.getChannelApiKey().getKeyName(),
@@ -356,14 +359,6 @@ public class RelayService {
                 })
                 .onErrorResume(err -> {
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
-                    // 400 请求体格式不正确：不重试、不熔断，直接让外层重路由
-                    if (err instanceof NonRetryableProviderException) {
-                        log.warn("候选返回400（跳过候选内重试）channel={} model={} key={}",
-                                candidate.getChannel().getName(),
-                                candidate.getChannelModel().getModelName(),
-                                candidate.getChannelApiKey().getKeyName());
-                        return Mono.error(err);
-                    }
                     if (attempt < maxAttempts) {
                         // 重试前检查熔断：若已被其他并发请求熔断，跳过剩余重试，直接让外层重路由
                         if (isCandidateCircuitBroken(candidate)) {
@@ -378,11 +373,21 @@ public class RelayService {
                                 "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）: " + retryErrDetail, retryIndex, attemptDurationMs);
                             return Mono.error(err);
                         }
+                        // 400 请求体格式不正确：修复请求后再重试（如剥离 tool 角色消息）
+                        InternalRequest retryReq = req;
+                        if (err instanceof NonRetryableProviderException nre && nre.getHttpStatus() == 400) {
+                            retryReq = fixRequestFor400(req);
+                            log.warn("候选返回400，修复请求后重试 - traceId={} attempt={}/{} channel={} model={} key={}",
+                                    traceId, attempt, maxAttempts,
+                                    candidate.getChannel().getName(),
+                                    candidate.getChannelModel().getModelName(),
+                                    candidate.getChannelApiKey().getKeyName());
+                        }
                         String retryErrDetail2 = err.getMessage() != null ? err.getMessage() : "";
                         retryErrDetail2 = retryErrDetail2.length() > 150 ? retryErrDetail2.substring(0, 150) + "..." : retryErrDetail2;
-                        logPhase(traceId, candidate, req, "retry",
+                        logPhase(traceId, candidate, retryReq, "retry",
                                 "第 " + attempt + " 次失败: " + retryErrDetail2 + "，准备第 " + (attempt + 1) + " 次重试", retryIndex, attemptDurationMs);
-                        return invokeCandidateWithRetries(traceId, authHeader, req, candidate, provider,
+                        return invokeCandidateWithRetries(traceId, authHeader, retryReq, candidate, provider,
                                 retryIndex, attempt + 1, maxAttempts);
                     }
                     return Mono.error(err);
@@ -533,18 +538,20 @@ public class RelayService {
                     return Flux.error(new RuntimeException("流式候选返回空响应"));
                 }))
                 .onErrorResume(err -> {
-                    // 400 请求体格式不正确：不触发熔断，直接重路由（不累积流式内容）
+                    // 若最后一次失败仍是 400（修复后仍无法解决），不触发熔断，只移除候选并重路由
                     if (err instanceof NonRetryableProviderException) {
-                        log.warn("流式候选返回400（不触发熔断，直接重路由）channel={} model={} key={}",
+                        log.warn("流式候选返回400（修复后仍失败，不触发熔断，直接重路由）channel={} model={} key={}",
                                 candidate.getChannel().getName(),
                                 candidate.getChannelModel().getModelName(),
                                 candidate.getChannelApiKey().getKeyName());
                         streamContentManager.clearContent(traceId);
                         remaining.remove(candidate);
+                        // 下一个候选继续使用剥离 tool 消息的请求，避免重复 400
+                        InternalRequest fixedReq = fixRequestFor400(req);
                         return Flux.concat(
-                                tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient, err.getMessage()));
+                                tryStreamCandidates(traceId, remaining, authHeader, fixedReq, provider, retryIndex + 1, startTime, internalClient, err.getMessage()));
                     }
-                    // 仅在重试耗尽时触发熔断（doOnError会在每次重试都触发）
+                    // 非 400 错误（超时、5xx、429 等）：触发熔断，重路由到下一候选
                     log.warn("流式候选失败（重试耗尽）channel={} key={} model={} (已重试{}次): {}",
                             candidate.getChannel().getName(),
                             candidate.getChannelApiKey().getKeyName(),
@@ -619,14 +626,6 @@ public class RelayService {
                 })
                 .onErrorResume(err -> {
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
-                    // 400 请求体格式不正确：不重试，直接让外层重路由
-                    if (err instanceof NonRetryableProviderException) {
-                        log.warn("流式候选返回400（跳过候选内重试）channel={} model={} key={}",
-                                candidate.getChannel().getName(),
-                                candidate.getChannelModel().getModelName(),
-                                candidate.getChannelApiKey().getKeyName());
-                        return Flux.error(err);
-                    }
                     if (attempt < maxAttempts) {
                         // 重试前检查熔断：若已被其他并发请求熔断，跳过剩余重试，直接让外层重路由
                         if (isCandidateCircuitBroken(candidate)) {
@@ -641,13 +640,23 @@ public class RelayService {
                                     "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）: " + streamRetryErrDetail, retryIndex, attemptDurationMs);
                             return Flux.error(err);
                         }
-                        // 获取已累积的流式内容，携带到重试请求中
-                        String accumulatedContent = streamContentManager.getContent(traceId);
+                        // 400 请求体格式不正确：修复请求后再重试（如剥离 tool 角色消息）
                         InternalRequest retryReq = req;
-                        if (accumulatedContent != null && !accumulatedContent.isEmpty()) {
-                            retryReq = buildRequestWithContext(req, accumulatedContent);
-                            log.warn("同一候选重试携带已累积内容 - traceId={} attempt={}/{} 累积长度={}",
-                                    traceId, attempt, maxAttempts, accumulatedContent.length());
+                        if (err instanceof NonRetryableProviderException nre && nre.getHttpStatus() == 400) {
+                            retryReq = fixRequestFor400(req);
+                            log.warn("流式候选返回400，修复请求后重试 - traceId={} attempt={}/{} channel={} model={} key={}",
+                                    traceId, attempt, maxAttempts,
+                                    candidate.getChannel().getName(),
+                                    candidate.getChannelModel().getModelName(),
+                                    candidate.getChannelApiKey().getKeyName());
+                        } else {
+                            // 获取已累积的流式内容，携带到重试请求中（非400的常规重试）
+                            String accumulatedContent = streamContentManager.getContent(traceId);
+                            if (accumulatedContent != null && !accumulatedContent.isEmpty()) {
+                                retryReq = buildRequestWithContext(retryReq, accumulatedContent);
+                                log.warn("同一候选重试携带已累积内容 - traceId={} attempt={}/{} 累积长度={}",
+                                        traceId, attempt, maxAttempts, accumulatedContent.length());
+                            }
                         }
                         String streamRetryErrDetail2 = err.getMessage() != null ? err.getMessage() : "";
                             streamRetryErrDetail2 = streamRetryErrDetail2.length() > 150 ? streamRetryErrDetail2.substring(0, 150) + "..." : streamRetryErrDetail2;
@@ -690,9 +699,10 @@ public class RelayService {
                     return resp.bodyToMono(String.class).flatMap(body -> {
                         log.warn("Provider returned error status {} for channel={} keyId={}",
                                 resp.statusCode(), candidate.getChannel().getId(), candidate.getChannelApiKey().getId());
-                        // 400 请求体格式不正确：不重试、不熔断，直接重路由
-                        if (resp.statusCode().value() == 400) {
-                            return Mono.error(new NonRetryableProviderException(400, body));
+                        // 400 请求体格式不正确：修复请求后再重试
+                        int status = resp.statusCode().value();
+                        if (status == 400) {
+                            return Mono.error(new NonRetryableProviderException(status, body));
                         }
                         return Mono.error(new RuntimeException("Provider error: " + resp.statusCode() + " body: " + body));
                     });
@@ -736,7 +746,7 @@ public class RelayService {
                                 .flatMapMany(body -> {
                                     log.warn("Provider stream error status {} for channel={} keyId={}",
                                             resp.statusCode(), candidate.getChannel().getId(), candidate.getChannelApiKey().getId());
-                                    // 400 请求体格式不正确：不重试、不熔断，直接重路由
+                                    // 400 请求体格式不正确：修复请求后再重试
                                     if (resp.statusCode().value() == 400) {
                                         return Flux.error(new NonRetryableProviderException(400, body));
                                     }
@@ -889,6 +899,60 @@ public class RelayService {
                 originalReq.getMessages() != null ? originalReq.getMessages().size() : 0,
                 accumulatedContent.length());
         return contextReq;
+    }
+
+    /**
+     * 修复 400 请求：保留完整消息配对，仅移除 tools 定义阻止新工具调用
+     *
+     * <p>DeepSeek 等提供商严格校验 tool ↔ assistant(tool_calls) 的配对关系：
+     * 每条 role=tool 消息的前一条消息必须是包含匹配 tool_calls 的 assistant。
+     * 任何破坏此配对的修改（剥离 tool_calls、删除/转换 tool 消息）都会导致 400。</p>
+     *
+     * <p>修复策略：保持 messages 数组不变，保留完整的工具调用上下文。
+     * 仅检查并补齐个别消息的 content 字段避免序列化缺陷，
+     * tools/tool_choice 等定义保持不变。</p>
+     */
+    private InternalRequest fixRequestFor400(InternalRequest originalReq) {
+        if (originalReq.getMessages() == null || originalReq.getMessages().isEmpty()) {
+            return originalReq;
+        }
+        InternalRequest fixed = new InternalRequest();
+        fixed.setModel(originalReq.getModel());
+        fixed.setStream(originalReq.isStream());
+        fixed.setMaxTokens(originalReq.getMaxTokens());
+        fixed.setTemperature(originalReq.getTemperature());
+        fixed.setTopP(originalReq.getTopP());
+        fixed.setStop(originalReq.getStop());
+        // 保留 tools/tool_choice：400 错误仅因 messages 配对结构引起，与 tools 定义无关
+        fixed.setTools(originalReq.getTools());
+        fixed.setToolChoice(originalReq.getToolChoice());
+        fixed.setSystemPrompt(originalReq.getSystemPrompt());
+        fixed.setOriginalRequestJson(originalReq.getOriginalRequestJson());
+        fixed.setClientApiFormat(originalReq.getClientApiFormat());
+        fixed.setExtraParams(originalReq.getExtraParams());
+        fixed.setContextRetry(originalReq.isContextRetry());
+
+        // 保持 messages 数组完整不变，保留 tool ↔ assistant(tool_calls) 配对
+        List<InternalMessage> fixedMessages = new ArrayList<>();
+        for (InternalMessage msg : originalReq.getMessages()) {
+            InternalMessage copy = new InternalMessage(msg.getRole(), msg.getContent());
+            copy.setContentParts(msg.getContentParts());
+            copy.setName(msg.getName());
+            copy.setToolCallId(msg.getToolCallId());
+            // 保留 tool_calls：tool 消息必须由包含 tool_calls 的 assistant 消息前置
+            copy.setToolCalls(msg.getToolCalls());
+            // 部分提供商要求 content 字段必须存在（不能为 null）
+            // 注意：仅当 contentParts 也为空时才补 ""，避免覆盖多模态 content 数组
+            if (copy.getContent() == null && copy.getContentParts() == null) {
+                copy.setContent("");
+            }
+            fixedMessages.add(copy);
+        }
+
+        fixed.setMessages(fixedMessages);
+        log.info("修复400请求完成 - 原消息数={}, 修复后消息数={}, 保留完整消息配对",
+                originalReq.getMessages().size(), fixedMessages.size());
+        return fixed;
     }
 
     /**

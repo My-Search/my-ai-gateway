@@ -306,6 +306,6 @@ CREATE INDEX IF NOT EXISTS idx_models_inherit_from ON models(inherit_from_model_
 -- ========================================
 
 -- 日志保留天数（默认30天）
-INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('log_retention_days', '30', '日志保留天数，超过此天数的日志将被自动清理');
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('log_retention_days', '7', '日志保留天数，超过此天数的日志将被自动清理');
 -- 日志定时清理开关（1=开启，0=关闭）
 INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('log_cleanup_enabled', '1', '日志定时清理开关，1=开启，0=关闭');
