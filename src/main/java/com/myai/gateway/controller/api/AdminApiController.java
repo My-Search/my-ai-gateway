@@ -981,6 +981,72 @@ public class AdminApiController {
         return emitter;
     }
 
+    // ==================== System Config ====================
+
+    /**
+     * 获取系统配置
+     * <p>
+     * 返回所有系统级别配置项，包括日志管理、定时任务等。
+     * </p>
+     */
+    @GetMapping(value = "/config/system", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> getSystemConfig() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
+        result.put("data", adminConfigService.getSystemConfig());
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 更新系统配置
+     * <p>
+     * 批量更新系统配置项，仅更新传入的 key。
+     * </p>
+     * 请求体示例：
+     * <pre>
+     * {
+     *   "log_retention_days": "30",
+     *   "log_cleanup_enabled": "1"
+     * }
+     * </pre>
+     */
+    @PutMapping(value = "/config/system", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> updateSystemConfig(@RequestBody Map<String, String> body) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            // 校验参数
+            if (body.containsKey(AdminConfigService.KEY_LOG_RETENTION_DAYS)) {
+                String days = body.get(AdminConfigService.KEY_LOG_RETENTION_DAYS);
+                int val = Integer.parseInt(days);
+                if (val < 1 || val > 365) {
+                    result.put("success", false);
+                    result.put("error", "日志保留天数必须在 1-365 之间");
+                    return ResponseEntity.ok(result);
+                }
+            }
+            if (body.containsKey(AdminConfigService.KEY_LOG_CLEANUP_ENABLED)) {
+                String val = body.get(AdminConfigService.KEY_LOG_CLEANUP_ENABLED);
+                if (!"0".equals(val) && !"1".equals(val)) {
+                    result.put("success", false);
+                    result.put("error", "清理开关值无效，必须为 0 或 1");
+                    return ResponseEntity.ok(result);
+                }
+            }
+
+            adminConfigService.updateSystemConfig(body);
+            result.put("success", true);
+            result.put("data", adminConfigService.getSystemConfig());
+        } catch (NumberFormatException e) {
+            result.put("success", false);
+            result.put("error", "日志保留天数必须为有效数字");
+        } catch (Exception e) {
+            log.warn("更新系统配置失败", e);
+            result.put("success", false);
+            result.put("error", "更新失败：" + e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
     // ==================== Helpers ====================
 
     private List<ChannelApiKey> parseApiKeysJson(String json) {

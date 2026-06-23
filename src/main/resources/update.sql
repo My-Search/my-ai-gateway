@@ -299,3 +299,13 @@ UPDATE models SET rel_mode = 'self_add' WHERE rel_mode IS NULL;
 
 -- 为继承查询添加索引（按源模型查找继承者）
 CREATE INDEX IF NOT EXISTS idx_models_inherit_from ON models(inherit_from_model_id);
+
+-- ========================================
+-- VERSION:v1.14.0
+-- 系统配置：日志管理配置项（保留天数、定时清理开关）
+-- ========================================
+
+-- 日志保留天数（默认30天）
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('log_retention_days', '30', '日志保留天数，超过此天数的日志将被自动清理');
+-- 日志定时清理开关（1=开启，0=关闭）
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('log_cleanup_enabled', '1', '日志定时清理开关，1=开启，0=关闭');

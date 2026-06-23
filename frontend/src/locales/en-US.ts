@@ -10,6 +10,7 @@ export default {
   'nav.logs': 'Request Logs',
   'nav.tools': 'Tools',
   'nav.playground': 'Model Test',
+  'nav.systemConfig': 'System Config',
   'nav.share': 'Share',
   'nav.subtitle': 'Personal AI Gateway',
 
@@ -403,6 +404,20 @@ export default {
   'share.invalidLink': 'Invalid share link',
   'share.copied': '{label} copied',
   'share.copyFailed': 'Copy failed',
+
+  /* ========== System Config ========== */
+  'systemConfig.title': 'System Config',
+  'systemConfig.logManagement': 'Log Management',
+  'systemConfig.logManagementDesc': 'Configure log retention duration and cleanup policy to prevent SQLite DB from growing too large.',
+  'systemConfig.cleanupEnabled': 'Scheduled Cleanup',
+  'systemConfig.cleanupEnabledHint': 'When enabled, expired logs will be automatically cleaned at 3:00 AM daily',
+  'systemConfig.retentionDays': 'Retention Days',
+  'systemConfig.retentionDaysHint': 'Logs older than this will be auto-cleaned (1-365 days)',
+  'systemConfig.retentionDaysInvalid': 'Retention days must be between 1-365',
+  'systemConfig.cleanupTime': 'Cleanup Time',
+  'systemConfig.cleanupTimeHint': 'Scheduled task execution time, not configurable',
+  'systemConfig.daily': 'Daily',
+  'systemConfig.saveSuccess': 'System config saved',
 
   /* ========== Errors ========== */
   'error.network': 'Network error',

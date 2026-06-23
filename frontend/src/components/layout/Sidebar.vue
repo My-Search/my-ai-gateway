@@ -30,6 +30,9 @@
       <router-link to="/admin/playground" @click="$emit('close')">
         <SvgIcon name="chat" :size="16" class="nav-icon" /> {{ t('nav.playground') }}
       </router-link>
+      <router-link to="/admin/setting/system" @click="$emit('close')">
+        <SvgIcon name="settings" :size="16" class="nav-icon" /> {{ t('nav.systemConfig') }}
+      </router-link>
     </nav>
 
   </aside>

@@ -134,6 +134,12 @@ const router = createRouter({
           name: 'playground',
           component: () => import('@/views/playground/Index.vue'),
           meta: { title: '模型测试' }
+        },
+        {
+          path: 'setting/system',
+          name: 'system-config',
+          component: () => import('@/views/setting/SystemConfig.vue'),
+          meta: { title: '系统配置' }
         }
       ]
     }

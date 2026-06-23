@@ -8,7 +8,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 管理员配置服务
@@ -19,6 +21,11 @@ public class AdminConfigService {
 
     public static final String KEY_USERNAME = "username";
     public static final String KEY_PASSWORD = "password";
+
+    /** 日志保留天数 */
+    public static final String KEY_LOG_RETENTION_DAYS = "log_retention_days";
+    /** 日志定时清理开关 */
+    public static final String KEY_LOG_CLEANUP_ENABLED = "log_cleanup_enabled";
 
     private final AdminConfigMapper adminConfigMapper;
 
@@ -145,6 +152,46 @@ public class AdminConfigService {
         }
 
         return storedUsername.equals(username) && verifyPassword(password, storedPassword);
+    }
+
+    /**
+     * 获取系统配置项（批量）
+     * <p>
+     * 返回所有系统运行相关的配置，如日志管理、通知等。
+     * 当前包含：日志保留天数、定时清理开关。
+     * </p>
+     *
+     * @return 系统配置项的 key-value 映射
+     */
+    public Map<String, String> getSystemConfig() {
+        String retentionDays = getValueByKey(KEY_LOG_RETENTION_DAYS);
+        String cleanupEnabled = getValueByKey(KEY_LOG_CLEANUP_ENABLED);
+        if (retentionDays == null) retentionDays = "30";
+        if (cleanupEnabled == null) cleanupEnabled = "1";
+
+        Map<String, String> config = new LinkedHashMap<>();
+        config.put(KEY_LOG_RETENTION_DAYS, retentionDays);
+        config.put(KEY_LOG_CLEANUP_ENABLED, cleanupEnabled);
+        return config;
+    }
+
+    /**
+     * 更新系统配置项
+     * <p>
+     * 支持批量更新多个配置项，仅更新传入的 key。
+     * </p>
+     *
+     * @param config 配置项的 key-value 映射
+     */
+    @Transactional
+    public void updateSystemConfig(Map<String, String> config) {
+        for (Map.Entry<String, String> entry : config.entrySet()) {
+            LambdaUpdateWrapper<AdminConfig> wrapper = new LambdaUpdateWrapper<AdminConfig>()
+                    .eq(AdminConfig::getConfigKey, entry.getKey())
+                    .set(AdminConfig::getConfigValue, entry.getValue())
+                    .set(AdminConfig::getUpdatedAt, LocalDateTime.now());
+            adminConfigMapper.update(null, wrapper);
+        }
     }
 
     /**

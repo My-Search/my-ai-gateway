@@ -10,6 +10,7 @@ export default {
   'nav.logs': '请求日志',
   'nav.tools': '工具',
   'nav.playground': '模型测试',
+  'nav.systemConfig': '系统配置',
   'nav.share': '分享页',
   'nav.subtitle': '个人统一网关',
 
@@ -403,6 +404,20 @@ export default {
   'share.invalidLink': '无效的分享链接',
   'share.copied': '{label}已复制',
   'share.copyFailed': '复制失败',
+
+  /* ========== System Config ========== */
+  'systemConfig.title': '系统配置',
+  'systemConfig.logManagement': '日志管理',
+  'systemConfig.logManagementDesc': '配置请求日志保留时间和定时清理策略，防止 SQLite 数据库文件过大。',
+  'systemConfig.cleanupEnabled': '定时清理',
+  'systemConfig.cleanupEnabledHint': '开启后，系统将在每天凌晨 3:00 自动清理过期日志',
+  'systemConfig.retentionDays': '日志保留天数',
+  'systemConfig.retentionDaysHint': '超过此天数的日志将被自动清理（1-365 天）',
+  'systemConfig.retentionDaysInvalid': '日志保留天数必须在 1-365 之间',
+  'systemConfig.cleanupTime': '清理时间',
+  'systemConfig.cleanupTimeHint': '定时任务执行时间，不可更改',
+  'systemConfig.daily': '每天',
+  'systemConfig.saveSuccess': '系统配置已保存',
 
   /* ========== Errors ========== */
   'error.network': '网络错误',
