@@ -53,6 +53,9 @@ public class InternalRequest {
     /** 是否由中途失败的流式内容拼接而成的上下文重试请求（用于日志标记） */
     private boolean contextRetry;
 
+    /** 思考强度（reasoning_effort），如 low/medium/high，null 表示不设置 */
+    private String reasoningEffort;
+
     public String getModel() { return model; }
     public void setModel(String model) { this.model = model; }
 
@@ -94,4 +97,7 @@ public class InternalRequest {
 
     public boolean isContextRetry() { return contextRetry; }
     public void setContextRetry(boolean contextRetry) { this.contextRetry = contextRetry; }
+
+    public String getReasoningEffort() { return reasoningEffort; }
+    public void setReasoningEffort(String reasoningEffort) { this.reasoningEffort = reasoningEffort; }
 }

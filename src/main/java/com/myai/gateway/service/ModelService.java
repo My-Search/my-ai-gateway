@@ -343,6 +343,24 @@ public class ModelService {
     }
 
     /**
+     * 更新关联的默认思考强度（reasoning_effort）
+     *
+     * @param relId 关联 ID
+     * @param reasoningEffort 思考强度值（null 表示清除默认值）
+     */
+    @Transactional
+    public void updateChannelRelReasoningEffort(Long relId, String reasoningEffort) {
+        ModelChannelRel rel = relMapper.selectById(relId);
+        if (rel == null) {
+            throw new RuntimeException("关联不存在");
+        }
+        assertSelfAddMode(rel.getModelId());
+        rel.setReasoningEffort(reasoningEffort);
+        relMapper.updateById(rel);
+        log.info("更新关联推理强度: relId={}, reasoningEffort={}", relId, reasoningEffort);
+    }
+
+    /**
      * 更新关联的排序顺序
      */
     @Transactional

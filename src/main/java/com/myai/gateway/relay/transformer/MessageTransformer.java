@@ -102,6 +102,11 @@ public class MessageTransformer {
             req.setTools(objectMapper.convertValue(json.get("tools"), List.class));
         }
 
+        // 解析 reasoning_effort（思考强度）
+        if (json.has("reasoning_effort")) {
+            req.setReasoningEffort(json.get("reasoning_effort").asText());
+        }
+
         return req;
     }
 
@@ -202,6 +207,11 @@ public class MessageTransformer {
             }
         }
         req.setMessages(messages);
+
+        // 解析 reasoning_effort（思考强度）
+        if (json.has("reasoning_effort")) {
+            req.setReasoningEffort(json.get("reasoning_effort").asText());
+        }
 
         // 解析 tools
         if (json.has("tools") && json.get("tools").isArray()) {
@@ -332,6 +342,11 @@ public class MessageTransformer {
 
         if (req.getToolChoice() != null) {
             root.set("tool_choice", objectMapper.valueToTree(req.getToolChoice()));
+        }
+
+        // 思考强度
+        if (req.getReasoningEffort() != null && !req.getReasoningEffort().isEmpty()) {
+            root.put("reasoning_effort", req.getReasoningEffort());
         }
 
         // 透传额外参数
@@ -493,6 +508,11 @@ public class MessageTransformer {
                     }
                 }
             }
+        }
+
+        // 思考强度
+        if (req.getReasoningEffort() != null && !req.getReasoningEffort().isEmpty()) {
+            root.put("reasoning_effort", req.getReasoningEffort());
         }
 
         if (req.getToolChoice() != null) {

@@ -103,6 +103,7 @@
             <th>{{ t('model.rels.channel') }}</th>
             <th>{{ t('model.rels.model') }}</th>
             <th>{{ t('model.rels.responseTime') }}</th>
+            <th>{{ t('model.rels.reasoningEffort') }}</th>
             <th>{{ t('model.rels.actions') }}</th>
           </tr>
         </thead>
@@ -127,12 +128,30 @@
               <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
             </td>
             <td>
+              <select
+                v-if="currentMode === 'self_add'"
+                class="form-control effort-select"
+                :value="rel.reasoningEffort ?? ''"
+                @change="updateEffort(rel, ($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">{{ t('model.rels.effortDefault') }}</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+                <option value="max">max</option>
+              </select>
+              <span v-else class="text-muted">
+                {{ rel.reasoningEffort ? effortLabel(rel.reasoningEffort) : '--' }}
+              </span>
+            </td>
+            <td>
               <button v-if="currentMode === 'self_add'" class="btn btn-sm btn-danger" @click="removeRel(rel)"><SvgIcon name="trash" :size="14" /> {{ t('model.rels.delete') }}</button>
               <span v-else class="text-muted">--</span>
             </td>
           </tr>
           <tr v-if="!rels.length">
-            <td colspan="5" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
+            <td colspan="6" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
           </tr>
         </tbody>
       </table>
@@ -196,6 +215,10 @@ const isSaving = ref(false)
 function formatRespTime(ms: number): string {
   if (ms >= 1000) return (ms / 1000).toFixed(1) + 's'
   return ms + 'ms'
+}
+
+function effortLabel(value: string): string {
+  return value // 直接显示原始值 low/medium/high/xhigh/max
 }
 
 /* ---------- Dialog state (common) ---------- */
@@ -376,6 +399,20 @@ function removeRel(rel: ModelChannelRel) {
       }
     }
   })
+}
+
+async function updateEffort(rel: ModelChannelRel, value: string) {
+  const effort = value || null
+  try {
+    const res = await modelApi.updateRelReasoningEffort(rel.id, effort)
+    if (res.data.success) {
+      rel.reasoningEffort = effort
+    } else {
+      openDialog({ title: t('error.updateFailed'), message: res.data.error || t('error.unknown') })
+    }
+  } catch (e: any) {
+    openDialog({ title: t('error.updateFailed'), message: e.message })
+  }
 }
 
 function initSortable() {
@@ -662,6 +699,19 @@ onMounted(async () => {
 
 .sortable-drag td {
   cursor: grabbing;
+}
+
+.effort-select {
+  font-size: 12px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  min-width: 90px;
+  max-width: 120px;
+}
+
+.effort-select:focus {
+  border-color: var(--accent-blue);
+  outline: none;
 }
 
 .drag-handle {

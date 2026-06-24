@@ -842,6 +842,13 @@ public class RelayService {
         String originalModel = req.getModel();
         req.setModel(candidate.getChannelModel().getModelName());
         try {
+            // 如果请求没有指定 reasoning_effort，使用关联上配置的默认值
+            if (req.getReasoningEffort() == null || req.getReasoningEffort().isEmpty()) {
+                String relEffort = candidate.getRel().getReasoningEffort();
+                if (relEffort != null && !relEffort.isEmpty()) {
+                    req.setReasoningEffort(relEffort);
+                }
+            }
             if ("anthropic".equals(provider)) {
                 return messageTransformer.buildAnthropicRequest(req);
             }
@@ -874,6 +881,7 @@ public class RelayService {
         contextReq.setOriginalRequestJson(originalReq.getOriginalRequestJson());
         contextReq.setClientApiFormat(originalReq.getClientApiFormat());
         contextReq.setExtraParams(originalReq.getExtraParams());
+        contextReq.setReasoningEffort(originalReq.getReasoningEffort());
 
         // 标记为上下文重试请求（中途失败后拼接）
         contextReq.setContextRetry(true);
@@ -931,6 +939,7 @@ public class RelayService {
         fixed.setClientApiFormat(originalReq.getClientApiFormat());
         fixed.setExtraParams(originalReq.getExtraParams());
         fixed.setContextRetry(originalReq.isContextRetry());
+        fixed.setReasoningEffort(originalReq.getReasoningEffort());
 
         // 保持 messages 数组完整不变，保留 tool ↔ assistant(tool_calls) 配对
         List<InternalMessage> fixedMessages = new ArrayList<>();

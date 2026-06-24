@@ -32,6 +32,8 @@ export interface ModelChannelRel {
   ttftMs?: number | null
   /** 样本数 */
   sampleCount?: number | null
+  /** 默认思考强度（reasoning_effort） */
+  reasoningEffort?: string | null
 }
 
 export interface CircuitBreakerConfig {
@@ -100,6 +102,9 @@ export const modelApi = {
   },
   batchUpdateSortOrders(sortedRelIds: number[]) {
     return http.put<{ success: boolean; error?: string }>('/models/rels/sort', { sortedRelIds })
+  },
+  updateRelReasoningEffort(relId: number, reasoningEffort: string | null) {
+    return http.put<{ success: boolean; error?: string }>(`/models/rels/${relId}/reasoning-effort`, { reasoningEffort })
   },
   getCircuitBreaker(id: number) {
     return http.get<{ model: CustomModel; config: CircuitBreakerConfig }>(`/models/${id}/circuit-breaker`)

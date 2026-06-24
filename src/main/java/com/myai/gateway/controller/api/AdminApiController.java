@@ -760,6 +760,32 @@ public class AdminApiController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * 更新关联的默认思考强度（reasoning_effort）
+     * PUT /admin/api/models/rels/{relId}/reasoning-effort
+     * 请求体: { "reasoningEffort": "high" }（传空字符串或 null 清除默认值）
+     */
+    @PutMapping(value = "/models/rels/{relId}/reasoning-effort", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> updateRelReasoningEffort(@PathVariable Long relId,
+                                                                         @RequestBody Map<String, Object> body) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            String reasoningEffort = body.get("reasoningEffort") != null
+                    ? body.get("reasoningEffort").toString().trim()
+                    : null;
+            if (reasoningEffort != null && reasoningEffort.isEmpty()) {
+                reasoningEffort = null;
+            }
+            modelService.updateChannelRelReasoningEffort(relId, reasoningEffort);
+            result.put("success", true);
+        } catch (Exception e) {
+            log.warn("更新关联推理强度失败: relId={}, body={}", relId, body, e);
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
     @GetMapping(value = "/models/{id}/circuit-breaker", produces = "application/json;charset=UTF-8")
     public ResponseEntity<?> getCircuitBreaker(@PathVariable Long id) {
         com.myai.gateway.entity.Model m = modelService.getById(id);

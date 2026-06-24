@@ -301,6 +301,15 @@ UPDATE models SET rel_mode = 'self_add' WHERE rel_mode IS NULL;
 CREATE INDEX IF NOT EXISTS idx_models_inherit_from ON models(inherit_from_model_id);
 
 -- ========================================
+-- VERSION:v1.15.0
+-- 模型关联支持默认 reasoning_effort（思考强度）
+-- 每个关联的渠道模型可独立配置默认 reasoning_effort，
+-- 如果请求中传了 reasoning_effort 则覆盖默认值
+-- ========================================
+
+ALTER TABLE model_channel_rels ADD COLUMN reasoning_effort TEXT;
+
+-- ========================================
 -- VERSION:v1.14.0
 -- 系统配置：日志管理配置项（保留天数、定时清理开关）
 -- ========================================

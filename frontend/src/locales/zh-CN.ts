@@ -265,6 +265,8 @@ export default {
   'model.rels.deleteFailed': '删除失败',
   'model.rels.saveFailed': '保存失败',
   'model.rels.responseTime': '平均响应',
+  'model.rels.reasoningEffort': '思考强度',
+  'model.rels.effortDefault': '默认',
   'model.rels.noData': '暂无数据',
   'model.rels.modeSelfAdd': '自添加',
   'model.rels.modeInherit': '继承',

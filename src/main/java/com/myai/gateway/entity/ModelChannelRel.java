@@ -24,6 +24,9 @@ public class ModelChannelRel {
     /** 权重（预留） */
     private Integer weight;
 
+    /** 默认思考强度（reasoning_effort），如 low/medium/high，null 表示不设置 */
+    private String reasoningEffort;
+
     /** 排序顺序（越小越优先） */
     private Integer sortOrder;
 
@@ -80,6 +83,9 @@ public class ModelChannelRel {
 
     public Integer getWeight() { return weight; }
     public void setWeight(Integer weight) { this.weight = weight; }
+
+    public String getReasoningEffort() { return reasoningEffort; }
+    public void setReasoningEffort(String reasoningEffort) { this.reasoningEffort = reasoningEffort; }
 
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }

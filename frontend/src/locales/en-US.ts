@@ -265,6 +265,8 @@ export default {
   'model.rels.deleteFailed': 'Delete failed',
   'model.rels.saveFailed': 'Save failed',
   'model.rels.responseTime': 'Avg Resp',
+  'model.rels.reasoningEffort': 'Reasoning',
+  'model.rels.effortDefault': 'Default',
   'model.rels.noData': 'No data',
   'model.rels.modeSelfAdd': 'Self-Add',
   'model.rels.modeInherit': 'Inherit',
