@@ -65,6 +65,8 @@ export default {
   'common.confirmAction': '确认',
   'common.noData': '暂无数据',
   'common.refresh': '刷新',
+  'common.filter': '筛选',
+  'common.reset': '重置',
 
   /* ========== Dashboard ========== */
   'dashboard.todayRequests': '今日请求',
@@ -359,6 +361,9 @@ export default {
   'log.list.retry': '重试 {count}',
   'log.list.fail': '失败',
   'log.list.success': '成功',
+  'log.list.filterModel': '入口模型',
+  'log.list.filterModelAll': '全部模型',
+  'log.list.filterTimeRange': '时间范围',
 
   /* ========== Playground ========== */
   'playground.title': '模型可用性测试',

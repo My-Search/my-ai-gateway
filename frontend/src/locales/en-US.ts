@@ -65,6 +65,8 @@ export default {
   'common.confirmAction': 'Confirm',
   'common.noData': 'No data',
   'common.refresh': 'Refresh',
+  'common.filter': 'Filter',
+  'common.reset': 'Reset',
 
   /* ========== Dashboard ========== */
   'dashboard.todayRequests': "Today's Requests",
@@ -359,6 +361,9 @@ export default {
   'log.list.retry': 'Retry {count}',
   'log.list.fail': 'Failed',
   'log.list.success': 'Success',
+  'log.list.filterModel': 'Entry Model',
+  'log.list.filterModelAll': 'All Models',
+  'log.list.filterTimeRange': 'Time Range',
 
   /* ========== Playground ========== */
   'playground.title': 'Model Test',

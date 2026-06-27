@@ -10,13 +10,17 @@ export interface ApiResponse<T = unknown> {
 export interface Channel {
   id?: number
   name: string
-  type: string
+  channelType: string
   baseUrl: string
   apiKey?: string
-  priority: number
-  enabled: boolean
+  priority?: number
+  enabled: number     // 0=disabled, 1=enabled
   models?: string[]
   config?: Record<string, unknown>
+  requestCount?: number
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
   createdAt?: string
   updatedAt?: string
 }

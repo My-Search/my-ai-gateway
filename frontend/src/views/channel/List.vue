@@ -186,13 +186,13 @@
 
   <!-- Dialog -->
   <Dialog
-    v-model="dialogVisible"
-    :title="dialogTitle"
-    :type="dialogType"
-    :confirm-class="dialogConfirmClass"
-    @confirm="onDialogConfirm"
+    v-model="visible"
+    :title="title"
+    :type="type"
+    :confirm-class="confirmClass"
+    @confirm="onConfirm"
   >
-    {{ dialogMessage }}
+    {{ message }}
   </Dialog>
 </template>
 
@@ -200,6 +200,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
+import { useDialog } from '@/composables/useDialog'
 import { channelApi, type Channel, type ChannelModel } from '@/api/channel'
 import { formatLocalDateTimeFull } from '@/utils/date'
 import Dialog from '@/components/common/Dialog.vue'
@@ -207,6 +208,8 @@ import SearchableSelect from '@/components/common/SearchableSelect.vue'
 
 const router = useRouter()
 const { t } = useI18n()
+const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
+
 const channels = ref<Channel[]>([])
 const showTestModal = ref(false)
 const testChannel = ref<Channel | null>(null)
@@ -220,41 +223,12 @@ const modelSelectOptions = computed(() =>
   testModels.value.map(m => ({ value: m.id, label: m.displayName || m.modelName }))
 )
 
-/* ---------- Dialog state ---------- */
-const dialogVisible = ref(false)
-const dialogTitle = ref(t('dialog.title'))
-const dialogMessage = ref('')
-const dialogType = ref<'alert' | 'confirm'>('alert')
-const dialogConfirmClass = ref('btn-primary')
-let dialogOnConfirm: (() => void) | null = null
-
-function openDialog(opts: {
-  title?: string
-  message: string
-  type?: 'alert' | 'confirm'
-  confirmClass?: string
-  onConfirm?: () => void
-}) {
-  dialogTitle.value = opts.title ?? t('dialog.title')
-  dialogMessage.value = opts.message
-  dialogType.value = opts.type ?? 'alert'
-  dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
-  dialogOnConfirm = opts.onConfirm ?? null
-  dialogVisible.value = true
-}
-
-function onDialogConfirm() {
-  dialogOnConfirm?.()
-  dialogOnConfirm = null
-}
-/* ------------------------------ */
-
 async function loadChannels() {
   try {
     const res = await channelApi.list()
     channels.value = res.data
   } catch (e: any) {
-    openDialog({ title: t('error.loadFailed'), message: t('error.loadFailed') + ': ' + e.message })
+    open({ title: t('error.loadFailed'), message: t('error.loadFailed') + ': ' + e.message })
   }
 }
 
@@ -301,7 +275,7 @@ async function sendTestRequest() {
 }
 
 function reloadModels(id: number) {
-  openDialog({
+  open({
     title: t('channel.list.reloadConfirm'),
     message: t('channel.list.reloadMsg'),
     type: 'confirm',
@@ -309,23 +283,23 @@ function reloadModels(id: number) {
     onConfirm: async () => {
       try {
         const res = await channelApi.reloadModels(id)
-        openDialog({ message: res.data.success ? t('channel.list.reloadSuccess') : t('error.loadFailed') + ': ' + res.data.error })
+        open({ message: res.data.success ? t('channel.list.reloadSuccess') : t('error.loadFailed') + ': ' + res.data.error })
       } catch (e: any) {
-        openDialog({ title: t('error.unknown'), message: e.message })
+        open({ title: t('error.unknown'), message: e.message })
       }
     }
   })
 }
 
 function confirmDelete(ch: Channel) {
-  openDialog({
+  open({
     title: t('common.confirmDelete'),
     message: t('channel.list.deleteConfirm').replace('{name}', ch.name),
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: () => {
       channelApi.delete(ch.id!).then(() => loadChannels()).catch(e =>
-        openDialog({ title: t('error.deleteFailed'), message: e.message })
+        open({ title: t('error.deleteFailed'), message: e.message })
       )
     }
   })
@@ -334,7 +308,7 @@ function confirmDelete(ch: Channel) {
 async function toggleEnabled(ch: Channel) {
   const newEnabled = ch.enabled === 1 ? 0 : 1
   const action = newEnabled === 1 ? t('channel.list.enableConfirm') : t('channel.list.disableConfirm')
-  openDialog({
+  open({
     title: t('channel.list.toggleTitle'),
     message: t('channel.list.toggleMessage').replace('{name}', ch.name).replace('{action}', action),
     type: 'confirm',
@@ -344,9 +318,9 @@ async function toggleEnabled(ch: Channel) {
       try {
         await channelApi.update(ch.id!, { enabled: newEnabled })
         ch.enabled = newEnabled
-        openDialog({ message: t('channel.list.toggleSuccess') })
+        open({ message: t('channel.list.toggleSuccess') })
       } catch (e: any) {
-        openDialog({ title: t('error.updateFailed'), message: e.message })
+        open({ title: t('error.updateFailed'), message: e.message })
       } finally {
         toggleLoading.value = null
       }

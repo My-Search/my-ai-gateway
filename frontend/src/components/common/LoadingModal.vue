@@ -31,7 +31,7 @@ const { t } = useI18n()
 const loadingStore = useLoadingStore()
 
 const visible = computed(() => loadingStore.isLoading)
-const text = computed(() => loadingStore.loadingText === '加载中...' ? t('common.loading') : loadingStore.loadingText)
+const text = computed(() => loadingStore.loadingText || t('common.loading'))
 </script>
 
 <style scoped>
@@ -59,10 +59,6 @@ const text = computed(() => loadingStore.loadingText === '加载中...' ? t('com
 
 .loading-spinner {
   color: var(--primary-color);
-  animation: spin 1s linear infinite;
-}
-
-.loading-spinner :deep(svg) {
   animation: spin 1s linear infinite;
 }
 

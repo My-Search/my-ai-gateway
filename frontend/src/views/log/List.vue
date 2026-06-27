@@ -13,6 +13,32 @@
         <button class="btn btn-sm btn-danger" @click="cleanLogs"><SvgIcon name="trash" :size="14" /> {{ t('log.list.cleanOld') }}</button>
       </div>
     </div>
+    <!-- 过滤栏 -->
+    <div class="filter-bar">
+      <div class="filter-item">
+        <label class="filter-label">{{ t('log.list.filterModel') }}</label>
+        <select class="form-input form-input-sm" v-model="filterModelName" @change="applyFilters">
+          <option value="">{{ t('log.list.filterModelAll') }}</option>
+          <option v-for="m in entryModels" :key="m.id" :value="m.modelName">{{ m.modelName }}</option>
+        </select>
+      </div>
+      <div class="filter-item">
+        <label class="filter-label">{{ t('log.list.filterTimeRange') }}</label>
+        <div class="filter-daterange">
+          <input class="form-input form-input-sm" type="datetime-local" v-model="filterStartTime" />
+          <span class="filter-daterange-sep">—</span>
+          <input class="form-input form-input-sm" type="datetime-local" v-model="filterEndTime" />
+        </div>
+      </div>
+      <div class="filter-actions">
+        <button class="btn btn-sm btn-secondary" @click="applyFilters" :disabled="loading">
+          <SvgIcon name="search" :size="14" /> {{ t('common.filter') }}
+        </button>
+        <button class="btn btn-sm btn-ghost" @click="resetFilters" :disabled="loading">
+          {{ t('common.reset') }}
+        </button>
+      </div>
+    </div>
     <div v-if="loading" style="text-align:center;padding:40px;color:var(--text-muted);">{{ t('common.loading') }}</div>
 
     <template v-for="trace in traces" :key="trace.traceId">
@@ -76,6 +102,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { logApi, subscribeLogStream, type LogTrace, type RequestLog, type LogSseSubscription } from '@/api/log'
+import { modelApi, type CustomModel } from '@/api/model'
 import Dialog from '@/components/common/Dialog.vue'
 import { useI18n } from '@/composables/useI18n'
 import { formatLocalDateTime, formatLocalFullTime } from '@/utils/date'
@@ -88,6 +115,19 @@ const loading = ref(false)
 const loadingMore = ref(false)
 const sseConnected = ref(false)
 const sseReconnecting = ref(false)
+
+// 过滤状态
+const filterModelName = ref('')
+const filterStartTime = ref('')
+const filterEndTime = ref('')
+/** 入口模型列表（供下拉选择） */
+const entryModels = ref<CustomModel[]>([])
+async function fetchEntryModels() {
+  try {
+    const res = await modelApi.list()
+    entryModels.value = res.data
+  } catch { /* 静默失败，下拉为空不影响使用 */ }
+}
 
 // 分页状态
 const offset = ref(0)
@@ -334,12 +374,21 @@ function toggleTrace(id: string) {
   }
 }
 
+function getCurrentFilters() {
+  const filters: import('@/api/log').LogFilters = {}
+  if (filterModelName.value.trim()) filters.modelName = filterModelName.value.trim()
+  if (filterStartTime.value) filters.startTime = new Date(filterStartTime.value).toISOString()
+  if (filterEndTime.value) filters.endTime = new Date(filterEndTime.value).toISOString()
+  return filters
+}
+
 async function loadLogs() {
   loading.value = true
   offset.value = 0
   hasMore.value = true
   try {
-    const res = await logApi.list(0, limit)
+    const filters = getCurrentFilters()
+    const res = await logApi.list(0, limit, filters)
     traces.value = res.data.data
     total.value = res.data.total
     hasMore.value = res.data.hasMore
@@ -357,11 +406,23 @@ async function loadLogs() {
   }
 }
 
+function applyFilters() {
+  loadLogs()
+}
+
+function resetFilters() {
+  filterModelName.value = ''
+  filterStartTime.value = ''
+  filterEndTime.value = ''
+  loadLogs()
+}
+
 async function loadMoreLogs() {
   if (loadingMore.value || !hasMore.value) return
   loadingMore.value = true
   try {
-    const res = await logApi.list(offset.value, limit)
+    const filters = getCurrentFilters()
+    const res = await logApi.list(offset.value, limit, filters)
     const newTraces = res.data.data
     // 避免重复添加（SSE 可能已提前插入相同 trace）
     const existingIds = new Set(traces.value.map(t => t.traceId))
@@ -396,6 +457,7 @@ function cleanLogs() {
 }
 
 onMounted(() => {
+  fetchEntryModels()
   loadLogs()
   startSse()
   
@@ -525,6 +587,76 @@ onUnmounted(() => {
 }
 
 /* ========== 移动端适配 ========== */
+/* ========== 过滤栏 ========== */
+.filter-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  flex-wrap: wrap;
+}
+.filter-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.filter-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.filter-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.filter-daterange {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.filter-daterange .form-input-sm {
+  min-width: 130px;
+}
+.filter-daterange-sep {
+  color: var(--text-muted);
+  font-size: 13px;
+  user-select: none;
+  flex-shrink: 0;
+}
+.form-input-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  min-width: 140px;
+}
+.form-input-sm:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+/* datetime-local 深色模式适配：让浏览器原生日历 icon 和弹出层使用暗色主题 */
+.form-input-sm[type="datetime-local"] {
+  color-scheme: dark;
+}
+.btn-ghost {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+}
+.btn-ghost:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
 @media (max-width: 768px) {
   .trace-header {
     gap: 8px;

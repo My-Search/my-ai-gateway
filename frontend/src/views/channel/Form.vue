@@ -123,13 +123,13 @@
 
   <!-- Common Dialog -->
   <Dialog
-    v-model="dialogVisible"
-    :title="dialogTitle"
-    :type="dialogType"
-    :confirm-class="dialogConfirmClass"
-    @confirm="onDialogConfirm"
+    v-model="visible"
+    :title="title"
+    :type="type"
+    :confirm-class="confirmClass"
+    @confirm="onConfirm"
   >
-    {{ dialogMessage }}
+    {{ message }}
   </Dialog>
 
   <!-- API Key Input Dialog -->
@@ -157,12 +157,14 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
+import { useDialog } from '@/composables/useDialog'
 import { channelApi, type Channel, type ChannelApiKey, type ChannelModel } from '@/api/channel'
 import Dialog from '@/components/common/Dialog.vue'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 const isEdit = computed(() => !!route.params.id)
 
 const saving = ref(false)
@@ -170,35 +172,6 @@ const fetchLoading = ref(false)
 const showAddModel = ref(false)
 const newModelName = ref('')
 const newDisplayName = ref('')
-
-/* ---------- Dialog state ---------- */
-const dialogVisible = ref(false)
-const dialogTitle = ref(t('common.prompt'))
-const dialogMessage = ref('')
-const dialogType = ref<'alert' | 'confirm'>('alert')
-const dialogConfirmClass = ref('btn-primary')
-let dialogOnConfirm: (() => void) | null = null
-
-function openDialog(opts: {
-  title?: string
-  message: string
-  type?: 'alert' | 'confirm'
-  confirmClass?: string
-  onConfirm?: () => void
-}) {
-  dialogTitle.value = opts.title ?? t('common.prompt')
-  dialogMessage.value = opts.message
-  dialogType.value = opts.type ?? 'alert'
-  dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
-  dialogOnConfirm = opts.onConfirm ?? null
-  dialogVisible.value = true
-}
-
-function onDialogConfirm() {
-  dialogOnConfirm?.()
-  dialogOnConfirm = null
-}
-/* ------------------------------ */
 
 /* ---------- API Key Dialog state ---------- */
 const apiKeyDialogVisible = ref(false)
@@ -227,15 +200,15 @@ function confirmAddApiKey() {
   const keyName = newApiKeyName.value.trim()
   const apiKey = newApiKeyValue.value.trim()
   if (!keyName) {
-    openDialog({ title: t('common.prompt'), message: t('channel.form.inputKeyName') })
+    open({ title: t('common.prompt'), message: t('channel.form.inputKeyName') })
     return
   }
   if (!apiKey) {
-    openDialog({ title: t('common.prompt'), message: t('channel.form.inputKeyValue') })
+    open({ title: t('common.prompt'), message: t('channel.form.inputKeyValue') })
     return
   }
   if (apiKeys.value.some(k => k.keyName === keyName)) {
-    openDialog({ title: t('common.prompt'), message: t('channel.form.keyNameExists') })
+    open({ title: t('common.prompt'), message: t('channel.form.keyNameExists') })
     return
   }
   apiKeys.value.push({
@@ -278,7 +251,7 @@ onMounted(async () => {
         displayName: m.displayName || m.modelName
       }))
     } catch (e: any) {
-      openDialog({ title: t('error.loadFailed'), message: e.message })
+      open({ title: t('error.loadFailed'), message: e.message })
       router.push('/admin/channel/list')
     }
   }
@@ -303,12 +276,12 @@ async function copyKey(val: string) {
     document.body.appendChild(toast)
     setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300) }, 1500)
   } catch {
-    openDialog({ message: t('common.copyFailed') })
+    open({ message: t('common.copyFailed') })
   }
 }
 
 function removeApiKey(index: number) {
-  openDialog({
+  open({
     title: t('common.confirmDelete'),
     message: t('apikey.list.deleteConfirm').replace('{name}', apiKeys.value[index]?.keyName || ''),
     type: 'confirm',
@@ -343,8 +316,8 @@ function removeModel(index: number) {
 
 function confirmAddModel() {
   const name = newModelName.value.trim()
-  if (!name) { openDialog({ title: t('common.prompt'), message: t('channel.form.inputModelName') }); return }
-  if (models.value.some(m => m.modelName === name)) { openDialog({ title: t('common.prompt'), message: t('channel.form.modelExists') }); return }
+  if (!name) { open({ title: t('common.prompt'), message: t('channel.form.inputModelName') }); return }
+  if (models.value.some(m => m.modelName === name)) { open({ title: t('common.prompt'), message: t('channel.form.modelExists') }); return }
   models.value.push({
     modelName: name,
     displayName: newDisplayName.value.trim() || name
@@ -370,19 +343,19 @@ async function doFetchModels() {
             added++
           }
         }
-        openDialog({ message: t('channel.form.fetchedModels').replace('{count}', String(added)) })
+        open({ message: t('channel.form.fetchedModels').replace('{count}', String(added)) })
       } else {
-        openDialog({ title: t('channel.form.refreshFailed'), message: res.data.error || t('channel.form.refreshFailed') })
+        open({ title: t('channel.form.refreshFailed'), message: res.data.error || t('channel.form.refreshFailed') })
       }
     } catch (e: any) {
-      openDialog({ title: t('channel.form.refreshFailed'), message: e.message })
+      open({ title: t('channel.form.refreshFailed'), message: e.message })
     } finally {
       fetchLoading.value = false
     }
   } else {
     // Preview fetch
-    if (!form.value.channelType) { openDialog({ title: t('common.prompt'), message: t('channel.form.selectTypeFirst') }); return }
-    if (!apiKeys.value.length) { openDialog({ title: t('common.prompt'), message: t('channel.form.addAtLeastOneKey') }); return }
+    if (!form.value.channelType) { open({ title: t('common.prompt'), message: t('channel.form.selectTypeFirst') }); return }
+    if (!apiKeys.value.length) { open({ title: t('common.prompt'), message: t('channel.form.addAtLeastOneKey') }); return }
     fetchLoading.value = true
     try {
       const res = await channelApi.fetchModels(
@@ -399,12 +372,12 @@ async function doFetchModels() {
             added++
           }
         }
-        openDialog({ message: t('channel.form.addedModels').replace('{count}', res.data.count).replace('{added}', String(added)) })
+        open({ message: t('channel.form.addedModels').replace('{count}', res.data.count).replace('{added}', String(added)) })
       } else {
-        openDialog({ title: t('channel.form.refreshFailed'), message: res.data.error || t('channel.form.refreshFailed') })
+        open({ title: t('channel.form.refreshFailed'), message: res.data.error || t('channel.form.refreshFailed') })
       }
     } catch (e: any) {
-      openDialog({ title: t('common.fail'), message: e.message })
+      open({ title: t('common.fail'), message: e.message })
     } finally {
       fetchLoading.value = false
     }
@@ -413,7 +386,7 @@ async function doFetchModels() {
 
 function clearAllModels() {
   if (!models.value.length) return
-  openDialog({
+  open({
     title: t('common.confirmDelete'),
     message: t('channel.form.clearModelsConfirm').replace('{count}', String(models.value.length)),
     type: 'confirm',
@@ -449,13 +422,13 @@ async function handleSave() {
     if (isEdit.value) {
       const id = Number(route.params.id)
       await channelApi.update(id, payload)
-      openDialog({ title: t('common.success'), message: t('channel.form.saveSuccess'), onConfirm: () => router.push('/admin/channel/list') })
+      open({ title: t('common.success'), message: t('channel.form.saveSuccess'), onConfirm: () => router.push('/admin/channel/list') })
     } else {
       await channelApi.create(payload)
-      openDialog({ title: t('common.success'), message: t('channel.form.createSuccess'), onConfirm: () => router.push('/admin/channel/list') })
+      open({ title: t('common.success'), message: t('channel.form.createSuccess'), onConfirm: () => router.push('/admin/channel/list') })
     }
   } catch (e: any) {
-    openDialog({ title: t('channel.form.saveFailed'), message: e.message })
+    open({ title: t('channel.form.saveFailed'), message: e.message })
   } finally {
     saving.value = false
   }

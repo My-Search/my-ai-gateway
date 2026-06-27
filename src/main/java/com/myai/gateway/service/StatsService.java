@@ -24,48 +24,31 @@ public class StatsService {
 
     /**
      * 获取Dashboard统计数据
+     * <p>
+     * 使用 SQL 聚合查询替代原来的全量加载+内存聚合方式，大幅减少数据扫描量。
+     * 优化前：10+ 次全量查询（含 7 次逐日循环），加载全部行到内存做 stream 聚合
+     * 优化后：7 次轻量聚合查询，SQLite 直接返回聚合结果
+     * </p>
      */
     public Map<String, Object> getDashboardStats() {
         Map<String, Object> stats = new LinkedHashMap<>();
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime todayStart = now.toLocalDate().atStartOfDay();
         LocalDateTime yesterdayStart = todayStart.minusDays(1);
+        LocalDateTime sevenDaysAgo = todayStart.minusDays(6);
 
-        // 今日所有日志
-        List<RequestLog> todayLogs = requestLogMapper.selectList(
-                new LambdaQueryWrapper<RequestLog>()
-                        .ge(RequestLog::getCreatedAt, todayStart));
+        // 1. 今日聚合统计（一次查询）
+        Map<String, Object> todayAgg = requestLogMapper.selectTodayAggregatedStats(todayStart);
+        long todayRequests = toLong(todayAgg.get("today_requests"));
+        long todaySuccess = toLong(todayAgg.get("today_success"));
+        long todayFail = toLong(todayAgg.get("today_fail"));
+        double avgResponseTime = todayAgg.get("avg_response_time") != null
+                ? ((Number) todayAgg.get("avg_response_time")).doubleValue() : 0.0;
 
-        // 昨日日志（用于对比）
-        List<RequestLog> yesterdayLogs = requestLogMapper.selectList(
-                new LambdaQueryWrapper<RequestLog>()
-                        .ge(RequestLog::getCreatedAt, yesterdayStart)
-                        .lt(RequestLog::getCreatedAt, todayStart));
+        // 2. 昨日 start 请求数（对比用）
+        long yesterdayRequests = requestLogMapper.selectYesterdayStartCount(yesterdayStart, todayStart);
 
-        // 总请求数（以 start 阶段计数）
-        long todayRequests = todayLogs.stream()
-                .filter(l -> "start".equals(l.getPhase()))
-                .count();
-        long yesterdayRequests = yesterdayLogs.stream()
-                .filter(l -> "start".equals(l.getPhase()))
-                .count();
-
-        // 成功/失败数
-        long todaySuccess = todayLogs.stream()
-                .filter(l -> "success".equals(l.getPhase()))
-                .count();
-        long todayFail = todayLogs.stream()
-                .filter(l -> "fail".equals(l.getPhase()))
-                .count();
-
-        // 平均响应时间
-        double avgResponseTime = todayLogs.stream()
-                .filter(l -> l.getResponseTimeMs() != null && l.getResponseTimeMs() > 0)
-                .mapToInt(RequestLog::getResponseTimeMs)
-                .average()
-                .orElse(0.0);
-
-        // 成功率
+        // 3. 成功率
         long totalFinished = todaySuccess + todayFail;
         double successRate = totalFinished > 0 ? (double) todaySuccess / totalFinished * 100 : 0;
 
@@ -76,43 +59,28 @@ public class StatsService {
         stats.put("avgResponseTime", Math.round(avgResponseTime));
         stats.put("successRate", Math.round(successRate * 10) / 10.0);
 
-        // 今日 token 用量汇总
-        long todayPromptTokens = todayLogs.stream()
-                .filter(l -> "success".equals(l.getPhase()))
-                .mapToLong(l -> l.getPromptTokens() != null ? l.getPromptTokens() : 0)
-                .sum();
-        long todayCompletionTokens = todayLogs.stream()
-                .filter(l -> "success".equals(l.getPhase()))
-                .mapToLong(l -> l.getCompletionTokens() != null ? l.getCompletionTokens() : 0)
-                .sum();
-        long todayTotalTokens = todayLogs.stream()
-                .filter(l -> "success".equals(l.getPhase()))
-                .mapToLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)
-                .sum();
+        // 4. Token 用量
         Map<String, Object> tokenStats = new LinkedHashMap<>();
-        tokenStats.put("promptTokens", todayPromptTokens);
-        tokenStats.put("completionTokens", todayCompletionTokens);
-        tokenStats.put("totalTokens", todayTotalTokens);
+        tokenStats.put("promptTokens", toLong(todayAgg.get("prompt_tokens")));
+        tokenStats.put("completionTokens", toLong(todayAgg.get("completion_tokens")));
+        tokenStats.put("totalTokens", toLong(todayAgg.get("total_tokens")));
         stats.put("todayTokenStats", tokenStats);
 
-        // 渠道排行（按请求数）
-        stats.put("channelRank", buildChannelRank(todayLogs));
+        // 5. 渠道排行、模型排行（各一次聚合查询）
+        stats.put("channelRank", requestLogMapper.selectChannelRank(todayStart));
+        stats.put("modelRank", requestLogMapper.selectEntryModelRank(todayStart));
+        stats.put("channelModelRank", requestLogMapper.selectChannelModelRank(todayStart));
 
-        // 模型排行（按请求数）- 入口模型（自定义模型名）
-        stats.put("modelRank", buildModelRank(todayLogs, false));
-        // 模型排行（按请求数）- 渠道模型（实际调用的渠道模型名）
-        stats.put("channelModelRank", buildModelRank(todayLogs, true));
-
-        // 最近7天趋势
-        List<Map<String, Object>> dailyTrend = buildDailyTrend(7);
+        // 6. 7天趋势（一次 GROUP BY 替代原来 7 次循环）
+        List<Map<String, Object>> dailyTrend = buildDailyTrend(sevenDaysAgo);
         long maxDailyRequests = dailyTrend.stream()
-                .mapToLong(d -> ((Number) d.get("requests")).longValue())
+                .mapToLong(d -> toLong(d.get("requests")))
                 .max().orElse(1);
         if (maxDailyRequests == 0) maxDailyRequests = 1;
         stats.put("dailyTrend", dailyTrend);
         stats.put("maxDailyRequests", maxDailyRequests);
 
-        // 最近10条日志
+        // 7. 最近10条日志（已带 LIMIT，保持不动）
         List<RequestLog> recentLogs = requestLogMapper.selectList(
                 new LambdaQueryWrapper<RequestLog>()
                         .orderByDesc(RequestLog::getCreatedAt)
@@ -120,6 +88,47 @@ public class StatsService {
         stats.put("recentLogs", recentLogs);
 
         return stats;
+    }
+
+    /**
+     * 从聚合查询结果中安全转为 long
+     */
+    private long toLong(Object value) {
+        if (value == null) return 0L;
+        return ((Number) value).longValue();
+    }
+
+    /**
+     * 从聚合查询结果构建 7 天趋势（带 label 字段，兼容前端）
+     */
+    private List<Map<String, Object>> buildDailyTrend(LocalDateTime since) {
+        List<Map<String, Object>> dbRows = requestLogMapper.selectDailyTrend(since);
+        // 用 Map 索引实现 O(1) 查找，替代原来的 O(n²) 双层循环
+        Map<String, Map<String, Object>> dateIndex = new HashMap<>();
+        for (Map<String, Object> row : dbRows) {
+            dateIndex.put((String) row.get("date"), row);
+        }
+        LocalDate startDate = since.toLocalDate();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (int i = 0; i < 7; i++) {
+            LocalDate date = startDate.plusDays(i);
+            String dateStr = date.toString();
+            Map<String, Object> day = new LinkedHashMap<>();
+            day.put("date", dateStr);
+            day.put("label", date.getMonthValue() + "/" + date.getDayOfMonth());
+            Map<String, Object> row = dateIndex.get(dateStr);
+            if (row != null) {
+                day.put("requests", toLong(row.get("requests")));
+                day.put("success", toLong(row.get("success")));
+                day.put("fail", toLong(row.get("fail")));
+            } else {
+                day.put("requests", 0L);
+                day.put("success", 0L);
+                day.put("fail", 0L);
+            }
+            result.add(day);
+        }
+        return result;
     }
 
     /**
@@ -242,161 +251,4 @@ public class StatsService {
         return result;
     }
 
-    private List<Map<String, Object>> buildChannelRank(List<RequestLog> todayLogs) {
-        Map<String, Long> channelCounts = todayLogs.stream()
-                .filter(l -> "start".equals(l.getPhase()) && l.getChannelName() != null)
-                .collect(Collectors.groupingBy(RequestLog::getChannelName, Collectors.counting()));
-
-        Map<String, Long> channelSuccess = todayLogs.stream()
-                .filter(l -> "success".equals(l.getPhase()) && l.getChannelName() != null)
-                .collect(Collectors.groupingBy(RequestLog::getChannelName, Collectors.counting()));
-
-        Map<String, Double> channelAvgTime = todayLogs.stream()
-                .filter(l -> l.getChannelName() != null && l.getResponseTimeMs() != null && l.getResponseTimeMs() > 0)
-                .collect(Collectors.groupingBy(RequestLog::getChannelName,
-                        Collectors.averagingInt(RequestLog::getResponseTimeMs)));
-
-        // Token 用量按渠道聚合
-        Map<String, Long> channelTotalTokens = todayLogs.stream()
-                .filter(l -> "success".equals(l.getPhase()) && l.getChannelName() != null)
-                .collect(Collectors.groupingBy(RequestLog::getChannelName,
-                        Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
-
-        return channelCounts.entrySet().stream()
-                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                .limit(10)
-                .map(e -> {
-                    Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("name", e.getKey());
-                    item.put("requests", e.getValue());
-                    item.put("success", channelSuccess.getOrDefault(e.getKey(), 0L));
-                    item.put("avgTime", Math.round(channelAvgTime.getOrDefault(e.getKey(), 0.0)));
-                    item.put("totalTokens", channelTotalTokens.getOrDefault(e.getKey(), 0L));
-                    return item;
-                })
-                .collect(Collectors.toList());
-    }
-
-    /**
-     * 构建模型排行
-     * @param todayLogs 今日日志
-     * @param byChannelModel true=按渠道模型名聚合，false=按入口模型名聚合
-     */
-    private List<Map<String, Object>> buildModelRank(List<RequestLog> todayLogs, boolean byChannelModel) {
-        if (byChannelModel) {
-            return buildChannelModelRankWithChannel(todayLogs);
-        }
-        // 入口模型模式：按 modelName 分组
-        return buildEntryModelRank(todayLogs);
-    }
-
-    /**
-     * 入口模型排行：按自定义模型名(modelName)聚合
-     */
-    private List<Map<String, Object>> buildEntryModelRank(List<RequestLog> todayLogs) {
-        Map<String, Long> modelCounts = todayLogs.stream()
-                .filter(l -> "start".equals(l.getPhase()))
-                .filter(l -> l.getModelName() != null)
-                .collect(Collectors.groupingBy(RequestLog::getModelName, Collectors.counting()));
-
-        Map<String, Long> modelSuccess = todayLogs.stream()
-                .filter(l -> "success".equals(l.getPhase()))
-                .filter(l -> l.getModelName() != null)
-                .collect(Collectors.groupingBy(RequestLog::getModelName, Collectors.counting()));
-
-        Map<String, Long> modelTotalTokens = todayLogs.stream()
-                .filter(l -> "success".equals(l.getPhase()))
-                .filter(l -> l.getModelName() != null)
-                .collect(Collectors.groupingBy(RequestLog::getModelName,
-                        Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
-
-        return modelCounts.entrySet().stream()
-                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                .limit(10)
-                .map(e -> {
-                    Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("name", e.getKey());
-                    item.put("requests", e.getValue());
-                    item.put("success", modelSuccess.getOrDefault(e.getKey(), 0L));
-                    item.put("totalTokens", modelTotalTokens.getOrDefault(e.getKey(), 0L));
-                    return item;
-                })
-                .collect(Collectors.toList());
-    }
-
-    /**
-     * 渠道模型排行：按 (channelName, channelModelName) 复合分组，
-     * 每条记录附带渠道名，方便前端展示
-     */
-    private List<Map<String, Object>> buildChannelModelRankWithChannel(List<RequestLog> todayLogs) {
-        // 复合 key 分隔符（不会出现在渠道名/模型名中）
-        String sep = "\t";
-
-        java.util.function.Function<RequestLog, String> compositeKey = l ->
-                (l.getChannelName() != null ? l.getChannelName() : "") + sep
-                        + (l.getChannelModelName() != null ? l.getChannelModelName() : "");
-
-        Map<String, Long> modelCounts = todayLogs.stream()
-                .filter(l -> "start".equals(l.getPhase()))
-                .filter(l -> l.getChannelModelName() != null)
-                .collect(Collectors.groupingBy(compositeKey, Collectors.counting()));
-
-        Map<String, Long> modelSuccess = todayLogs.stream()
-                .filter(l -> "success".equals(l.getPhase()))
-                .filter(l -> l.getChannelModelName() != null)
-                .collect(Collectors.groupingBy(compositeKey, Collectors.counting()));
-
-        Map<String, Long> modelTotalTokens = todayLogs.stream()
-                .filter(l -> "success".equals(l.getPhase()))
-                .filter(l -> l.getChannelModelName() != null)
-                .collect(Collectors.groupingBy(compositeKey,
-                        Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
-
-        return modelCounts.entrySet().stream()
-                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                .limit(10)
-                .map(e -> {
-                    String key = e.getKey();
-                    int sepIdx = key.indexOf(sep);
-                    String channelName = key.substring(0, sepIdx);
-                    String modelName = key.substring(sepIdx + sep.length());
-                    Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("name", modelName);
-                    item.put("channelName", channelName);
-                    item.put("requests", e.getValue());
-                    item.put("success", modelSuccess.getOrDefault(e.getKey(), 0L));
-                    item.put("totalTokens", modelTotalTokens.getOrDefault(e.getKey(), 0L));
-                    return item;
-                })
-                .collect(Collectors.toList());
-    }
-
-    private List<Map<String, Object>> buildDailyTrend(int days) {
-        List<Map<String, Object>> trend = new ArrayList<>();
-        LocalDate today = LocalDate.now();
-
-        for (int i = days - 1; i >= 0; i--) {
-            LocalDate date = today.minusDays(i);
-            LocalDateTime start = date.atStartOfDay();
-            LocalDateTime end = date.plusDays(1).atStartOfDay();
-
-            List<RequestLog> dayLogs = requestLogMapper.selectList(
-                    new LambdaQueryWrapper<RequestLog>()
-                            .ge(RequestLog::getCreatedAt, start)
-                            .lt(RequestLog::getCreatedAt, end));
-
-            long requests = dayLogs.stream().filter(l -> "start".equals(l.getPhase())).count();
-            long success = dayLogs.stream().filter(l -> "success".equals(l.getPhase())).count();
-            long fail = dayLogs.stream().filter(l -> "fail".equals(l.getPhase())).count();
-
-            Map<String, Object> day = new LinkedHashMap<>();
-            day.put("date", date.toString());
-            day.put("label", (date.getMonthValue()) + "/" + date.getDayOfMonth());
-            day.put("requests", requests);
-            day.put("success", success);
-            day.put("fail", fail);
-            trend.add(day);
-        }
-        return trend;
-    }
 }

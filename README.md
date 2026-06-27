@@ -1,4 +1,4 @@
-# My AI Gateway
+# My AI Gateway（MAG）
 
 个人统一 AI 网关，提供多渠道聚合、模型路由、熔断保护与 API Key 管理能力。对外暴露 OpenAI / Anthropic 兼容接口，将多个 AI 供应商统一为单一入口。
 

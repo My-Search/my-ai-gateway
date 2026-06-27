@@ -27,6 +27,12 @@ export interface LogTrace {
   endTime?: string
 }
 
+export interface LogFilters {
+  modelName?: string
+  startTime?: string
+  endTime?: string
+}
+
 export interface LogsResponse {
   data: LogTrace[]
   total: number
@@ -36,8 +42,12 @@ export interface LogsResponse {
 }
 
 export const logApi = {
-  list(offset = 0, limit = 50) {
-    return http.get<LogsResponse>('/logs', { params: { offset, limit } })
+  list(offset = 0, limit = 50, filters?: LogFilters) {
+    const params: Record<string, string | number> = { offset, limit }
+    if (filters?.modelName) params.modelName = filters.modelName
+    if (filters?.startTime) params.startTime = filters.startTime
+    if (filters?.endTime) params.endTime = filters.endTime
+    return http.get<LogsResponse>('/logs', { params })
   },
   clean() {
     return http.post<{ success: boolean; message: string }>('/logs/clean')

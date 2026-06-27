@@ -108,14 +108,14 @@
 
   <!-- Common Dialog -->
   <Dialog
-    v-model="dialogVisible"
-    :title="dialogTitle"
-    :type="dialogType"
-    :confirm-class="dialogConfirmClass"
-    :confirm-text="dialogConfirmText"
-    @confirm="onDialogConfirm"
+    v-model="visible"
+    :title="title"
+    :type="type"
+    :confirm-class="confirmClass"
+    :confirm-text="confirmText"
+    @confirm="onConfirm"
   >
-    {{ dialogMessage }}
+    {{ message }}
   </Dialog>
 
   <!-- Form Dialog -->
@@ -156,45 +156,15 @@ import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { shareApi } from '@/api/share'
 import Dialog from '@/components/common/Dialog.vue'
 import { useI18n } from '@/composables/useI18n'
+import { useDialog } from '@/composables/useDialog'
 import { formatLocalDateTimeFull } from '@/utils/date'
 
 const { t } = useI18n()
+const { visible, title, message, type, confirmClass, confirmText, onConfirm, open } = useDialog()
 
 const router = useRouter()
 
 const apiKeys = ref<ApiKey[]>([])
-
-/* ---------- Common Dialog state ---------- */
-const dialogVisible = ref(false)
-const dialogTitle = ref(t('common.prompt'))
-const dialogMessage = ref('')
-const dialogType = ref<'alert' | 'confirm'>('alert')
-const dialogConfirmClass = ref('btn-primary')
-const dialogConfirmText = ref(t('dialog.confirm'))
-let dialogOnConfirm: (() => void) | null = null
-
-function openDialog(opts: {
-  title?: string
-  message: string
-  type?: 'alert' | 'confirm'
-  confirmClass?: string
-  confirmText?: string
-  onConfirm?: () => void
-}) {
-  dialogTitle.value = opts.title ?? t('common.prompt')
-  dialogMessage.value = opts.message
-  dialogType.value = opts.type ?? 'alert'
-  dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
-  dialogConfirmText.value = opts.confirmText ?? t('dialog.confirm')
-  dialogOnConfirm = opts.onConfirm ?? null
-  dialogVisible.value = true
-}
-
-function onDialogConfirm() {
-  dialogOnConfirm?.()
-  dialogOnConfirm = null
-}
-/* ------------------------------ */
 
 /* ---------- Form Dialog state ---------- */
 const formDialogVisible = ref(false)
@@ -226,7 +196,7 @@ function closeForm() {
 
 async function handleSave() {
   if (!form.value.keyName) {
-    openDialog({ title: t('common.prompt'), message: t('apikey.list.inputName') })
+    open({ title: t('common.prompt'), message: t('apikey.list.inputName') })
     return
   }
   saving.value = true
@@ -244,7 +214,7 @@ async function handleSave() {
     formDialogVisible.value = false
     loadKeys()
   } catch (e: any) {
-    openDialog({ title: t('apikey.form.saveFailed'), message: e.message })
+    open({ title: t('apikey.form.saveFailed'), message: e.message })
   } finally {
     saving.value = false
   }
@@ -270,7 +240,7 @@ async function copyKey(val: string) {
     document.body.appendChild(toast)
     setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300) }, 1500)
   } catch {
-    openDialog({ message: t('apikey.list.manualCopyFailed') })
+    open({ message: t('apikey.list.manualCopyFailed') })
   }
 }
 
@@ -280,14 +250,14 @@ async function copyKey(val: string) {
 function shareKey(key: ApiKey) {
   const code = key.shareCode || ''
   if (!code) {
-    openDialog({ title: t('common.prompt'), message: t('apikey.list.shareCodeMissing') })
+    open({ title: t('common.prompt'), message: t('apikey.list.shareCodeMissing') })
     return
   }
   const shareUrl = `${window.location.origin}/share/${encodeURIComponent(code)}`
   navigator.clipboard.writeText(shareUrl).then(() => {
     showToastMsg(t('apikey.list.shareLinkCopied'))
   }).catch(() => {
-    openDialog({ message: t('apikey.list.shareLinkCopyFailed') })
+    open({ message: t('apikey.list.shareLinkCopyFailed') })
   })
 }
 
@@ -299,7 +269,7 @@ async function enableShare(key: ApiKey) {
   try {
     const res = await shareApi.toggleShare(key.id, true)
     if (!res.data.success) {
-      openDialog({ title: t('error.unknown'), message: res.data.error || t('apikey.list.enableShareFailed') })
+      open({ title: t('error.unknown'), message: res.data.error || t('apikey.list.enableShareFailed') })
       return
     }
     // Update local data with shareCode from backend
@@ -309,7 +279,7 @@ async function enableShare(key: ApiKey) {
     // Refresh list to update status
     loadKeys()
   } catch (e: any) {
-    openDialog({ title: t('error.unknown'), message: e.message })
+    open({ title: t('error.unknown'), message: e.message })
   }
 }
 
@@ -317,7 +287,7 @@ async function enableShare(key: ApiKey) {
  * Confirm revoke share
  */
 function confirmRevoke(key: ApiKey) {
-  openDialog({
+  open({
     title: t('apikey.list.revokeConfirm'),
     message: t('apikey.list.revokeMsg', { name: key.keyName }),
     type: 'confirm',
@@ -335,14 +305,14 @@ async function revokeShare(key: ApiKey) {
   try {
     const res = await shareApi.toggleShare(key.id, false)
     if (!res.data.success) {
-      openDialog({ title: t('error.unknown'), message: res.data.error || t('apikey.list.revokeFailed') })
+      open({ title: t('error.unknown'), message: res.data.error || t('apikey.list.revokeFailed') })
       return
     }
     key.shared = 0
     showToastMsg(t('apikey.list.revokeSuccess'))
     loadKeys()
   } catch (e: any) {
-    openDialog({ title: t('error.unknown'), message: e.message })
+    open({ title: t('error.unknown'), message: e.message })
   }
 }
 
@@ -362,14 +332,14 @@ function showToastMsg(text: string) {
 }
 
 function confirmDelete(key: ApiKey) {
-  openDialog({
+  open({
     title: t('common.confirmDelete'),
     message: t('apikey.list.deleteConfirm', { name: key.keyName }),
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: () => {
       apikeyApi.delete(key.id!).then(() => loadKeys()).catch(e =>
-        openDialog({ title: t('error.deleteFailed'), message: e.message })
+        open({ title: t('error.deleteFailed'), message: e.message })
       )
     }
   })
@@ -380,7 +350,7 @@ async function loadKeys() {
     const res = await apikeyApi.list()
     apiKeys.value = res.data
   } catch (e: any) {
-    openDialog({ title: t('error.loadFailed'), message: e.message })
+    open({ title: t('error.loadFailed'), message: e.message })
   }
 }
 

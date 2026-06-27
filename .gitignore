@@ -66,6 +66,8 @@ tmpcookie.txt
 
 ### OpenCode / Agent workspace ###
 .omo/
+.agentswork/
+memory/
 .playwright-mcp/
 
 ### Environment files ###

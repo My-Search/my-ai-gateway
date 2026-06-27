@@ -369,15 +369,15 @@ class RelayServiceTest {
     }
 
     @Test
-    void tryCandidates_triggersCircuitBreakerEvenWhenEnabledIsZero() {
-        // enabled=0 时，重试耗尽后仍应触发熔断（不再被 enabled 检查阻止）
+    void tryCandidates_disabledConfig_doesNotRetry() {
+        // enabled=0 时，不重试（getRetryCount 返回 0），熔断也不会被实际触发
         RelayService spyService = spy(relayService);
 
         CircuitBreakerConfig config = new CircuitBreakerConfig();
         config.setRetryCount(1);
         config.setCircuitBreakDuration(60);
         config.setCircuitBreakScope("model");
-        config.setEnabled(0);  // 原先 enabled=0 会阻止熔断，现在不应阻止
+        config.setEnabled(0);
         when(modelService.getCircuitBreakerConfig(1L)).thenReturn(config);
 
         Model model = new Model();
@@ -421,8 +421,8 @@ class RelayServiceTest {
         spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
                 .block(Duration.ofSeconds(5));
 
-        // enabled=0 时验证熔断仍然被触发
-        verify(circuitBreakerService).triggerCircuitBreak(1L, 10L, 1000L, 100L);
+        // enabled=0 时，getRetryCount 返回 0，只尝试 1 次（不重试）
+        verify(spyService, times(1)).callProviderNonStream(any(), any(), any(), eq("openai"));
     }
 
     @Test
@@ -771,6 +771,54 @@ class RelayServiceTest {
         assertThat(candidates.get(0).getChannelApiKey().getKeyName()).isEqualTo("ak2");
         assertThat(candidates.get(1).getChannelModel().getModelName()).isEqualTo("a2");
         assertThat(candidates.get(1).getChannelApiKey().getKeyName()).isEqualTo("ak2");
+    }
+
+    @Test
+    void getAvailableCandidates_oldFormatGlobalChannelBreaker_skipsAllCandidates() {
+        // 旧格式全渠道熔断记录（channelApiKeyId IS NULL），应跳过该渠道下所有候选
+        Model model = new Model();
+        model.setId(1L);
+        model.setModelName("x");
+        when(modelService.getByModelName("x")).thenReturn(model);
+
+        Channel channelA = new Channel();
+        channelA.setId(10L);
+        channelA.setName("A");
+        channelA.setEnabled(1);
+
+        ChannelModel cmA1 = createChannelModel(100L, "a1", 10L);
+        ChannelModel cmA2 = createChannelModel(101L, "a2", 10L);
+
+        ChannelApiKey ak1 = createApiKey(1000L, "ak1", 10L);
+        ChannelApiKey ak2 = createApiKey(1001L, "ak2", 10L);
+
+        ModelChannelRel relA1 = new ModelChannelRel(1L, 100L);
+        relA1.setSortOrder(0);
+        relA1.setEnabled(1);
+        ModelChannelRel relA2 = new ModelChannelRel(1L, 101L);
+        relA2.setSortOrder(1);
+        relA2.setEnabled(1);
+
+        when(modelService.getChannelRels(1L)).thenReturn(List.of(relA1, relA2));
+        when(modelService.getChannelModelById(100L)).thenReturn(cmA1);
+        when(modelService.getChannelModelById(101L)).thenReturn(cmA2);
+        when(modelService.getChannelById(10L)).thenReturn(channelA);
+        when(channelApiKeyService.getAvailableApiKeys(10L)).thenReturn(List.of(ak1, ak2));
+
+        // 旧格式全渠道熔断：isChannelCircuitBroken(channelId) 返回 true，
+        // 但 isChannelCircuitBroken(channelId, apiKeyId) 返回 false（无 per-key 记录）
+        when(circuitBreakerService.isChannelCircuitBroken(10L)).thenReturn(true);
+        when(circuitBreakerService.isChannelCircuitBroken(10L, 1000L)).thenReturn(false);
+        when(circuitBreakerService.isChannelCircuitBroken(10L, 1001L)).thenReturn(false);
+        when(circuitBreakerService.isModelCircuitBroken(any(), any())).thenReturn(false);
+
+        InternalRequest req = new InternalRequest();
+        req.setModel("x");
+
+        List<RoutingCandidate> candidates = relayService.getAvailableCandidates(req);
+
+        // 应跳过该渠道下所有候选
+        assertThat(candidates).isEmpty();
     }
 
     @Test

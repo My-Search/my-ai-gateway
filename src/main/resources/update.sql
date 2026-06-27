@@ -318,3 +318,12 @@ ALTER TABLE model_channel_rels ADD COLUMN reasoning_effort TEXT;
 INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('log_retention_days', '7', '日志保留天数，超过此天数的日志将被自动清理');
 -- 日志定时清理开关（1=开启，0=关闭）
 INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('log_cleanup_enabled', '1', '日志定时清理开关，1=开启，0=关闭');
+
+-- ========================================
+-- VERSION:v1.16.0
+-- 添加 (created_at, phase) 复合索引优化 Dashboard 统计查询性能
+-- 所有 Dashboard 聚合查询均按 created_at 范围过滤 + phase 条件筛选，
+-- 复合索引可大幅减少索引扫描范围
+-- ========================================
+
+CREATE INDEX IF NOT EXISTS idx_request_logs_created_at_phase ON request_logs(created_at, phase);

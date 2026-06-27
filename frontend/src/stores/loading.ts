@@ -7,14 +7,14 @@ import { ref } from 'vue'
  */
 export const useLoadingStore = defineStore('loading', () => {
   const isLoading = ref(false)
-  const loadingText = ref('加载中...')
+  const loadingText = ref('')
 
   /**
    * 显示加载模态
-   * @param text 可选的加载提示文本
+   * @param text 可选的加载提示文本（不传或传空时由 LoadingModal 按 i18n 显示）
    */
   function show(text?: string) {
-    loadingText.value = text || '加载中...'
+    loadingText.value = text ?? ''
     isLoading.value = true
   }
 

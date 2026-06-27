@@ -94,7 +94,12 @@ public class RelayService {
         this.messageTransformer = messageTransformer;
         this.streamContentManager = streamContentManager;
         this.latencyTracker = latencyTracker;
+        // 配置 HttpClient 超时：连接超时 10s、响应超时 60s
+        reactor.netty.http.client.HttpClient httpClient = reactor.netty.http.client.HttpClient.create()
+                .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
+                .responseTimeout(java.time.Duration.ofSeconds(60));
         this.webClient = WebClient.builder()
+                .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(httpClient))
                 .codecs(config -> config.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
                 .build();
     }
@@ -127,6 +132,13 @@ public class RelayService {
     public SseEmitter chatCompletionsStream(String authHeader, String requestBody, boolean internalClient) {
         SseEmitter emitter = new SseEmitter(300_000L);
         String traceId = requestLogService.startTrace();
+        // 注册资源清理回调：无论正常完成、超时还是客户端断开，都清理 StreamContentManager 和 streamUsageMap
+        emitter.onCompletion(() -> cleanupStreamResources(traceId));
+        emitter.onTimeout(() -> {
+            log.warn("SSE stream timeout, cleaning up resources - traceId={}", traceId);
+            cleanupStreamResources(traceId);
+            emitter.complete();
+        });
         Mono.fromCallable(() -> parseRequest(requestBody, "openai"))
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
                 .flatMapMany(req -> executeStreamRelay(traceId, authHeader, req, "openai", internalClient))
@@ -136,10 +148,14 @@ public class RelayService {
                 .subscribe(
                         event -> sendSseEvent(emitter, event),
                         err -> {
-                            log.error("Stream relay failed", err);
+                            log.error("Stream relay failed - traceId={}", traceId, err);
+                            cleanupStreamResources(traceId);
                             sendSseError(emitter, err.getMessage());
                         },
-                        emitter::complete
+                        () -> {
+                            cleanupStreamResources(traceId);
+                            emitter.complete();
+                        }
                 );
         return emitter;
     }
@@ -152,6 +168,13 @@ public class RelayService {
     public SseEmitter messagesStream(String apiKeyHeader, String requestBody, String anthropicVersion, boolean internalClient) {
         SseEmitter emitter = new SseEmitter(300_000L);
         String traceId = requestLogService.startTrace();
+        // 注册资源清理回调：无论正常完成、超时还是客户端断开，都清理 StreamContentManager 和 streamUsageMap
+        emitter.onCompletion(() -> cleanupStreamResources(traceId));
+        emitter.onTimeout(() -> {
+            log.warn("SSE stream timeout, cleaning up resources - traceId={}", traceId);
+            cleanupStreamResources(traceId);
+            emitter.complete();
+        });
         Mono.fromCallable(() -> parseRequest(requestBody, "anthropic"))
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
                 .flatMapMany(req -> executeStreamRelay(traceId, apiKeyHeader, req, "anthropic", internalClient))
@@ -160,10 +183,14 @@ public class RelayService {
                 .subscribe(
                         event -> sendSseEvent(emitter, event),
                         err -> {
-                            log.error("Stream relay failed", err);
+                            log.error("Stream relay failed - traceId={}", traceId, err);
+                            cleanupStreamResources(traceId);
                             sendSseError(emitter, err.getMessage());
                         },
-                        emitter::complete
+                        () -> {
+                            cleanupStreamResources(traceId);
+                            emitter.complete();
+                        }
                 );
         return emitter;
     }
@@ -1289,6 +1316,8 @@ public class RelayService {
             }
 
             Long specifiedKeyId = channelModel.getChannelApiKeyId();
+            // 渠道级熔断在循环外检查一次，避免对每个 API Key 重复查
+            boolean channelLevelBroken = circuitBreakerService.isChannelCircuitBroken(channel.getId());
             List<ChannelApiKey> apiKeys = getApiKeysForCandidate(channel.getId(), specifiedKeyId);
             log.info("渠道模型: {} (id={}), 指定API Key: {}, 可用Keys: {}",
                     channelModel.getModelName(), channelModel.getId(), specifiedKeyId, apiKeys.size());
@@ -1298,7 +1327,8 @@ public class RelayService {
                     log.debug("API Key被禁用: keyId={}, keyName={}", apiKey.getId(), apiKey.getKeyName());
                     continue;
                 }
-                if (circuitBreakerService.isChannelCircuitBroken(channel.getId(), apiKey.getId())) {
+                if (channelLevelBroken
+                        || circuitBreakerService.isChannelCircuitBroken(channel.getId(), apiKey.getId())) {
                     log.info("API Key渠道级熔断跳过: channel={} key={}", channel.getName(), apiKey.getKeyName());
                     continue;
                 }
@@ -1364,7 +1394,8 @@ public class RelayService {
             return 0;
         }
         CircuitBreakerConfig config = modelService.getCircuitBreakerConfig(customModelId);
-        if (config == null || config.getRetryCount() == null) {
+        if (config == null || config.getRetryCount() == null
+                || config.getEnabled() == null || config.getEnabled() != 1) {
             return 0;
         }
         return Math.max(0, config.getRetryCount());
@@ -1382,10 +1413,11 @@ public class RelayService {
      * <p>用于在发起请求前或重试前实时检测，若被其他并发请求熔断则快速跳过。</p>
      */
     private boolean isCandidateCircuitBroken(RoutingCandidate candidate) {
-        return circuitBreakerService.isChannelCircuitBroken(
-                candidate.getChannel().getId(), candidate.getChannelApiKey().getId())
+        return circuitBreakerService.isChannelCircuitBroken(candidate.getChannel().getId())
+                || circuitBreakerService.isChannelCircuitBroken(
+                        candidate.getChannel().getId(), candidate.getChannelApiKey().getId())
                 || circuitBreakerService.isModelCircuitBroken(
-                candidate.getChannelModel().getId(), candidate.getChannelApiKey().getId());
+                        candidate.getChannelModel().getId(), candidate.getChannelApiKey().getId());
     }
 
     /**
@@ -1449,6 +1481,14 @@ public class RelayService {
     }
 
     /**
+     * 清理 SSE 流资源：清除 StreamContentManager 中的累积内容和 streamUsageMap 记录
+     */
+    private void cleanupStreamResources(String traceId) {
+        streamContentManager.clearContent(traceId);
+        streamUsageMap.remove(traceId);
+    }
+
+    /**
      * 构建路由进度 SSE 事件 JSON
      * 前端据此实时展示当前正在尝试的模型/渠道信息
      *
@@ -1488,10 +1528,13 @@ public class RelayService {
             Channel channel = modelService.getChannelById(channelModel.getChannelId());
             if (channel == null || channel.getEnabled() == null || channel.getEnabled() != 1) continue;
 
+            // 渠道级熔断在循环外检查一次，避免对每个 API Key 重复查
+            boolean channelLevelBroken = circuitBreakerService.isChannelCircuitBroken(channel.getId());
             List<ChannelApiKey> apiKeys = getApiKeysForCandidate(channel.getId(), channelModel.getChannelApiKeyId());
             for (ChannelApiKey apiKey : apiKeys) {
                 if (apiKey.getEnabled() == null || apiKey.getEnabled() != 1) continue;
-                boolean channelBroken = circuitBreakerService.isChannelCircuitBroken(channel.getId(), apiKey.getId());
+                boolean channelBroken = channelLevelBroken
+                        || circuitBreakerService.isChannelCircuitBroken(channel.getId(), apiKey.getId());
                 boolean modelBroken = circuitBreakerService.isModelCircuitBroken(channelModel.getId(), apiKey.getId());
                 if (channelBroken || modelBroken) {
                     String scope = channelBroken ? "渠道级熔断" : "模型级熔断";

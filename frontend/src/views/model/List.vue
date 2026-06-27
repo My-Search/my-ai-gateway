@@ -94,55 +94,28 @@
 
   <!-- Common Dialog -->
   <Dialog
-    v-model="dialogVisible"
-    :title="dialogTitle"
-    :type="dialogType"
-    :confirm-class="dialogConfirmClass"
-    @confirm="onDialogConfirm"
+    v-model="visible"
+    :title="title"
+    :type="type"
+    :confirm-class="confirmClass"
+    @confirm="onConfirm"
   >
-    {{ dialogMessage }}
+    {{ message }}
   </Dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useI18n } from '@/composables/useI18n'
+import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel } from '@/api/model'
 import { formatLocalDateTimeFull } from '@/utils/date'
 import Dialog from '@/components/common/Dialog.vue'
 
 const { t } = useI18n()
+const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 
 const models = ref<CustomModel[]>([])
-
-/* ---------- Dialog state ---------- */
-const dialogVisible = ref(false)
-const dialogTitle = ref(t('common.prompt'))
-const dialogMessage = ref('')
-const dialogType = ref<'alert' | 'confirm'>('alert')
-const dialogConfirmClass = ref('btn-primary')
-let dialogOnConfirm: (() => void) | null = null
-
-function openDialog(opts: {
-  title?: string
-  message: string
-  type?: 'alert' | 'confirm'
-  confirmClass?: string
-  onConfirm?: () => void
-}) {
-  dialogTitle.value = opts.title ?? t('common.prompt')
-  dialogMessage.value = opts.message
-  dialogType.value = opts.type ?? 'alert'
-  dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
-  dialogOnConfirm = opts.onConfirm ?? null
-  dialogVisible.value = true
-}
-
-function onDialogConfirm() {
-  dialogOnConfirm?.()
-  dialogOnConfirm = null
-}
-/* ------------------------------ */
 
 function strategyLabel(s?: string) {
   return s === 'random' ? t('model.list.strategyRandom') : s === 'round_robin' ? t('model.list.strategyRoundRobin') : t('model.list.strategyFailover')
@@ -153,14 +126,14 @@ function strategyBadge(s?: string) {
 }
 
 function confirmDelete(m: CustomModel) {
-  openDialog({
+  open({
     title: t('common.confirmDelete'),
     message: t('model.list.deleteConfirm').replace('{name}', m.modelName),
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: () => {
       modelApi.delete(m.id!).then(() => loadModels()).catch(e =>
-        openDialog({ title: t('error.deleteFailed'), message: e.message })
+        open({ title: t('error.deleteFailed'), message: e.message })
       )
     }
   })
@@ -171,7 +144,7 @@ async function loadModels() {
     const res = await modelApi.list()
     models.value = res.data
   } catch (e: any) {
-    openDialog({ title: t('error.loadFailed'), message: e.message })
+    open({ title: t('error.loadFailed'), message: e.message })
   }
 }
 

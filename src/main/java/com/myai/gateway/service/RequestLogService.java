@@ -197,6 +197,39 @@ public class RequestLogService {
     }
 
     /**
+     * 分页获取日志（带条件过滤）
+     *
+     * @param offset    跳过的 traceId 数量
+     * @param limit     返回的 traceId 数量
+     * @param modelName 入口模型名（可选）
+     * @param startTime 开始时间（可选）
+     * @param endTime   结束时间（可选）
+     * @return 完整的日志列表
+     */
+    public List<RequestLog> getFilteredLogsByPage(int offset, int limit,
+                                                  String modelName,
+                                                  LocalDateTime startTime,
+                                                  LocalDateTime endTime) {
+        List<String> traceIds = requestLogMapper.selectTraceIdsByFilters(modelName, startTime, endTime, offset, limit);
+        if (traceIds.isEmpty()) {
+            return List.of();
+        }
+        return requestLogMapper.selectList(
+                new LambdaQueryWrapper<RequestLog>()
+                        .in(RequestLog::getTraceId, traceIds)
+                        .orderByAsc(RequestLog::getCreatedAt));
+    }
+
+    /**
+     * 获取过滤后的 traceId 总数
+     */
+    public long getFilteredTraceCount(String modelName,
+                                      LocalDateTime startTime,
+                                      LocalDateTime endTime) {
+        return requestLogMapper.countDistinctTracesByFilters(modelName, startTime, endTime);
+    }
+
+    /**
      * 根据追踪 ID 获取日志
      */
     public List<RequestLog> getByTraceId(String traceId) {

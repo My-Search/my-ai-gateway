@@ -15,14 +15,14 @@ public class StreamContentManager {
 
     private static final Logger log = LoggerFactory.getLogger(StreamContentManager.class);
 
-    /** traceId -> 累积的内容 */
-    private final ConcurrentHashMap<String, StringBuilder> contentAccumulator = new ConcurrentHashMap<>();
+    /** traceId -> 累积的内容（使用 StringBuffer 保证线程安全） */
+    private final ConcurrentHashMap<String, StringBuffer> contentAccumulator = new ConcurrentHashMap<>();
 
     /**
      * 追加内容到累积器
      */
     public void appendContent(String traceId, String content) {
-        contentAccumulator.computeIfAbsent(traceId, k -> new StringBuilder())
+        contentAccumulator.computeIfAbsent(traceId, k -> new StringBuffer())
                 .append(content);
     }
 
@@ -31,7 +31,7 @@ public class StreamContentManager {
      * 返回累积的内容并从 Map 中移除
      */
     public String getAndClearContent(String traceId) {
-        StringBuilder sb = contentAccumulator.remove(traceId);
+        StringBuffer sb = contentAccumulator.remove(traceId);
         if (sb == null || sb.length() == 0) {
             return null;
         }
@@ -44,7 +44,7 @@ public class StreamContentManager {
      * 获取累积的内容（不清空）
      */
     public String getContent(String traceId) {
-        StringBuilder sb = contentAccumulator.get(traceId);
+        StringBuffer sb = contentAccumulator.get(traceId);
         if (sb == null || sb.length() == 0) {
             return null;
         }
@@ -55,7 +55,7 @@ public class StreamContentManager {
      * 检查是否有累积的内容
      */
     public boolean hasContent(String traceId) {
-        StringBuilder sb = contentAccumulator.get(traceId);
+        StringBuffer sb = contentAccumulator.get(traceId);
         return sb != null && sb.length() > 0;
     }
 

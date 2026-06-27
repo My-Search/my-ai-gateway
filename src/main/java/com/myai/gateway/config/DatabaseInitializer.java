@@ -1,5 +1,7 @@
 package com.myai.gateway.config;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.io.ClassPathResource;
@@ -17,6 +19,8 @@ import java.util.stream.Collectors;
  */
 @Component
 public class DatabaseInitializer implements CommandLineRunner {
+
+    private static final Logger log = LoggerFactory.getLogger(DatabaseInitializer.class);
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -52,9 +56,9 @@ public class DatabaseInitializer implements CommandLineRunner {
                 executeVersion(version);
             }
 
-            System.out.println("Database initialized successfully");
+            log.info("Database initialized successfully");
         } catch (Exception e) {
-            System.err.println("Database initialization warning: " + e.getMessage());
+            log.warn("Database initialization warning: {}", e.getMessage());
         }
     }
 
@@ -79,25 +83,34 @@ public class DatabaseInitializer implements CommandLineRunner {
                     "version TEXT PRIMARY KEY, applied_at TIMESTAMP, description TEXT)");
         }
 
-        // 执行 SQL 语句
-        String[] statements = versionContent.split(";");
-        for (String sql : statements) {
-            sql = sql.trim();
-            if (sql.isEmpty() || sql.startsWith("--")) {
-                continue;
+        // 使用事务包裹，确保版本内 SQL 原子性
+        jdbcTemplate.execute("BEGIN TRANSACTION");
+        try {
+            // 执行 SQL 语句
+            String[] statements = versionContent.split(";");
+            for (String sql : statements) {
+                sql = sql.trim();
+                if (sql.isEmpty() || sql.startsWith("--")) {
+                    continue;
+                }
+                try {
+                    jdbcTemplate.execute(sql);
+                } catch (Exception e) {
+                    // 忽略部分错误（如 ALTER TABLE 如果列已存在）
+                    log.warn("SQL warning: {}", e.getMessage());
+                }
             }
-            try {
-                jdbcTemplate.execute(sql);
-            } catch (Exception e) {
-                // 忽略部分错误（如 ALTER TABLE 如果列已存在）
-                System.err.println("SQL warning: " + e.getMessage());
-            }
-        }
 
-        // 记录版本
-        String description = extractDescription(versionContent);
-        jdbcTemplate.execute("INSERT INTO db_schema_version (version, description) VALUES ('" +
-                version + "', '" + description + "')");
+            // 记录版本（使用参数化查询，防止 SQL 注入）
+            String description = extractDescription(versionContent);
+            jdbcTemplate.update(
+                    "INSERT INTO db_schema_version (version, description) VALUES (?, ?)",
+                    version, description);
+            jdbcTemplate.execute("COMMIT");
+        } catch (Exception e) {
+            jdbcTemplate.execute("ROLLBACK");
+            log.error("Failed to execute database version {}, rolled back: {}", version, e.getMessage());
+        }
     }
 
     private String extractVersion(String content) {

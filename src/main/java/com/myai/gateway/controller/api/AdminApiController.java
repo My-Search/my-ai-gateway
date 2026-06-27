@@ -15,6 +15,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -892,12 +893,23 @@ public class AdminApiController {
     @GetMapping(value = "/logs", produces = "application/json;charset=UTF-8")
     public ResponseEntity<Map<String, Object>> listLogs(
             @RequestParam(defaultValue = "0") int offset,
-            @RequestParam(defaultValue = "50") int limit) {
-        // 获取总数
-        long totalTraces = requestLogService.getTraceCount();
-        
-        // 分页查询日志
-        List<RequestLog> logs = requestLogService.getLogsByPage(offset, limit);
+            @RequestParam(defaultValue = "50") int limit,
+            @RequestParam(required = false) String modelName,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
+        // 获取总数（带过滤）
+        boolean hasFilters = modelName != null && !modelName.isEmpty()
+                || startTime != null
+                || endTime != null;
+        long totalTraces;
+        List<RequestLog> logs;
+        if (hasFilters) {
+            totalTraces = requestLogService.getFilteredTraceCount(modelName, startTime, endTime);
+            logs = requestLogService.getFilteredLogsByPage(offset, limit, modelName, startTime, endTime);
+        } else {
+            totalTraces = requestLogService.getTraceCount();
+            logs = requestLogService.getLogsByPage(offset, limit);
+        }
         Map<String, List<RequestLog>> grouped = logs.stream()
                 .collect(Collectors.groupingBy(RequestLog::getTraceId));
         List<Map<String, Object>> treeData = new ArrayList<>();
@@ -917,9 +929,9 @@ public class AdminApiController {
             trace.put("successCount", successCount);
             trace.put("failCount", failCount);
 
-            String modelName = sortedLogs.stream().filter(l -> l.getModelName() != null)
+            String traceModelName = sortedLogs.stream().filter(l -> l.getModelName() != null)
                     .map(RequestLog::getModelName).findFirst().orElse("");
-            trace.put("modelName", modelName);
+            trace.put("modelName", traceModelName);
 
             long totalTime = sortedLogs.stream()
                     .filter(l -> ("success".equals(l.getPhase()) || "fail".equals(l.getPhase()))
