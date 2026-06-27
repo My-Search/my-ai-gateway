@@ -42,13 +42,16 @@ public class ChannelService {
     private final ChannelApiKeyService channelApiKeyService;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private final MultiModalRuleService multiModalRuleService;
 
     public ChannelService(ChannelMapper channelMapper, ChannelModelMapper channelModelMapper, 
-                          ChannelApiKeyService channelApiKeyService, ObjectMapper objectMapper) {
+                          ChannelApiKeyService channelApiKeyService, ObjectMapper objectMapper,
+                          MultiModalRuleService multiModalRuleService) {
         this.channelMapper = channelMapper;
         this.channelModelMapper = channelModelMapper;
         this.channelApiKeyService = channelApiKeyService;
         this.objectMapper = objectMapper;
+        this.multiModalRuleService = multiModalRuleService;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30))
                 .build();
@@ -162,8 +165,12 @@ public class ChannelService {
             Set<String> existingNames = existingModels.stream()
                     .map(ChannelModel::getModelName)
                     .collect(Collectors.toSet());
+            // 建立已有模型名的 → 实体映射，便于后续更新已存在的模型
+            java.util.Map<String, ChannelModel> existingByName = existingModels.stream()
+                    .collect(Collectors.toMap(ChannelModel::getModelName, cm -> cm, (a, b) -> a));
 
             int addedCount = 0;
+            int updatedCount = 0;
             for (Map<String, Object> m : submittedModels) {
                 Boolean deleted = (Boolean) m.get("_deleted");
                 if (deleted != null && deleted) {
@@ -173,15 +180,40 @@ public class ChannelService {
                 String modelName = (String) m.get("modelName");
                 String displayName = (String) m.getOrDefault("displayName", modelName);
 
-                if (modelName != null && !modelName.isEmpty() && !existingNames.contains(modelName)) {
+                if (modelName == null || modelName.isEmpty()) continue;
+
+                if (!existingNames.contains(modelName)) {
+                    // 新模型：插入并设置 input
                     ChannelModel cm = new ChannelModel(channel.getId(), modelName, displayName);
+                    applyRulesToModel(cm);
                     channelModelMapper.insert(cm);
                     addedCount++;
-                    existingNames.add(modelName); // 避免重复添加
+                    existingNames.add(modelName);
+                } else {
+                    // 已有模型：重新应用规则更新 input 字段
+                    ChannelModel cm = existingByName.get(modelName);
+                    // 若 existingByName 中找不到（如同名的模型刚被插入），回退查 DB
+                    if (cm == null) {
+                        cm = channelModelMapper.selectOne(
+                                new LambdaQueryWrapper<ChannelModel>()
+                                        .eq(ChannelModel::getChannelId, channel.getId())
+                                        .eq(ChannelModel::getModelName, modelName));
+                    }
+                    if (cm != null) {
+                        String oldInput = cm.getInput();
+                        applyRulesToModel(cm);
+                        if ((oldInput == null && cm.getInput() != null)
+                                || (oldInput != null && !oldInput.equals(cm.getInput()))) {
+                            channelModelMapper.updateById(cm);
+                            updatedCount++;
+                            log.debug("已有模型重新应用规则: modelId={}, modelName={}, input: {} -> {}",
+                                    cm.getId(), modelName, oldInput, cm.getInput());
+                        }
+                    }
                 }
             }
 
-            log.info("渠道 {} 模型同步完成：新增 {} 个，删除 {} 个", channel.getName(), addedCount, deletedCount);
+            log.info("渠道 {} 模型同步完成：新增 {} 个，更新 {} 个，删除 {} 个", channel.getName(), addedCount, updatedCount, deletedCount);
 
         } catch (Exception e) {
             log.warn("同步模型列表失败: {}", e.getMessage());
@@ -250,6 +282,7 @@ public class ChannelService {
                 if (model.getSource() == null) {
                     model.setSource("api");
                 }
+                applyRulesToModel(model);
                 channelModelMapper.insert(model);
                 addedCount++;
             }
@@ -381,6 +414,7 @@ public class ChannelService {
                 if (modelName != null && !modelName.isEmpty()) {
                     ChannelModel cm = new ChannelModel(channel.getId(), modelName, displayName);
                     cm.setSource("manual");
+                    applyRulesToModel(cm);
                     channelModelMapper.insert(cm);
                 }
             }
@@ -392,12 +426,24 @@ public class ChannelService {
     }
 
     /**
+     * 根据多模态规则自动匹配并设置模型的 input 字段
+     */
+    private void applyRulesToModel(ChannelModel model) {
+        if (model == null || model.getModelName() == null) {
+            return;
+        }
+        String input = multiModalRuleService.computeInput(model.getModelName());
+        model.setInput(input);
+    }
+
+    /**
      * 手动添加模型（编辑模式 AJAX）
      */
     @Transactional
     public ChannelModel addManualModel(Long channelId, String modelName, String displayName) {
         ChannelModel cm = new ChannelModel(channelId, modelName, displayName);
         cm.setSource("manual");
+        applyRulesToModel(cm);
         channelModelMapper.insert(cm);
         return cm;
     }

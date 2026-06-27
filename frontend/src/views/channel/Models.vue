@@ -37,6 +37,7 @@
           <tr>
             <th>{{ t('channel.models.modelName') }}</th>
             <th>{{ t('channel.models.displayName') }}</th>
+            <th>{{ t('channel.models.inputTypes') }}</th>
             <th>{{ t('channel.models.status') }}</th>
             <th>{{ t('channel.models.requestCount') }}</th>
             <th>{{ t('channel.models.tokenUsage') }}</th>
@@ -47,7 +48,13 @@
           <tr v-for="m in models" :key="m.id">
             <td><code class="model-tag">{{ m.modelName }}</code></td>
             <td>{{ m.displayName || m.modelName }}</td>
-            <td><span class="badge badge-success">{{ t('channel.models.linked') }}</span></td>
+            <td>
+              <span v-if="m.input" class="input-tags">
+                <span v-for="type in (m.input || '').split(',')" :key="type" class="input-tag" :class="'input-tag--' + type">{{ type }}</span>
+              </span>
+              <span v-else class="text-muted">text</span>
+            </td>
+            <td style="white-space:nowrap;"><span class="badge badge-success">{{ t('channel.models.linked') }}</span></td>
             <td style="text-align:right;font-variant-numeric:tabular-nums;">
               <span style="font-weight:600;">{{ formatNumber(getModelStat(m.modelName)?.requestCount) }}</span>
             </td>
@@ -83,6 +90,13 @@
           </div>
           <div class="mobile-card-model-name">
             {{ t('channel.models.modelName') }}: <code class="model-tag">{{ m.modelName }}</code>
+          </div>
+          <div class="mobile-card-row" style="margin-bottom:8px;font-size:12px;">
+            <span class="mobile-card-label">{{ t('channel.models.inputTypes') }}:</span>
+            <span v-if="m.input" class="input-tags" style="display:inline-flex;">
+              <span v-for="type in (m.input || '').split(',')" :key="type" class="input-tag" :class="'input-tag--' + type">{{ type }}</span>
+            </span>
+            <span v-else class="text-muted">text</span>
           </div>
           <div class="mobile-card-divider"></div>
           <div class="mobile-card-stats">
@@ -218,6 +232,11 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* Ensure all table cells are vertically centered */
+.desktop-table td {
+  vertical-align: middle;
+}
+
 .usage-summary {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -316,5 +335,35 @@ onMounted(async () => {
   .usage-summary {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+
+/* Input type tags */
+.input-tags {
+  display: inline-flex;
+  gap: 3px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.input-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-transform: lowercase;
+}
+.input-tag--text {
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--accent-blue, #58a6ff);
+}
+.input-tag--image {
+  background: rgba(46, 160, 67, 0.12);
+  color: #2ea043;
+}
+.text-muted {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 </style>

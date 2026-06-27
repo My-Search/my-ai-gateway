@@ -23,6 +23,7 @@ import java.util.*;
 public class MessageTransformer {
 
     private static final Logger log = LoggerFactory.getLogger(MessageTransformer.class);
+
     private final ObjectMapper objectMapper;
 
     public MessageTransformer(ObjectMapper objectMapper) {
@@ -344,7 +345,7 @@ public class MessageTransformer {
             root.set("tool_choice", objectMapper.valueToTree(req.getToolChoice()));
         }
 
-        // 思考强度
+        // 思考强度（透传，上游 buildProviderRequestBody 已处理默认值逻辑）
         if (req.getReasoningEffort() != null && !req.getReasoningEffort().isEmpty()) {
             root.put("reasoning_effort", req.getReasoningEffort());
         }
@@ -510,7 +511,7 @@ public class MessageTransformer {
             }
         }
 
-        // 思考强度
+        // 思考强度（透传）
         if (req.getReasoningEffort() != null && !req.getReasoningEffort().isEmpty()) {
             root.put("reasoning_effort", req.getReasoningEffort());
         }

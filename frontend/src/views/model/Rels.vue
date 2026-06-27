@@ -102,6 +102,7 @@
             <th>{{ t('model.rels.sort') }}</th>
             <th>{{ t('model.rels.channel') }}</th>
             <th>{{ t('model.rels.model') }}</th>
+            <th>{{ t('model.rels.inputTypes') }}</th>
             <th>{{ t('model.rels.responseTime') }}</th>
             <th>{{ t('model.rels.reasoningEffort') }}</th>
             <th>{{ t('model.rels.actions') }}</th>
@@ -119,6 +120,12 @@
             </td>
             <td>
               <code class="model-tag" :class="{ 'text-disabled': rel.channelEnabled !== 1 }">{{ rel.channelModelName }}</code>
+            </td>
+            <td>
+              <span v-if="rel.input" class="input-tags">
+                <span v-for="type in (rel.input || '').split(',')" :key="type" class="input-tag" :class="'input-tag--' + type">{{ type }}</span>
+              </span>
+              <span v-else class="text-muted">text</span>
             </td>
             <td>
               <span v-if="rel.ttftMs != null" class="resp-time">
@@ -151,7 +158,7 @@
             </td>
           </tr>
           <tr v-if="!rels.length">
-            <td colspan="6" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
+            <td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
           </tr>
         </tbody>
       </table>
@@ -548,6 +555,11 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* Ensure all table cells are vertically centered */
+table td {
+  vertical-align: middle;
+}
+
 /* Row disabled state */
 .row-disabled {
   opacity: 0.5;
@@ -725,6 +737,36 @@ onMounted(async () => {
 
 .drag-handle:active {
   cursor: grabbing;
+}
+
+/* Input type tags */
+.input-tags {
+  display: inline-flex;
+  gap: 3px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.input-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-transform: lowercase;
+}
+.input-tag--text {
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--accent-blue, #58a6ff);
+}
+.input-tag--image {
+  background: rgba(46, 160, 67, 0.12);
+  color: #2ea043;
+}
+.text-muted {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .resp-time {

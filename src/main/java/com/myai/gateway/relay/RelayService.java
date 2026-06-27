@@ -216,7 +216,7 @@ public class RelayService {
     private Mono<String> executeRelay(String traceId, String authHeader, InternalRequest req, String provider, boolean retry) {
         long startTime = System.currentTimeMillis();
         String originalModel = req.getModel();
-        logSkippedCircuitBrokenCandidates(traceId, req);
+        logSkippedCandidates(traceId, req);
         List<RoutingCandidate> candidates = getAvailableCandidates(req);
         if (candidates.isEmpty()) {
             requestLogService.logComplete(traceId, null, originalModel, null, null,
@@ -428,7 +428,7 @@ public class RelayService {
      */
     private Flux<SseEvent> executeStreamRelay(String traceId, String authHeader, InternalRequest req, String provider, boolean internalClient) {
         long startTime = System.currentTimeMillis();
-        logSkippedCircuitBrokenCandidates(traceId, req);
+        logSkippedCandidates(traceId, req);
         List<RoutingCandidate> candidates = getAvailableCandidates(req);
         if (candidates.isEmpty()) {
             requestLogService.logComplete(traceId, null, req.getModel(), null, null,
@@ -867,6 +867,7 @@ public class RelayService {
      */
     private String buildProviderRequestBody(InternalRequest req, RoutingCandidate candidate, String provider) {
         String originalModel = req.getModel();
+        String originalEffort = req.getReasoningEffort();
         req.setModel(candidate.getChannelModel().getModelName());
         try {
             // 如果请求没有指定 reasoning_effort，使用关联上配置的默认值
@@ -882,6 +883,7 @@ public class RelayService {
             return messageTransformer.buildOpenAiRequest(req);
         } finally {
             req.setModel(originalModel);
+            req.setReasoningEffort(originalEffort);
         }
     }
 
@@ -1282,6 +1284,33 @@ public class RelayService {
     }
 
     /**
+     * 检测请求中是否包含图片等多模态内容
+     * 检查所有消息的 contentParts 中的 type 是否为 image_url（OpenAI 格式）
+     * 使用 startsWith 以兼容未来可能的变体（如 image_file）
+     */
+    private boolean hasImageContent(InternalRequest req) {
+        if (req.getMessages() == null) return false;
+        for (InternalMessage msg : req.getMessages()) {
+            if (msg.getContentParts() == null) continue;
+            for (Map<String, Object> part : msg.getContentParts()) {
+                Object type = part.get("type");
+                if (type != null && type.toString().startsWith("image")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 检查渠道模型是否支持图片输入
+     */
+    private boolean supportsImage(ChannelModel channelModel) {
+        String input = channelModel.getInput();
+        return input != null && input.contains("image");
+    }
+
+    /**
      * 获取可用的路由候选列表
      * 将每个 (ChannelModel, API Key) 组合展开为一个候选
      * （包级可见，便于单元测试）
@@ -1294,10 +1323,15 @@ public class RelayService {
             return Collections.emptyList();
         }
 
+        boolean requestHasImage = hasImageContent(req);
+        if (requestHasImage) {
+            log.info("请求包含图片内容，将过滤不支持图片的模型候选");
+        }
+
         List<ModelChannelRel> rels = modelService.getChannelRels(customModelId);
         List<RoutingCandidate> candidates = new ArrayList<>();
 
-        log.info("构建路由候选 - 自定义模型: {} (id={}), 关联数: {}", modelName, customModelId, rels.size());
+        log.info("构建路由候选 - 自定义模型: {} (id={}), 关联数: {}, 含图片={}", modelName, customModelId, rels.size(), requestHasImage);
 
         for (ModelChannelRel rel : rels) {
             if (rel.getEnabled() == null || rel.getEnabled() != 1) {
@@ -1307,6 +1341,11 @@ public class RelayService {
             ChannelModel channelModel = modelService.getChannelModelById(rel.getChannelModelId());
             if (channelModel == null || channelModel.getEnabled() == null || channelModel.getEnabled() != 1) {
                 log.debug("渠道模型不可用: channelModelId={}", rel.getChannelModelId());
+                continue;
+            }
+            // 如果请求包含图片，跳过不支持图片的模型
+            if (requestHasImage && !supportsImage(channelModel)) {
+                log.info("模型不支持图片，跳过: model={}", channelModel.getModelName());
                 continue;
             }
             Channel channel = modelService.getChannelById(channelModel.getChannelId());
@@ -1513,12 +1552,15 @@ public class RelayService {
     }
 
     /**
-     * 记录因熔断被跳过的候选到请求日志，让用户在 UI 中能看到完整的路由链路
+     * 记录被跳过的路由候选到请求日志（熔断、图片能力不匹配等），
+     * 让用户在 UI 中能看到完整的路由链路
      */
-    private void logSkippedCircuitBrokenCandidates(String traceId, InternalRequest req) {
+    private void logSkippedCandidates(String traceId, InternalRequest req) {
         String modelName = req.getModel();
         Long customModelId = resolveModelId(modelName);
         if (customModelId == null) return;
+
+        boolean requestHasImage = hasImageContent(req);
 
         List<ModelChannelRel> rels = modelService.getChannelRels(customModelId);
         for (ModelChannelRel rel : rels) {
@@ -1533,6 +1575,14 @@ public class RelayService {
             List<ChannelApiKey> apiKeys = getApiKeysForCandidate(channel.getId(), channelModel.getChannelApiKeyId());
             for (ChannelApiKey apiKey : apiKeys) {
                 if (apiKey.getEnabled() == null || apiKey.getEnabled() != 1) continue;
+
+                // 请求含图片但模型不支持 → 记录跳过原因
+                if (requestHasImage && !supportsImage(channelModel)) {
+                    logPhase(traceId, new RoutingCandidate(rel, channel, channelModel, apiKey),
+                            req, "skip", "请求含有图片但当前模型不支持因此跳过 " + channel.getName() + "/" + apiKey.getKeyName() + "/" + channelModel.getModelName(), 0);
+                    continue;
+                }
+
                 boolean channelBroken = channelLevelBroken
                         || circuitBreakerService.isChannelCircuitBroken(channel.getId(), apiKey.getId());
                 boolean modelBroken = circuitBreakerService.isModelCircuitBroken(channelModel.getId(), apiKey.getId());

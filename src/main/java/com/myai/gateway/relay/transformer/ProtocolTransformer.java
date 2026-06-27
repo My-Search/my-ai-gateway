@@ -32,6 +32,7 @@ import java.util.Map;
 public class ProtocolTransformer {
 
     private static final Logger log = LoggerFactory.getLogger(ProtocolTransformer.class);
+
     private final ObjectMapper objectMapper;
 
     public ProtocolTransformer(ObjectMapper objectMapper) {
@@ -389,6 +390,11 @@ public class ProtocolTransformer {
         }
         if (req.getToolChoice() != null) {
             root.set("tool_choice", objectMapper.valueToTree(req.getToolChoice()));
+        }
+
+        // 思考强度（透传）
+        if (req.getReasoningEffort() != null && !req.getReasoningEffort().isEmpty()) {
+            root.put("reasoning_effort", req.getReasoningEffort());
         }
 
         return objectMapper.writeValueAsString(root);

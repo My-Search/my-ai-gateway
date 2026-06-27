@@ -214,6 +214,7 @@ export default {
   'channel.models.tokenUsage': 'Token 用量',
   'channel.models.avgResponseShort': '近30次平均响应',
   'channel.models.linked': '已关联',
+  'channel.models.inputTypes': '支持输入',
 
   /* ========== Model List ========== */
   'model.list.title': '入口模型',
@@ -276,6 +277,7 @@ export default {
   'model.rels.deleteFailed': '删除失败',
   'model.rels.saveFailed': '保存失败',
   'model.rels.responseTime': '平均响应',
+  'model.rels.inputTypes': '支持输入',
   'model.rels.reasoningEffort': '思考强度',
   'model.rels.effortDefault': '默认',
   'model.rels.noData': '暂无数据',
@@ -434,6 +436,28 @@ export default {
   'systemConfig.cleanupTimeHint': '定时任务执行时间，不可更改',
   'systemConfig.daily': '每天',
   'systemConfig.saveSuccess': '系统配置已保存',
+
+  /* ========== MultiModal Rules ========== */
+  'multimodal.title': '多模态规则',
+  'multimodal.desc': '通过正则匹配模型名称，自动标记渠道模型的输入类型（如 text、text,image）。保存渠道时自动应用。',
+  'multimodal.addRule': '添加规则',
+  'multimodal.editRule': '编辑规则',
+  'multimodal.pattern': '正则表达式',
+  'multimodal.patternPlaceholder': '例如 .*vision.* 或 .*image.*',
+  'multimodal.appendType': '匹配后添加模态类型',
+  'multimodal.appendTypeHint': '默认 image，当模型名匹配正则时追加此类型',
+  'multimodal.testData': '测试数据',
+  'multimodal.testDataPlaceholder': '输入模型名称进行测试，按 Enter 添加',
+  'multimodal.runTest': '测试匹配',
+  'multimodal.testResult': '测试结果',
+  'multimodal.matched': '匹配',
+  'multimodal.notMatched': '不匹配',
+  'multimodal.noRules': '暂无规则，点击上方按钮添加',
+  'multimodal.deleteConfirm': '确认删除此规则？',
+  'multimodal.patternRequired': '请输入正则表达式',
+  'multimodal.saveSuccess': '规则保存成功',
+  'multimodal.saveFailed': '保存失败',
+  'multimodal.deleteSuccess': '规则已删除',
 
   /* ========== Errors ========== */
   'error.network': '网络错误',

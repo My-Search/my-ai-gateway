@@ -8,6 +8,7 @@ import com.myai.gateway.entity.*;
 import com.myai.gateway.mapper.RequestLogMapper;
 import com.myai.gateway.relay.RelayService;
 import com.myai.gateway.relay.LatencyTracker;
+import com.myai.gateway.entity.MultiModalRule;
 import com.myai.gateway.service.*;
 import com.myai.gateway.config.JwtTokenProvider;
 import jakarta.servlet.http.HttpServletRequest;
@@ -53,6 +54,7 @@ public class AdminApiController {
     private final JwtTokenProvider jwtTokenProvider;
     private final LatencyTracker latencyTracker;
     private final RequestLogMapper requestLogMapper;
+    private final MultiModalRuleService multiModalRuleService;
 
     public AdminApiController(StatsService statsService, ChannelService channelService,
                               ChannelApiKeyService channelApiKeyService, ModelService modelService,
@@ -61,7 +63,8 @@ public class AdminApiController {
                               RelayService relayService, ObjectMapper objectMapper,
                               JwtTokenProvider jwtTokenProvider,
                               LatencyTracker latencyTracker,
-                              RequestLogMapper requestLogMapper) {
+                              RequestLogMapper requestLogMapper,
+                              MultiModalRuleService multiModalRuleService) {
         this.statsService = statsService;
         this.channelService = channelService;
         this.channelApiKeyService = channelApiKeyService;
@@ -75,6 +78,7 @@ public class AdminApiController {
         this.jwtTokenProvider = jwtTokenProvider;
         this.latencyTracker = latencyTracker;
         this.requestLogMapper = requestLogMapper;
+        this.multiModalRuleService = multiModalRuleService;
     }
 
     // ==================== Auth ====================
@@ -1107,6 +1111,105 @@ public class AdminApiController {
             log.error("解析 API Keys JSON 失败: {}", e.getMessage());
             return List.of();
         }
+    }
+
+    // ==================== Multi-Modal Rules ====================
+
+    /**
+     * 获取所有多模态规则列表
+     * GET /admin/api/multimodal-rules
+     */
+    @GetMapping(value = "/multimodal-rules", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<List<MultiModalRule>> listMultiModalRules() {
+        return ResponseEntity.ok(multiModalRuleService.listAll());
+    }
+
+    /**
+     * 创建多模态规则
+     * POST /admin/api/multimodal-rules
+     * 请求体: { "pattern": ".*vision.*", "appendType": "image" }
+     */
+    @PostMapping(value = "/multimodal-rules", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> createMultiModalRule(@RequestBody MultiModalRule rule) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            MultiModalRule created = multiModalRuleService.create(rule);
+            result.put("success", true);
+            result.put("data", created);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 更新多模态规则
+     * PUT /admin/api/multimodal-rules/{id}
+     */
+    @PutMapping(value = "/multimodal-rules/{id}", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> updateMultiModalRule(@PathVariable Long id,
+                                                                     @RequestBody MultiModalRule rule) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            rule.setId(id);
+            MultiModalRule updated = multiModalRuleService.update(rule);
+            result.put("success", true);
+            result.put("data", updated);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 删除多模态规则
+     * DELETE /admin/api/multimodal-rules/{id}
+     */
+    @DeleteMapping(value = "/multimodal-rules/{id}", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> deleteMultiModalRule(@PathVariable Long id) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            multiModalRuleService.delete(id);
+            result.put("success", true);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 测试正则匹配
+     * POST /admin/api/multimodal-rules/test
+     * 请求体: { "pattern": ".*vision.*", "testData": ["gpt-4-vision", "gpt-4"] }
+     */
+    @PostMapping(value = "/multimodal-rules/test", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> testMultiModalRule(@RequestBody Map<String, Object> body) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            String pattern = (String) body.get("pattern");
+            @SuppressWarnings("unchecked")
+            List<String> testData = (List<String>) body.get("testData");
+            if (pattern == null || pattern.isEmpty()) {
+                result.put("success", false);
+                result.put("error", "请输入正则表达式");
+                return ResponseEntity.ok(result);
+            }
+            if (testData == null || testData.isEmpty()) {
+                result.put("success", false);
+                result.put("error", "请添加测试数据");
+                return ResponseEntity.ok(result);
+            }
+            List<Map<String, Object>> matches = multiModalRuleService.testPattern(pattern, testData);
+            result.put("success", true);
+            result.put("data", matches);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
     }
 
     // ==================== Playground Chat ====================

@@ -61,6 +61,10 @@ public class ModelChannelRel {
     @TableField(exist = false)
     private Integer sampleCount;
 
+    /** 模型支持的输入类型（非数据库字段，从 ChannelModel 读取），如 'text' 或 'text,image' */
+    @TableField(exist = false)
+    private String input;
+
     public ModelChannelRel() {}
 
     public ModelChannelRel(Long modelId, Long channelModelId) {
@@ -116,4 +120,7 @@ public class ModelChannelRel {
 
     public Integer getSampleCount() { return sampleCount; }
     public void setSampleCount(Integer sampleCount) { this.sampleCount = sampleCount; }
+
+    public String getInput() { return input; }
+    public void setInput(String input) { this.input = input; }
 }

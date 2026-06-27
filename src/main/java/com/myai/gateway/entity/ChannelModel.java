@@ -3,6 +3,7 @@ package com.myai.gateway.entity;
 import com.baomidou.mybatisplus.annotation.*;
 import com.fasterxml.jackson.annotation.JsonFormat;
 
+import java.util.List;
 import java.time.LocalDateTime;
 
 /**
@@ -37,6 +38,9 @@ public class ChannelModel {
     /** 来源：'api' = 接口获取，'manual' = 手动添加 */
     private String source;
 
+    /** 模型输入模态类型，如 'text' 或 'text,image'，默认 'text' */
+    private String input;
+
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
     private LocalDateTime createdAt;
 
@@ -58,6 +62,7 @@ public class ChannelModel {
         this.modelName = modelName;
         this.displayName = displayName;
         this.enabled = 1;
+        this.input = "text";
     }
 
     // Getters and Setters
@@ -96,4 +101,7 @@ public class ChannelModel {
 
     public String getSource() { return source; }
     public void setSource(String source) { this.source = source; }
+
+    public String getInput() { return input; }
+    public void setInput(String input) { this.input = input; }
 }

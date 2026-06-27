@@ -149,6 +149,7 @@ public class ModelService {
             ChannelModel cm = channelModelMapper.selectById(rel.getChannelModelId());
             if (cm != null) {
                 rel.setChannelModelName(cm.getModelName());
+                rel.setInput(cm.getInput());
                 Channel channel = channelMapper.selectById(cm.getChannelId());
                 if (channel != null) {
                     rel.setChannelName(channel.getName());

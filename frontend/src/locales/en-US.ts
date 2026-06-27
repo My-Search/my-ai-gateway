@@ -214,6 +214,7 @@ export default {
   'channel.models.tokenUsage': 'Token Usage',
   'channel.models.avgResponseShort': 'Avg Response',
   'channel.models.linked': 'Linked',
+  'channel.models.inputTypes': 'Supported Input',
 
   /* ========== Model List ========== */
   'model.list.title': 'Custom Models',
@@ -276,6 +277,7 @@ export default {
   'model.rels.deleteFailed': 'Delete failed',
   'model.rels.saveFailed': 'Save failed',
   'model.rels.responseTime': 'Avg Resp',
+  'model.rels.inputTypes': 'Supported Input',
   'model.rels.reasoningEffort': 'Reasoning',
   'model.rels.effortDefault': 'Default',
   'model.rels.noData': 'No data',
@@ -434,6 +436,28 @@ export default {
   'systemConfig.cleanupTimeHint': 'Scheduled task execution time, not configurable',
   'systemConfig.daily': 'Daily',
   'systemConfig.saveSuccess': 'System config saved',
+
+  /* ========== MultiModal Rules ========== */
+  'multimodal.title': 'Multi-Modal Rules',
+  'multimodal.desc': 'Match model names via regex to auto-tag channel models with input types (e.g., text, text,image). Applied automatically when saving channels.',
+  'multimodal.addRule': 'Add Rule',
+  'multimodal.editRule': 'Edit Rule',
+  'multimodal.pattern': 'Regex Pattern',
+  'multimodal.patternPlaceholder': 'e.g. .*vision.* or .*image.*',
+  'multimodal.appendType': 'Append Modal Type',
+  'multimodal.appendTypeHint': 'Defaults to image. This type is appended when model name matches the pattern.',
+  'multimodal.testData': 'Test Data',
+  'multimodal.testDataPlaceholder': 'Enter model names to test, press Enter to add',
+  'multimodal.runTest': 'Test Match',
+  'multimodal.testResult': 'Test Results',
+  'multimodal.matched': 'Match',
+  'multimodal.notMatched': 'No Match',
+  'multimodal.noRules': 'No rules yet. Click the button above to add.',
+  'multimodal.deleteConfirm': 'Confirm delete this rule?',
+  'multimodal.patternRequired': 'Please enter a regex pattern',
+  'multimodal.saveSuccess': 'Rule saved',
+  'multimodal.saveFailed': 'Save failed',
+  'multimodal.deleteSuccess': 'Rule deleted',
 
   /* ========== Errors ========== */
   'error.network': 'Network error',

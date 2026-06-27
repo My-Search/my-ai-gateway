@@ -2,7 +2,12 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title"><SvgIcon name="channel" :size="18" /> {{ t('channel.list.title') }}</div>
-      <router-link to="/admin/channel/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> {{ t('channel.list.add') }}</router-link>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button class="btn-mm-rule" @click="showMultiModalRule = true">
+          <SvgIcon name="eye" :size="13" /> {{ t('multimodal.title') }}
+        </button>
+        <router-link to="/admin/channel/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> {{ t('channel.list.add') }}</router-link>
+      </div>
     </div>
     <div class="table-container">
       <table>
@@ -184,6 +189,9 @@
     </div>
   </div>
 
+  <!-- Multi-Modal Rule Dialog -->
+  <MultiModalRuleDialog v-model="showMultiModalRule" />
+
   <!-- Dialog -->
   <Dialog
     v-model="visible"
@@ -205,6 +213,7 @@ import { channelApi, type Channel, type ChannelModel } from '@/api/channel'
 import { formatLocalDateTimeFull } from '@/utils/date'
 import Dialog from '@/components/common/Dialog.vue'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
+import MultiModalRuleDialog from '@/components/channel/MultiModalRuleDialog.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -218,6 +227,7 @@ const testResult = ref<{ success: boolean; response?: string; responseTime?: num
 const testLoading = ref(false)
 const testModels = ref<ChannelModel[]>([])
 const selectedModelId = ref(0)
+const showMultiModalRule = ref(false)
 const toggleLoading = ref<number | null>(null)
 const modelSelectOptions = computed(() =>
   testModels.value.map(m => ({ value: m.id, label: m.displayName || m.modelName }))
@@ -567,5 +577,25 @@ onMounted(loadChannels)
 
 @media (min-width: 769px) {
   .mobile-card-list { display: none; }
+}
+
+/* Subtle multi-modal rule button */
+.btn-mm-rule {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.btn-mm-rule:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
 }
 </style>

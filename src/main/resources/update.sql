@@ -327,3 +327,20 @@ INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUE
 -- ========================================
 
 CREATE INDEX IF NOT EXISTS idx_request_logs_created_at_phase ON request_logs(created_at, phase);
+
+-- ========================================
+-- VERSION:v1.17.0
+-- 多模态规则表 + 渠道模型 input 类型字段
+-- ========================================
+
+-- 多模态规则表：通过正则匹配模型名称，自动标记模型支持的输入类型
+CREATE TABLE IF NOT EXISTS multimodal_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern TEXT NOT NULL,
+    append_type TEXT NOT NULL DEFAULT 'image',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 渠道模型 input 类型字段：标记模型支持的输入模态，如 'text' / 'text,image'
+ALTER TABLE channel_models ADD COLUMN input TEXT DEFAULT 'text';
