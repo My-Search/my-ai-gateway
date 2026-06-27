@@ -422,12 +422,13 @@ onMounted(async () => {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 12px;
+  padding: 20px;
   overflow: hidden;
 }
 .monthly-body {
   display: flex;
   align-items: center;
-  padding: 16px 24px;
+  padding: 16px 0;
   gap: 0;
 }
 .monthly-stat {

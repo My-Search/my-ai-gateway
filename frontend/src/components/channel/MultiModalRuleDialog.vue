@@ -58,7 +58,18 @@
 
         <div class="form-group">
           <label>{{ t('multimodal.appendType') }}</label>
-          <input v-model="form.appendType" class="form-control" placeholder="image" />
+          <div class="mmr-tag-input">
+            <div class="mmr-tags">
+              <span v-for="(tag, idx) in appendTypeTags" :key="idx" class="mmr-tag">
+                {{ tag }}
+                <span class="mmr-tag-remove" @click="removeAppendTypeTag(idx)">
+                  <SvgIcon name="x" :size="10" />
+                </span>
+              </span>
+              <input v-model="appendTypeInput" class="mmr-tag-input-field" placeholder="image, video, ..."
+                     @keydown.enter.prevent="addAppendTypeTag" @keydown.delete.prevent="removeLastTag" />
+            </div>
+          </div>
           <div class="form-hint">{{ t('multimodal.appendTypeHint') }}</div>
         </div>
 
@@ -143,6 +154,9 @@ const form = ref<{ pattern: string; appendType: string }>({
   appendType: 'image'
 })
 
+const appendTypeInput = ref('')
+const appendTypeTags = ref<string[]>(['image', 'video', 'audio'])
+
 const testInput = ref('')
 const testData = ref<string[]>([])
 const testResults = ref<RuleTestResult[]>([])
@@ -186,6 +200,8 @@ async function loadRules() {
 function openAddRule() {
   editingRule.value = null
   form.value = { pattern: '', appendType: 'image' }
+  appendTypeTags.value = ['image', 'video', 'audio']
+  appendTypeInput.value = ''
   testData.value = []
   testResults.value = []
   testError.value = ''
@@ -195,6 +211,8 @@ function openAddRule() {
 function openEditRule(rule: MultiModalRule) {
   editingRule.value = rule
   form.value = { pattern: rule.pattern, appendType: rule.appendType }
+  appendTypeTags.value = rule.appendType ? rule.appendType.split(',').filter(Boolean) : ['image']
+  appendTypeInput.value = ''
   testData.value = []
   testResults.value = []
   testError.value = ''
@@ -220,6 +238,25 @@ function removeTestData(idx: number) {
   testResults.value.splice(idx, 1)
 }
 
+function addAppendTypeTag() {
+  const val = appendTypeInput.value.trim()
+  if (!val) return
+  if (!appendTypeTags.value.includes(val)) {
+    appendTypeTags.value.push(val)
+  }
+  appendTypeInput.value = ''
+}
+
+function removeAppendTypeTag(idx: number) {
+  appendTypeTags.value.splice(idx, 1)
+}
+
+function removeLastTag() {
+  if (appendTypeInput.value === '' && appendTypeTags.value.length > 0) {
+    appendTypeTags.value.pop()
+  }
+}
+
 async function runTest() {
   if (!form.value.pattern.trim() || testData.value.length === 0) return
   testRunning.value = true
@@ -243,6 +280,7 @@ async function saveRule() {
     showDialog(t('common.prompt'), t('multimodal.patternRequired'))
     return
   }
+  form.value.appendType = appendTypeTags.value.join(',')
   saving.value = true
   try {
     if (editingRule.value?.id) {
@@ -278,6 +316,8 @@ function resetForm() {
   showForm.value = false
   editingRule.value = null
   form.value = { pattern: '', appendType: 'image' }
+  appendTypeTags.value = ['image', 'video', 'audio']
+  appendTypeInput.value = ''
   testData.value = []
   testResults.value = []
   testError.value = ''
@@ -405,6 +445,37 @@ function onDialogConfirm() {
 .mmr-form-actions {
   display: flex; gap: 6px; justify-content: flex-end; margin-top: 12px;
 }
+
+/* Tag Input */
+.mmr-tag-input {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  border-radius: 6px; padding: 6px 8px;
+  transition: border-color 0.15s;
+}
+.mmr-tag-input:focus-within {
+  border-color: var(--accent-blue, #58a6ff);
+}
+.mmr-tags {
+  display: flex; flex-wrap: wrap; gap: 4px; flex: 1;
+}
+.mmr-tag {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 6px; border-radius: 4px; font-size: 12px;
+  background: rgba(88,166,255,0.12); border: 1px solid rgba(88,166,255,0.25);
+  color: var(--accent-blue, #58a6ff); line-height: 1.5;
+}
+.mmr-tag-remove {
+  cursor: pointer; opacity: 0.5; display: inline-flex; align-items: center;
+  margin-left: 1px;
+}
+.mmr-tag-remove:hover { opacity: 1; color: var(--accent-red); }
+.mmr-tag-input-field {
+  flex: 1; min-width: 80px; border: none; outline: none;
+  background: transparent; font-size: 13px; color: var(--text-primary);
+  padding: 2px 0;
+}
+.mmr-tag-input-field::placeholder { color: var(--text-muted); font-size: 12px; }
 
 /* Badge */
 .badge-info {

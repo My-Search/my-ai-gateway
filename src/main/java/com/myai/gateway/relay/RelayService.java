@@ -280,6 +280,24 @@ public class RelayService {
             return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, lastErrorMsg);
         }
 
+        // 请求含图片但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
+        if (skipIfImageUnsupported(traceId, candidate, req, retryIndex)) {
+            remaining.remove(candidate);
+            return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, lastErrorMsg);
+        }
+
+        // 请求含视频但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
+        if (skipIfVideoUnsupported(traceId, candidate, req, retryIndex)) {
+            remaining.remove(candidate);
+            return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, lastErrorMsg);
+        }
+
+        // 请求含音频但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
+        if (skipIfAudioUnsupported(traceId, candidate, req, retryIndex)) {
+            remaining.remove(candidate);
+            return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, lastErrorMsg);
+        }
+
         log.info("路由决策 - traceId={} retryIndex={} 选中候选: channel={} model={} key={} (剩余{}个候选)",
                 traceId, retryIndex,
                 candidate.getChannel().getName(),
@@ -490,6 +508,24 @@ public class RelayService {
                     candidate.getChannelApiKey().getKeyName());
             logPhase(traceId, candidate, req, "skip",
                     "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+            remaining.remove(candidate);
+            return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
+        }
+
+        // 请求含图片但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
+        if (skipIfImageUnsupported(traceId, candidate, req, retryIndex)) {
+            remaining.remove(candidate);
+            return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
+        }
+
+        // 请求含视频但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
+        if (skipIfVideoUnsupported(traceId, candidate, req, retryIndex)) {
+            remaining.remove(candidate);
+            return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
+        }
+
+        // 请求含音频但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
+        if (skipIfAudioUnsupported(traceId, candidate, req, retryIndex)) {
             remaining.remove(candidate);
             return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
         }
@@ -1303,11 +1339,110 @@ public class RelayService {
     }
 
     /**
+     * 检测请求中是否包含视频等多模态内容
+     * 检查所有消息的 contentParts 中的 type 是否为 video（如 video_url、video_file）
+     * 使用 startsWith 以兼容未来可能的变体
+     */
+    private boolean hasVideoContent(InternalRequest req) {
+        if (req.getMessages() == null) return false;
+        for (InternalMessage msg : req.getMessages()) {
+            if (msg.getContentParts() == null) continue;
+            for (Map<String, Object> part : msg.getContentParts()) {
+                Object type = part.get("type");
+                if (type != null && type.toString().startsWith("video")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * 检查渠道模型是否支持图片输入
      */
     private boolean supportsImage(ChannelModel channelModel) {
         String input = channelModel.getInput();
         return input != null && input.contains("image");
+    }
+
+    /**
+     * 检查渠道模型是否支持视频输入
+     */
+    private boolean supportsVideo(ChannelModel channelModel) {
+        String input = channelModel.getInput();
+        return input != null && input.contains("video");
+    }
+
+    /**
+     * 候选不支持图片时返回 true，并记录跳过原因（仅判断+日志，由调用方移除候选并继续递归）
+     */
+    private boolean skipIfImageUnsupported(String traceId, RoutingCandidate candidate,
+                                           InternalRequest req, int retryIndex) {
+        if (hasImageContent(req) && !supportsImage(candidate.getChannelModel())) {
+            logPhase(traceId, candidate, req, "skip",
+                    "请求含有图片但当前模型不支持因此跳过 " + candidate.getChannel().getName()
+                            + "/" + candidate.getChannelApiKey().getKeyName()
+                            + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 候选不支持视频时返回 true，并记录跳过原因（仅判断+日志，由调用方移除候选并继续递归）
+     */
+    private boolean skipIfVideoUnsupported(String traceId, RoutingCandidate candidate,
+                                           InternalRequest req, int retryIndex) {
+        if (hasVideoContent(req) && !supportsVideo(candidate.getChannelModel())) {
+            logPhase(traceId, candidate, req, "skip",
+                    "请求含有视频但当前模型不支持因此跳过 " + candidate.getChannel().getName()
+                            + "/" + candidate.getChannelApiKey().getKeyName()
+                            + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * 检测请求中是否包含音频等多模态内容
+     * 检查所有消息的 contentParts 中的 type 是否为 audio（如 audio_url、audio_file）
+     * 使用 startsWith 以兼容未来可能的变体
+     */
+    private boolean hasAudioContent(InternalRequest req) {
+        if (req.getMessages() == null) return false;
+        for (InternalMessage msg : req.getMessages()) {
+            if (msg.getContentParts() == null) continue;
+            for (Map<String, Object> part : msg.getContentParts()) {
+                Object type = part.get("type");
+                if (type != null && type.toString().startsWith("audio")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 检查渠道模型是否支持音频输入
+     */
+    private boolean supportsAudio(ChannelModel channelModel) {
+        String input = channelModel.getInput();
+        return input != null && input.contains("audio");
+    }
+
+    /**
+     * 候选不支持音频时返回 true，并记录跳过原因（仅判断+日志，由调用方移除候选并继续递归）
+     */
+    private boolean skipIfAudioUnsupported(String traceId, RoutingCandidate candidate,
+                                           InternalRequest req, int retryIndex) {
+        if (hasAudioContent(req) && !supportsAudio(candidate.getChannelModel())) {
+            logPhase(traceId, candidate, req, "skip",
+                    "请求含有音频但当前模型不支持因此跳过 " + candidate.getChannel().getName()
+                            + "/" + candidate.getChannelApiKey().getKeyName()
+                            + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+            return true;
+        }
+        return false;
     }
 
     /**
@@ -1323,15 +1458,10 @@ public class RelayService {
             return Collections.emptyList();
         }
 
-        boolean requestHasImage = hasImageContent(req);
-        if (requestHasImage) {
-            log.info("请求包含图片内容，将过滤不支持图片的模型候选");
-        }
-
         List<ModelChannelRel> rels = modelService.getChannelRels(customModelId);
         List<RoutingCandidate> candidates = new ArrayList<>();
 
-        log.info("构建路由候选 - 自定义模型: {} (id={}), 关联数: {}, 含图片={}", modelName, customModelId, rels.size(), requestHasImage);
+        log.info("构建路由候选 - 自定义模型: {} (id={}), 关联数: {}", modelName, customModelId, rels.size());
 
         for (ModelChannelRel rel : rels) {
             if (rel.getEnabled() == null || rel.getEnabled() != 1) {
@@ -1341,11 +1471,6 @@ public class RelayService {
             ChannelModel channelModel = modelService.getChannelModelById(rel.getChannelModelId());
             if (channelModel == null || channelModel.getEnabled() == null || channelModel.getEnabled() != 1) {
                 log.debug("渠道模型不可用: channelModelId={}", rel.getChannelModelId());
-                continue;
-            }
-            // 如果请求包含图片，跳过不支持图片的模型
-            if (requestHasImage && !supportsImage(channelModel)) {
-                log.info("模型不支持图片，跳过: model={}", channelModel.getModelName());
                 continue;
             }
             Channel channel = modelService.getChannelById(channelModel.getChannelId());
@@ -1560,8 +1685,6 @@ public class RelayService {
         Long customModelId = resolveModelId(modelName);
         if (customModelId == null) return;
 
-        boolean requestHasImage = hasImageContent(req);
-
         List<ModelChannelRel> rels = modelService.getChannelRels(customModelId);
         for (ModelChannelRel rel : rels) {
             if (rel.getEnabled() == null || rel.getEnabled() != 1) continue;
@@ -1575,13 +1698,6 @@ public class RelayService {
             List<ChannelApiKey> apiKeys = getApiKeysForCandidate(channel.getId(), channelModel.getChannelApiKeyId());
             for (ChannelApiKey apiKey : apiKeys) {
                 if (apiKey.getEnabled() == null || apiKey.getEnabled() != 1) continue;
-
-                // 请求含图片但模型不支持 → 记录跳过原因
-                if (requestHasImage && !supportsImage(channelModel)) {
-                    logPhase(traceId, new RoutingCandidate(rel, channel, channelModel, apiKey),
-                            req, "skip", "请求含有图片但当前模型不支持因此跳过 " + channel.getName() + "/" + apiKey.getKeyName() + "/" + channelModel.getModelName(), 0);
-                    continue;
-                }
 
                 boolean channelBroken = channelLevelBroken
                         || circuitBreakerService.isChannelCircuitBroken(channel.getId(), apiKey.getId());
