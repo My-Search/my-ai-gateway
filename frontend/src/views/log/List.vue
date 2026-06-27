@@ -675,6 +675,34 @@ onUnmounted(() => {
     gap: 6px;
     font-size: 11px;
   }
+  .filter-bar {
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .filter-item select.form-input-sm {
+    min-width: 160px;
+  }
+  .filter-daterange {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .filter-daterange .form-input-sm {
+    width: 100%;
+    min-width: 0;
+  }
+  .filter-daterange-sep {
+    align-self: center;
+    font-size: 12px;
+  }
+  .filter-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+  .filter-actions .btn {
+    flex: 1;
+    justify-content: center;
+  }
 }
 
 @media (max-width: 480px) {
