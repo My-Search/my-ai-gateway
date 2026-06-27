@@ -5,6 +5,7 @@ import com.myai.gateway.entity.RequestLog;
 import com.myai.gateway.mapper.RequestLogMapper;
 import org.springframework.stereotype.Service;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -29,28 +30,32 @@ public class StatsService {
      * 优化前：10+ 次全量查询（含 7 次逐日循环），加载全部行到内存做 stream 聚合
      * 优化后：7 次轻量聚合查询，SQLite 直接返回聚合结果
      * </p>
+     *
+     * @param channelRankPeriod 渠道排行时间周期：today / yesterday / week / month
+     * @param modelRankPeriod   模型排行时间周期：today / yesterday / week / month
      */
-    public Map<String, Object> getDashboardStats() {
+    public Map<String, Object> getDashboardStats(String channelRankPeriod, String modelRankPeriod) {
         Map<String, Object> stats = new LinkedHashMap<>();
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime todayStart = now.toLocalDate().atStartOfDay();
         LocalDateTime yesterdayStart = todayStart.minusDays(1);
         LocalDateTime sevenDaysAgo = todayStart.minusDays(6);
 
-        // 1. 今日聚合统计（一次查询）
+        // 1. 今日聚合统计（trace-level 去重）
         Map<String, Object> todayAgg = requestLogMapper.selectTodayAggregatedStats(todayStart);
-        long todayRequests = toLong(todayAgg.get("today_requests"));
-        long todaySuccess = toLong(todayAgg.get("today_success"));
-        long todayFail = toLong(todayAgg.get("today_fail"));
+        long todayRequests = toLong(todayAgg.get("today_requests"));       // 今日发起的唯一请求数
         double avgResponseTime = todayAgg.get("avg_response_time") != null
                 ? ((Number) todayAgg.get("avg_response_time")).doubleValue() : 0.0;
 
-        // 2. 昨日 start 请求数（对比用）
+        // 2. 昨日唯一请求数（同比对比，trace-level 去重）
         long yesterdayRequests = requestLogMapper.selectYesterdayStartCount(yesterdayStart, todayStart);
 
-        // 3. 成功率
-        long totalFinished = todaySuccess + todayFail;
-        double successRate = totalFinished > 0 ? (double) todaySuccess / totalFinished * 100 : 0;
+        // 3. 以 trace-level 计算成功/失败数与成功率
+        //    todayFail: 今日发起且从未 success（所有尝试均失败）的 trace 数
+        //    todaySuccess: 今日发起且至少有一次 success 的 trace 数
+        long todayFail = requestLogMapper.countFailedTraces(todayStart);
+        long todaySuccess = Math.max(0, todayRequests - todayFail);
+        double successRate = todayRequests > 0 ? (double) todaySuccess / todayRequests * 100 : 0;
 
         stats.put("todayRequests", todayRequests);
         stats.put("yesterdayRequests", yesterdayRequests);
@@ -66,12 +71,24 @@ public class StatsService {
         tokenStats.put("totalTokens", toLong(todayAgg.get("total_tokens")));
         stats.put("todayTokenStats", tokenStats);
 
-        // 5. 渠道排行、模型排行（各一次聚合查询）
-        stats.put("channelRank", requestLogMapper.selectChannelRank(todayStart));
-        stats.put("modelRank", requestLogMapper.selectEntryModelRank(todayStart));
-        stats.put("channelModelRank", requestLogMapper.selectChannelModelRank(todayStart));
+        // 5. 本月统计
+        LocalDateTime monthStart = now.toLocalDate().withDayOfMonth(1).atStartOfDay();
+        Map<String, Object> monthAgg = requestLogMapper.selectMonthlyAggregatedStats(monthStart);
+        Map<String, Object> monthlyStats = new LinkedHashMap<>();
+        monthlyStats.put("requests", toLong(monthAgg.get("monthly_requests")));
+        monthlyStats.put("promptTokens", toLong(monthAgg.get("monthly_prompt_tokens")));
+        monthlyStats.put("completionTokens", toLong(monthAgg.get("monthly_completion_tokens")));
+        monthlyStats.put("totalTokens", toLong(monthAgg.get("monthly_total_tokens")));
+        stats.put("monthlyStats", monthlyStats);
 
-        // 6. 7天趋势（一次 GROUP BY 替代原来 7 次循环）
+        // 6. 渠道排行、模型排行（按周期参数聚合）
+        PeriodRange channelPeriod = calculatePeriodRange(channelRankPeriod);
+        PeriodRange modelPeriod = calculatePeriodRange(modelRankPeriod);
+        stats.put("channelRank", requestLogMapper.selectChannelRank(channelPeriod.since(), channelPeriod.end()));
+        stats.put("modelRank", requestLogMapper.selectEntryModelRank(modelPeriod.since(), modelPeriod.end()));
+        stats.put("channelModelRank", requestLogMapper.selectChannelModelRank(modelPeriod.since(), modelPeriod.end()));
+
+        // 7. 7天趋势（一次 GROUP BY 替代原来 7 次循环）
         List<Map<String, Object>> dailyTrend = buildDailyTrend(sevenDaysAgo);
         long maxDailyRequests = dailyTrend.stream()
                 .mapToLong(d -> toLong(d.get("requests")))
@@ -80,15 +97,38 @@ public class StatsService {
         stats.put("dailyTrend", dailyTrend);
         stats.put("maxDailyRequests", maxDailyRequests);
 
-        // 7. 最近10条日志（已带 LIMIT，保持不动）
-        List<RequestLog> recentLogs = requestLogMapper.selectList(
-                new LambdaQueryWrapper<RequestLog>()
-                        .orderByDesc(RequestLog::getCreatedAt)
-                        .last("LIMIT 10"));
+        // 8. 最近 10 条独特 trace 的最新日志条目（trace-level 去重）
+        List<RequestLog> recentLogs = requestLogMapper.selectRecentTraces();
         stats.put("recentLogs", recentLogs);
 
         return stats;
     }
+
+    /**
+     * 根据周期字符串计算查询时间范围
+     */
+    private PeriodRange calculatePeriodRange(String period) {
+        if (period == null) period = "today";
+        LocalDate today = LocalDate.now();
+        return switch (period) {
+            case "yesterday" -> {
+                LocalDate yesterday = today.minusDays(1);
+                yield new PeriodRange(yesterday.atStartOfDay(), today.atStartOfDay());
+            }
+            case "week" -> {
+                LocalDate weekStart = today.with(DayOfWeek.MONDAY);
+                yield new PeriodRange(weekStart.atStartOfDay(), null);
+            }
+            case "month" -> {
+                LocalDate monthStart = today.withDayOfMonth(1);
+                yield new PeriodRange(monthStart.atStartOfDay(), null);
+            }
+            default -> new PeriodRange(today.atStartOfDay(), null);
+        };
+    }
+
+    /** 时间范围记录 */
+    private record PeriodRange(LocalDateTime since, LocalDateTime end) {}
 
     /**
      * 从聚合查询结果中安全转为 long

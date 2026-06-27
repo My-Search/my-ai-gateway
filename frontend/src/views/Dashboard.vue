@@ -59,6 +59,37 @@
       </div>
     </div>
 
+    <!-- 本月统计 -->
+    <div class="monthly-card" style="margin-top:20px;">
+      <div class="card-header">
+        <div class="card-title"><SvgIcon name="chart" :size="18" /> {{ t('dashboard.monthlyStats') }}</div>
+      </div>
+      <div class="monthly-body" v-if="!loading">
+        <div class="monthly-stat">
+          <div class="monthly-label">{{ t('dashboard.monthlyRequests') }}</div>
+          <div class="monthly-value">{{ stats.monthlyStats?.requests ?? 0 }}</div>
+        </div>
+        <div class="monthly-divider"></div>
+        <div class="monthly-stat">
+          <div class="monthly-label">{{ t('dashboard.monthlyTokens') }}</div>
+          <div class="monthly-value">{{ formatTokens(stats.monthlyStats?.totalTokens) }}</div>
+        </div>
+        <div class="monthly-divider"></div>
+        <div class="monthly-stat">
+          <div class="monthly-label">{{ t('dashboard.monthlyInputTokens') }}</div>
+          <div class="monthly-value">{{ formatTokens(stats.monthlyStats?.promptTokens) }}</div>
+        </div>
+        <div class="monthly-divider"></div>
+        <div class="monthly-stat">
+          <div class="monthly-label">{{ t('dashboard.monthlyOutputTokens') }}</div>
+          <div class="monthly-value">{{ formatTokens(stats.monthlyStats?.completionTokens) }}</div>
+        </div>
+      </div>
+      <div v-else style="text-align:center;padding:20px;color:var(--text-muted);font-size:13px;">
+        <span class="loading-spinner"></span> {{ t('common.loading') }}
+      </div>
+    </div>
+
     <div class="grid-2" style="margin-top:20px;">
       <div class="card">
         <div class="card-header">
@@ -86,6 +117,12 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title"><SvgIcon name="rank" :size="18" /> {{ t('dashboard.channelRank') }}</div>
+          <div class="period-switch">
+            <button :class="['period-btn', channelRankPeriod === 'today' ? 'active' : '']" @click="channelRankPeriod = 'today'">{{ t('dashboard.periodToday') }}</button>
+            <button :class="['period-btn', channelRankPeriod === 'yesterday' ? 'active' : '']" @click="channelRankPeriod = 'yesterday'">{{ t('dashboard.periodYesterday') }}</button>
+            <button :class="['period-btn', channelRankPeriod === 'week' ? 'active' : '']" @click="channelRankPeriod = 'week'">{{ t('dashboard.periodWeek') }}</button>
+            <button :class="['period-btn', channelRankPeriod === 'month' ? 'active' : '']" @click="channelRankPeriod = 'month'">{{ t('dashboard.periodMonth') }}</button>
+          </div>
         </div>
         <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
           <span class="loading-spinner"></span> {{ t('common.loading') }}
@@ -119,9 +156,17 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title"><SvgIcon name="model" :size="18" /> {{ t('dashboard.modelRank') }}</div>
-          <div class="tab-switch">
-            <button :class="['tab-btn', modelRankTab === 'entry' ? 'active' : '']" @click="modelRankTab = 'entry'">{{ t('dashboard.entryModel') }}</button>
-            <button :class="['tab-btn', modelRankTab === 'channel' ? 'active' : '']" @click="modelRankTab = 'channel'">{{ t('dashboard.channelModel') }}</button>
+          <div class="card-header-right">
+            <div class="tab-switch">
+              <button :class="['tab-btn', modelRankTab === 'entry' ? 'active' : '']" @click="modelRankTab = 'entry'">{{ t('dashboard.entryModel') }}</button>
+              <button :class="['tab-btn', modelRankTab === 'channel' ? 'active' : '']" @click="modelRankTab = 'channel'">{{ t('dashboard.channelModel') }}</button>
+            </div>
+            <div class="period-switch">
+              <button :class="['period-btn', modelRankPeriod === 'today' ? 'active' : '']" @click="modelRankPeriod = 'today'">{{ t('dashboard.periodToday') }}</button>
+              <button :class="['period-btn', modelRankPeriod === 'yesterday' ? 'active' : '']" @click="modelRankPeriod = 'yesterday'">{{ t('dashboard.periodYesterday') }}</button>
+              <button :class="['period-btn', modelRankPeriod === 'week' ? 'active' : '']" @click="modelRankPeriod = 'week'">{{ t('dashboard.periodWeek') }}</button>
+              <button :class="['period-btn', modelRankPeriod === 'month' ? 'active' : '']" @click="modelRankPeriod = 'month'">{{ t('dashboard.periodMonth') }}</button>
+            </div>
           </div>
         </div>
         <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
@@ -171,7 +216,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { dashboardApi, type DashboardStats } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
 import { formatLocalTime } from '@/utils/date'
@@ -181,6 +226,8 @@ const { t } = useI18n()
 const stats = ref<DashboardStats>({} as DashboardStats)
 const loading = ref(true)
 const modelRankTab = ref<'entry' | 'channel'>('entry')
+const channelRankPeriod = ref('today')
+const modelRankPeriod = ref('today')
 
 const maxReq = computed(() => {
   if (!stats.value.dailyTrend?.length) return 1
@@ -208,15 +255,25 @@ function formatTokens(n: number | undefined | null): string {
   return n.toLocaleString()
 }
 
-onMounted(async () => {
+async function fetchStats() {
   try {
-    const res = await dashboardApi.getStats()
+    const res = await dashboardApi.getStats({
+      channelRankPeriod: channelRankPeriod.value,
+      modelRankPeriod: modelRankPeriod.value
+    })
     stats.value = res.data
   } catch {
     // stats will show empty values
-  } finally {
-    loading.value = false
   }
+}
+
+// 周期切换时重新加载排行数据
+watch([channelRankPeriod, modelRankPeriod], fetchStats)
+
+onMounted(async () => {
+  loading.value = true
+  await fetchStats()
+  loading.value = false
 })
 </script>
 
@@ -345,11 +402,69 @@ onMounted(async () => {
 .tab-btn:hover { color: var(--text-primary); }
 .tab-btn.active { background: var(--bg-secondary); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
 
+/* Card header right group */
+.card-header-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+/* Period switch */
+.period-switch { display: flex; gap: 3px; background: var(--bg-primary); border-radius: 6px; padding: 2px; }
+.period-btn { padding: 3px 8px; border: none; background: transparent; color: var(--text-muted); font-size: 11px; font-weight: 500; border-radius: 4px; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+.period-btn:hover { color: var(--text-primary); }
+.period-btn.active { background: var(--bg-secondary); color: var(--accent-blue); box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+
 /* Activity */
 .activity-list { display: flex; flex-direction: column; gap: 6px; }
 .activity-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px; font-size: 13px; background: var(--bg-tertiary); }
 .activity-channel { font-size: 12px; color: var(--text-secondary); flex: 1; text-align: right; }
 .activity-time { font-size: 11px; color: var(--text-muted); white-space: nowrap; font-family: 'SF Mono', 'Fira Code', monospace; }
+
+/* Monthly stats */
+.monthly-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.monthly-body {
+  display: flex;
+  align-items: center;
+  padding: 16px 24px;
+  gap: 0;
+}
+.monthly-stat {
+  flex: 1;
+  text-align: center;
+}
+.monthly-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.monthly-value {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.monthly-divider {
+  width: 1px;
+  height: 40px;
+  background: var(--border-color);
+  flex-shrink: 0;
+  margin: 0 16px;
+}
+
+@media (max-width: 768px) {
+  .monthly-body {
+    flex-wrap: wrap;
+    gap: 12px 0;
+    padding: 16px;
+  }
+  .monthly-stat {
+    flex: 0 0 50%;
+  }
+  .monthly-divider {
+    display: none;
+  }
+}
 
 /* Phase colors */
 .phase { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }

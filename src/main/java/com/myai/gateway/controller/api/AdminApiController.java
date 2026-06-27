@@ -181,8 +181,10 @@ public class AdminApiController {
     // ==================== Dashboard ====================
 
     @GetMapping(value = "/dashboard/stats", produces = "application/json;charset=UTF-8")
-    public ResponseEntity<Map<String, Object>> dashboardStats() {
-        Map<String, Object> stats = statsService.getDashboardStats();
+    public ResponseEntity<Map<String, Object>> dashboardStats(
+            @RequestParam(defaultValue = "today") String channelRankPeriod,
+            @RequestParam(defaultValue = "today") String modelRankPeriod) {
+        Map<String, Object> stats = statsService.getDashboardStats(channelRankPeriod, modelRankPeriod);
         stats.put("channelCount", channelService.listAll().size());
         stats.put("customModelCount", modelService.listAll().size());
         stats.put("apiKeyCount", apiKeyService.listAll().size());

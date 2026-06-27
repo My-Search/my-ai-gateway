@@ -71,12 +71,28 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
     // ==================== Dashboard 聚合查询 ====================
 
     /**
-     * 获取今日聚合统计，一次查询替代全量加载后内存聚合
+     * 获取本月聚合统计（请求数使用 trace 去重，tokens 仅统计 success）
      */
     @Select("SELECT " +
-            "COALESCE(SUM(CASE WHEN phase = 'start' THEN 1 ELSE 0 END), 0) as today_requests, " +
-            "COALESCE(SUM(CASE WHEN phase = 'success' THEN 1 ELSE 0 END), 0) as today_success, " +
-            "COALESCE(SUM(CASE WHEN phase = 'fail' THEN 1 ELSE 0 END), 0) as today_fail, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as monthly_requests, " +
+            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(prompt_tokens, 0) ELSE 0 END), 0) as monthly_prompt_tokens, " +
+            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(completion_tokens, 0) ELSE 0 END), 0) as monthly_completion_tokens, " +
+            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as monthly_total_tokens " +
+            "FROM request_logs WHERE created_at >= #{monthStart}")
+    Map<String, Object> selectMonthlyAggregatedStats(@Param("monthStart") LocalDateTime monthStart);
+
+    /**
+     * 获取今日聚合统计（trace-level 去重，tokens 仅统计 success）
+     * <p>
+     * today_requests:   今日发起请求的唯一 trace 数（phase='start' 去重）
+     * today_success:   今日至少有一次 success 的唯一 trace 数（含跨日完成）
+     * avg_response_time: 成功/失败尝试的平均响应时间
+     * 注：today_fail 在 Java 层通过 MAX(0, today_requests - today_success) 计算
+     * </p>
+     */
+    @Select("SELECT " +
+            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as today_requests, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as today_success, " +
             "AVG(CASE WHEN response_time_ms > 0 THEN response_time_ms ELSE NULL END) as avg_response_time, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(prompt_tokens, 0) ELSE 0 END), 0) as prompt_tokens, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(completion_tokens, 0) ELSE 0 END), 0) as completion_tokens, " +
@@ -85,53 +101,89 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
     Map<String, Object> selectTodayAggregatedStats(@Param("todayStart") LocalDateTime todayStart);
 
     /**
-     * 获取昨日的 start 请求数（同比对比）
+     * 获取昨日的唯一请求数（trace-level 去重，同比对比）
      */
-    @Select("SELECT COALESCE(COUNT(*), 0) FROM request_logs WHERE phase = 'start' AND created_at >= #{start} AND created_at < #{end}")
+    @Select("SELECT COALESCE(COUNT(DISTINCT trace_id), 0) FROM request_logs WHERE phase = 'start' AND created_at >= #{start} AND created_at < #{end}")
     long selectYesterdayStartCount(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
 
     /**
-     * 近 N 天每日趋势，一次 GROUP BY 替代逐日循环
+     * 近 N 天每日趋势（trace-level 去重），一次 GROUP BY 替代逐日循环
      */
     @Select("SELECT DATE(created_at) as date, " +
-            "COALESCE(SUM(CASE WHEN phase = 'start' THEN 1 ELSE 0 END), 0) as requests, " +
-            "COALESCE(SUM(CASE WHEN phase = 'success' THEN 1 ELSE 0 END), 0) as success, " +
-            "COALESCE(SUM(CASE WHEN phase = 'fail' THEN 1 ELSE 0 END), 0) as fail " +
+            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'fail' THEN trace_id END) as fail " +
             "FROM request_logs WHERE created_at >= #{since} " +
             "GROUP BY DATE(created_at) ORDER BY date ASC")
     List<Map<String, Object>> selectDailyTrend(@Param("since") LocalDateTime since);
 
     /**
-     * 渠道排行 Top10
+     * 渠道排行 Top10（trace-level 去重，支持可选 end 时间上限）
      */
-    @Select("SELECT channel_name as name, " +
-            "COALESCE(SUM(CASE WHEN phase = 'start' THEN 1 ELSE 0 END), 0) as requests, " +
-            "COALESCE(SUM(CASE WHEN phase = 'success' THEN 1 ELSE 0 END), 0) as success, " +
+    @Select("<script>" +
+            "SELECT channel_name as name, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
             "AVG(CASE WHEN response_time_ms > 0 THEN response_time_ms ELSE NULL END) as avg_time, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as total_tokens " +
-            "FROM request_logs WHERE created_at >= #{since} AND channel_name IS NOT NULL AND channel_name != '' " +
-            "GROUP BY channel_name ORDER BY requests DESC LIMIT 10")
-    List<Map<String, Object>> selectChannelRank(@Param("since") LocalDateTime since);
+            "FROM request_logs WHERE created_at &gt;= #{since} " +
+            "<if test='end != null'>AND created_at &lt; #{end}</if> " +
+            "AND channel_name IS NOT NULL AND channel_name != '' " +
+            "GROUP BY channel_name ORDER BY requests DESC LIMIT 10" +
+            "</script>")
+    List<Map<String, Object>> selectChannelRank(@Param("since") LocalDateTime since, @Param("end") LocalDateTime end);
 
     /**
-     * 入口模型排行 Top10
+     * 入口模型排行 Top10（trace-level 去重，支持可选 end 时间上限）
      */
-    @Select("SELECT model_name as name, " +
-            "COALESCE(SUM(CASE WHEN phase = 'start' THEN 1 ELSE 0 END), 0) as requests, " +
-            "COALESCE(SUM(CASE WHEN phase = 'success' THEN 1 ELSE 0 END), 0) as success, " +
+    @Select("<script>" +
+            "SELECT model_name as name, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as total_tokens " +
-            "FROM request_logs WHERE created_at >= #{since} AND model_name IS NOT NULL AND model_name != '' " +
-            "GROUP BY model_name ORDER BY requests DESC LIMIT 10")
-    List<Map<String, Object>> selectEntryModelRank(@Param("since") LocalDateTime since);
+            "FROM request_logs WHERE created_at &gt;= #{since} " +
+            "<if test='end != null'>AND created_at &lt; #{end}</if> " +
+            "AND model_name IS NOT NULL AND model_name != '' " +
+            "GROUP BY model_name ORDER BY requests DESC LIMIT 10" +
+            "</script>")
+    List<Map<String, Object>> selectEntryModelRank(@Param("since") LocalDateTime since, @Param("end") LocalDateTime end);
 
     /**
-     * 渠道模型排行 Top10（按 channel_name + channel_model_name 复合分组）
+     * 渠道模型排行 Top10（trace-level 去重，支持可选 end 时间上限）
      */
-    @Select("SELECT channel_name, channel_model_name as name, " +
-            "COALESCE(SUM(CASE WHEN phase = 'start' THEN 1 ELSE 0 END), 0) as requests, " +
-            "COALESCE(SUM(CASE WHEN phase = 'success' THEN 1 ELSE 0 END), 0) as success, " +
+    @Select("<script>" +
+            "SELECT channel_name, channel_model_name as name, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as total_tokens " +
-            "FROM request_logs WHERE created_at >= #{since} AND channel_model_name IS NOT NULL AND channel_model_name != '' " +
-            "GROUP BY channel_name, channel_model_name ORDER BY requests DESC LIMIT 10")
-    List<Map<String, Object>> selectChannelModelRank(@Param("since") LocalDateTime since);
+            "FROM request_logs WHERE created_at &gt;= #{since} " +
+            "<if test='end != null'>AND created_at &lt; #{end}</if> " +
+            "AND channel_model_name IS NOT NULL AND channel_model_name != '' " +
+            "GROUP BY channel_name, channel_model_name ORDER BY requests DESC LIMIT 10" +
+            "</script>")
+    List<Map<String, Object>> selectChannelModelRank(@Param("since") LocalDateTime since, @Param("end") LocalDateTime end);
+
+    /**
+     * 统计今日发起的请求中从未 success（完全失败）的 trace 数
+     */
+    @Select("SELECT COUNT(DISTINCT r1.trace_id) FROM request_logs r1 " +
+            "WHERE r1.phase = 'start' AND r1.created_at >= #{since} " +
+            "AND NOT EXISTS (SELECT 1 FROM request_logs r2 WHERE r2.trace_id = r1.trace_id AND r2.phase = 'success')")
+    long countFailedTraces(@Param("since") LocalDateTime since);
+
+    /**
+     * 获取最近 10 个独特 trace 的最新日志条目（trace-level 去重）
+     * <p>
+     * 替代原来的 LIMIT 10 原始日志，确保"最近活动"面板显示不同的请求而非被同一条 trace 刷屏。
+     * 子查询取每个 trace_id 的最新 id，再 JOIN 回全表获取完整行。
+     * </p>
+     */
+    @Select("SELECT r.* FROM request_logs r " +
+            "INNER JOIN (" +
+            "  SELECT MAX(id) as id FROM request_logs " +
+            "  GROUP BY trace_id " +
+            "  ORDER BY MAX(created_at) DESC LIMIT 10" +
+            ") latest ON r.id = latest.id " +
+            "ORDER BY r.created_at DESC")
+    List<RequestLog> selectRecentTraces();
 }

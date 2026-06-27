@@ -6,6 +6,13 @@ export interface TodayTokenStats {
   totalTokens: number
 }
 
+export interface MonthlyStats {
+  requests: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+
 export interface DashboardStats {
   todayRequests: number
   yesterdayRequests: number
@@ -22,10 +29,16 @@ export interface DashboardStats {
   channelModelRank: { name: string; channelName?: string; requests: number; success: number; totalTokens: number }[]
   recentLogs: { id: number; modelName: string; channelName: string; phase: string; createdAt: string }[]
   todayTokenStats: TodayTokenStats
+  monthlyStats: MonthlyStats
+}
+
+export interface RankingPeriodParams {
+  channelRankPeriod?: string
+  modelRankPeriod?: string
 }
 
 export const dashboardApi = {
-  getStats() {
-    return http.get<DashboardStats>('/dashboard/stats')
+  getStats(params?: RankingPeriodParams) {
+    return http.get<DashboardStats>('/dashboard/stats', { params })
   }
 }
