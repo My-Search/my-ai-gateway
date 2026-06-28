@@ -69,6 +69,13 @@ export const logApi = {
    * @param params.gatewayApiKeyId 可选：按网关 API Key 主键过滤（按 id 精确匹配）
    * @param params.apiKeyName 兼容旧版：按 API Key 名过滤（仅作旧数据兜底）
    */
+  /**
+   * 按日志 ID 获取原始请求数据（requestHeaders / requestBody）
+   * 列表接口不返回这两个大字段，点击"查看原始请求"时按需加载。
+   */
+  getRequestData(logId: number) {
+    return http.get<{ requestHeaders: string | null; requestBody: string | null }>(`/logs/${logId}/request-data`)
+  },
   usageChart(params: { year?: number; month?: number; modelType?: string; modelName?: string; gatewayApiKeyId?: number; apiKeyName?: string } = {}) {
     const query: Record<string, string | number> = {}
     if (params.year != null) query.year = params.year

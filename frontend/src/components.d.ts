@@ -9,6 +9,8 @@ declare module 'vue' {
   export interface GlobalComponents {
     ChatPlayground: typeof import('./components/chat/ChatPlayground.vue')['default']
     Dialog: typeof import('./components/common/Dialog.vue')['default']
+    JsonNode: typeof import('./components/common/JsonNode.vue')['default']
+    JsonTreeViewer: typeof import('./components/common/JsonTreeViewer.vue')['default']
     Layout: typeof import('./components/layout/Layout.vue')['default']
     LoadingModal: typeof import('./components/common/LoadingModal.vue')['default']
     MultiModalRuleDialog: typeof import('./components/channel/MultiModalRuleDialog.vue')['default']

@@ -190,17 +190,26 @@
     :width="requestDialogWidth"
   >
     <div class="request-viewer">
-      <div v-if="requestHeadersText" class="request-section">
-        <div class="request-section-title">{{ t('log.list.requestHeaders') }}</div>
-        <pre class="dialog-pre request-pre">{{ requestHeadersText }}</pre>
+      <div v-if="requestDataLoading" class="request-loading">
+        <span class="loading-spinner"></span> {{ t('common.loading') }}
       </div>
-      <div v-if="requestBodyText" class="request-section">
-        <div class="request-section-title">{{ t('log.list.requestBody') }}</div>
-        <pre class="dialog-pre request-pre">{{ requestBodyText }}</pre>
-      </div>
-      <div v-if="!requestHeadersText && !requestBodyText" class="empty-state">
-        {{ requestDataExpired ? t('log.list.requestDataExpired') : t('log.list.noRequestData') }}
-      </div>
+      <template v-else>
+        <div v-if="requestHeadersText" class="request-section">
+          <div class="request-section-title">{{ t('log.list.requestHeaders') }}</div>
+          <div class="request-pre">
+            <JsonTreeViewer :json="requestHeadersText" />
+          </div>
+        </div>
+        <div v-if="requestBodyText" class="request-section">
+          <div class="request-section-title">{{ t('log.list.requestBody') }}</div>
+          <div class="request-pre">
+            <JsonTreeViewer :json="requestBodyText" :max-depth="0" />
+          </div>
+        </div>
+        <div v-if="!requestHeadersText && !requestBodyText && !requestDataLoading" class="empty-state">
+          {{ requestDataExpired ? t('log.list.requestDataExpired') : t('log.list.noRequestData') }}
+        </div>
+      </template>
     </div>
   </Dialog>
 </template>
@@ -211,6 +220,7 @@ import { logApi, subscribeLogStream, type LogTrace, type RequestLog, type LogSse
 import { modelApi, type CustomModel } from '@/api/model'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import Dialog from '@/components/common/Dialog.vue'
+import JsonTreeViewer from '@/components/common/JsonTreeViewer.vue'
 import { useI18n } from '@/composables/useI18n'
 import { formatLocalDateTime, formatLocalFullTime } from '@/utils/date'
 
@@ -458,27 +468,27 @@ const dialogConfirmClass = ref('btn-primary')
 const dialogWidth = ref('420px')
 let dialogOnConfirm: (() => void) | null = null
 
-/* ========== 原始请求查看对话框 ========== */
+/* ========== 原始请求查看对话框（按需加载） ========== */
 const requestDialogVisible = ref(false)
 const requestDialogTitle = ref('')
 const requestDialogWidth = ref('720px')
 const requestHeadersText = ref('')
 const requestBodyText = ref('')
 const requestDataExpired = ref(false)
+const requestDataLoading = ref(false)
 
-/** 判断 trace 是否包含原始请求数据 */
+/** 判断 trace 是否包含原始请求数据（仅检查 phase='start' 的日志，request data 通过 API 按需加载） */
 function hasRequestData(traceId: string): boolean {
   const trace = traces.value.find(t => t.traceId === traceId)
-  return trace?.logs?.some(l => l.requestHeaders || l.requestBody) ?? false
+  return trace?.logs?.some(l => l.phase === 'start') ?? false
 }
 
-/** 打开原始请求查看对话框 */
-function openRequestView(traceId: string) {
+/** 打开原始请求查看对话框（通过 API 按需加载原始请求数据） */
+async function openRequestView(traceId: string) {
   const trace = traces.value.find(t => t.traceId === traceId)
   if (!trace) return
-  const logWithRequest = trace.logs.find(l => l.requestHeaders || l.requestBody)
-  if (!logWithRequest) {
-    // 数据已被清理（在页面加载和点击之间发生了清理），显示已过期
+  const startLog = trace.logs.find(l => l.phase === 'start')
+  if (!startLog) {
     requestDataExpired.value = true
     requestHeadersText.value = ''
     requestBodyText.value = ''
@@ -488,24 +498,30 @@ function openRequestView(traceId: string) {
   }
 
   requestDataExpired.value = false
+  requestDataLoading.value = true
   requestDialogTitle.value = `原始请求 [${shortenId(traceId)}]`
-  requestHeadersText.value = logWithRequest.requestHeaders
-    ? formatJsonSafe(logWithRequest.requestHeaders)
-    : ''
-  requestBodyText.value = logWithRequest.requestBody
-    ? formatJsonSafe(logWithRequest.requestBody)
-    : ''
+  requestHeadersText.value = ''
+  requestBodyText.value = ''
   requestDialogVisible.value = true
-}
 
-/** 格式化 JSON 字符串（如果是 JSON 则格式化，否则原样返回） */
-function formatJsonSafe(text: string): string {
   try {
-    return JSON.stringify(JSON.parse(text), null, 2)
-  } catch {
-    return text
+    const res = await logApi.getRequestData(startLog.id)
+    const data = res.data
+    if (data.requestHeaders || data.requestBody) {
+      requestHeadersText.value = data.requestHeaders ?? ''
+      requestBodyText.value = data.requestBody ?? ''
+    } else {
+      // requestHeaders 和 requestBody 均为 null → 数据已被 TTL 清理
+      requestDataExpired.value = true
+    }
+  } catch (e) {
+    console.error('Failed to load request data:', e)
+    requestDataExpired.value = true
+  } finally {
+    requestDataLoading.value = false
   }
 }
+
 /* ================================== */
 
 function openDialog(opts: {
@@ -966,6 +982,11 @@ onUnmounted(() => {
 .request-pre {
   max-height: 35vh;
   margin: 0;
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
 }
 .trace-view-btn {
   display: inline-flex;
@@ -975,6 +996,24 @@ onUnmounted(() => {
   font-size: 11px;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.request-loading {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.request-loading .loading-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
 }
 
 .phase { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; white-space: nowrap; }

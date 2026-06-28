@@ -1062,6 +1062,30 @@ public class AdminApiController {
         return emitter;
     }
 
+    /**
+     * 按日志 ID 获取原始请求数据（requestHeaders / requestBody）
+     * <p>
+     * 列表接口 {@code GET /logs} 已排除大字段，此接口用于点击"查看原始请求"时按需加载。
+     * 如果数据已被定时清理（request_body_ttl_hours），则返回 null。
+     * </p>
+     *
+     * @param logId 日志主键
+     * @return { requestHeaders, requestBody }，数据不存在或已过期时两个字段均为 null
+     */
+    @GetMapping(value = "/logs/{logId}/request-data", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> getRequestData(@PathVariable Long logId) {
+        RequestLog logEntry = requestLogService.getRequestDataByLogId(logId);
+        Map<String, Object> result = new LinkedHashMap<>();
+        if (logEntry != null) {
+            result.put("requestHeaders", logEntry.getRequestHeaders());
+            result.put("requestBody", logEntry.getRequestBody());
+        } else {
+            result.put("requestHeaders", null);
+            result.put("requestBody", null);
+        }
+        return ResponseEntity.ok(result);
+    }
+
     // ==================== System Config ====================
 
     /**

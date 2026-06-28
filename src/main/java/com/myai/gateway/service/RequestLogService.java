@@ -252,9 +252,15 @@ public class RequestLogService {
 
     /**
      * 分页获取日志（按 traceId 级别分页，保证每组 trace 的日志完整）
+     * <p>
+     * 列表查询排除 {@code request_headers} 和 {@code request_body} 两个大字段，
+     * 避免列表加载时传输大量原始请求数据导致响应慢。原始请求数据通过
+     * {@link #getRequestDataByLogId(Long)} 按需加载。
+     * </p>
+     *
      * @param offset 跳过的 traceId 数量
-     * @param limit 返回的 traceId 数量
-     * @return 完整的日志列表（trace 内按 createdAt 升序）
+     * @param limit  返回的 traceId 数量
+     * @return 完整的日志列表（trace 内按 createdAt 升序），不含 requestHeaders/requestBody
      */
     public List<RequestLog> getLogsByPage(int offset, int limit) {
         // 1. 获取分页后的 traceId 列表
@@ -263,9 +269,12 @@ public class RequestLogService {
             return List.of();
         }
 
-        // 2. 获取这些 traceId 的所有日志
+        // 2. 获取这些 traceId 的所有日志（排除大字段）
         return requestLogMapper.selectList(
                 new LambdaQueryWrapper<RequestLog>()
+                        .select(RequestLog.class, column ->
+                                !"requestHeaders".equals(column.getProperty())
+                                        && !"requestBody".equals(column.getProperty()))
                         .in(RequestLog::getTraceId, traceIds)
                         .orderByAsc(RequestLog::getCreatedAt));
     }
@@ -279,6 +288,11 @@ public class RequestLogService {
 
     /**
      * 分页获取日志（带条件过滤）
+     * <p>
+     * 列表查询排除 {@code request_headers} 和 {@code request_body} 两个大字段，
+     * 避免列表加载时传输大量原始请求数据导致响应慢。原始请求数据通过
+     * {@link #getRequestDataByLogId(Long)} 按需加载。
+     * </p>
      *
      * @param offset          跳过的 traceId 数量
      * @param limit           返回的 traceId 数量
@@ -287,20 +301,23 @@ public class RequestLogService {
      * @param apiKeyName      API Key 名（可选，兼容旧接口：模糊匹配 api_key_name 列，存的是渠道 Key 名）
      * @param startTime       开始时间（可选）
      * @param endTime         结束时间（可选）
-     * @return 完整的日志列表
+     * @return 完整的日志列表（不含 requestHeaders/requestBody）
      */
     public List<RequestLog> getFilteredLogsByPage(int offset, int limit,
-                                                  String modelName,
-                                                  Long gatewayApiKeyId,
-                                                  String apiKeyName,
-                                                  LocalDateTime startTime,
-                                                  LocalDateTime endTime) {
+                                                   String modelName,
+                                                   Long gatewayApiKeyId,
+                                                   String apiKeyName,
+                                                   LocalDateTime startTime,
+                                                   LocalDateTime endTime) {
         List<String> traceIds = requestLogMapper.selectTraceIdsByFilters(modelName, gatewayApiKeyId, apiKeyName, startTime, endTime, offset, limit);
         if (traceIds.isEmpty()) {
             return List.of();
         }
         return requestLogMapper.selectList(
                 new LambdaQueryWrapper<RequestLog>()
+                        .select(RequestLog.class, column ->
+                                !"requestHeaders".equals(column.getProperty())
+                                        && !"requestBody".equals(column.getProperty()))
                         .in(RequestLog::getTraceId, traceIds)
                         .orderByAsc(RequestLog::getCreatedAt));
     }
@@ -341,6 +358,23 @@ public class RequestLogService {
                 new LambdaQueryWrapper<RequestLog>()
                         .eq(RequestLog::getTraceId, traceId)
                         .orderByAsc(RequestLog::getCreatedAt));
+    }
+
+    /**
+     * 按主键获取原始请求数据（requestHeaders / requestBody）
+     * <p>
+     * 用于前端"查看原始请求"的按需加载。仅返回 requestHeaders 和 requestBody 字段，
+     * 避免在列表查询中传输大字段导致响应缓慢。
+     * </p>
+     *
+     * @param logId 日志主键
+     * @return 仅包含 requestHeaders 和 requestBody 的 RequestLog 对象，不存在时返回 null
+     */
+    public RequestLog getRequestDataByLogId(Long logId) {
+        return requestLogMapper.selectOne(
+                new LambdaQueryWrapper<RequestLog>()
+                        .select(RequestLog::getRequestHeaders, RequestLog::getRequestBody)
+                        .eq(RequestLog::getId, logId));
     }
 
     /**
