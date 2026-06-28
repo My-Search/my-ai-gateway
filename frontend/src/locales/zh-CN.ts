@@ -411,6 +411,7 @@ export default {
   'log.chart.loadFailed': '使用历史加载失败',
   'log.chart.monthLabel': '{year} 年 {month} 月',
   'log.chart.totalTokens': '本月 Token 总量',
+  'log.chart.totalRequests': '当天请求数',
 
   /* ========== Playground ========== */
   'playground.title': '模型可用性测试',

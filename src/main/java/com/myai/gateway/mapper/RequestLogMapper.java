@@ -231,4 +231,49 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
                                                         @Param("modelName") String modelName,
                                                         @Param("gatewayApiKeyId") Long gatewayApiKeyId,
                                                         @Param("apiKeyName") String apiKeyName);
+
+    /**
+     * 在指定时间范围内，按 trace 级最终结果按 (date, channel_model_name) 聚合请求数。
+     * <p>
+     * 用于"请求日志"页面顶部"使用历史"图表选择"渠道模型"模式时：
+     * 按 trace 统计，请求最终成功（有 phase=success）则归入该次的渠道模型名，
+     * 请求最终失败（无 phase=success）则统一归为"请求失败"。
+     * 可选按入口模型 / API Key 过滤。
+     * </p>
+     *
+     * @param since            起始时间（含）
+     * @param until            结束时间（不含）
+     * @param modelName        入口模型名（可选；为 null/空时不过滤）
+     * @param gatewayApiKeyId  网关 API Key 主键（可选；优先于 apiKeyName 使用）
+     * @param apiKeyName       API Key 名（可选；旧字段；为 null/空时不过滤）
+     * @return 每行包含 date (yyyy-MM-dd)、model_name、total_tokens（此处表示请求数）
+     */
+    @Select("<script>" +
+            "SELECT date, model_name, COUNT(1) as total_tokens " +
+            "FROM ( " +
+            "  SELECT r.trace_id, " +
+            "         DATE(MIN(r.created_at)) as date, " +
+            "         CASE WHEN MAX(CASE WHEN r.phase = 'success' THEN 1 ELSE 0 END) = 1 " +
+            "              THEN MAX(CASE WHEN r.phase = 'success' THEN r.channel_model_name END) " +
+            "              ELSE '\u8bf7\u6c42\u5931\u8d25' " +
+            "         END as model_name " +
+            "  FROM request_logs r " +
+            "  WHERE r.trace_id IN ( " +
+            "    SELECT DISTINCT trace_id FROM request_logs " +
+            "    WHERE created_at &gt;= #{since} AND created_at &lt; #{until} " +
+            "    AND channel_model_name IS NOT NULL AND channel_model_name != '' " +
+            "    <if test='modelName != null and modelName != \"\"'>AND model_name = #{modelName}</if> " +
+            "    <if test='gatewayApiKeyId != null'>AND gateway_api_key_id = #{gatewayApiKeyId}</if> " +
+            "    <if test='apiKeyName != null and apiKeyName != \"\"'>AND api_key_name = #{apiKeyName}</if> " +
+            "  ) " +
+            "  GROUP BY r.trace_id " +
+            ") t " +
+            "GROUP BY date, model_name " +
+            "ORDER BY date ASC, total_tokens DESC" +
+            "</script>")
+    List<Map<String, Object>> selectDailyChannelModelTokenUsage(@Param("since") LocalDateTime since,
+                                                                @Param("until") LocalDateTime until,
+                                                                @Param("modelName") String modelName,
+                                                                @Param("gatewayApiKeyId") Long gatewayApiKeyId,
+                                                                @Param("apiKeyName") String apiKeyName);
 }

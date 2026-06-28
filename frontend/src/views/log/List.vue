@@ -7,6 +7,10 @@
         <div class="card-subtitle">{{ t('log.chart.subtitle') }}</div>
       </div>
       <div class="usage-history-controls">
+        <div class="tab-switch chart-model-type-switch">
+          <button :class="['tab-btn', chartModelType === 'entry' ? 'active' : '']" @click="chartModelType = 'entry'">{{ t('dashboard.entryModel') }}</button>
+          <button :class="['tab-btn', chartModelType === 'channel' ? 'active' : '']" @click="chartModelType = 'channel'">{{ t('dashboard.channelModel') }}</button>
+        </div>
         <div class="month-nav">
           <button class="month-nav-btn" :disabled="chartLoading" @click="prevChartMonth" :title="t('log.chart.prevMonth')">
             <SvgIcon name="arrow-left" :size="14" />
@@ -94,7 +98,7 @@
             <span class="chart-tooltip-value">{{ formatCompactNumber(row.value) }}</span>
           </div>
           <div class="chart-tooltip-total">
-            <span>{{ t('log.chart.totalTokens') }}</span>
+            <span>{{ chartModelType === 'channel' ? t('log.chart.totalRequests') : t('log.chart.totalTokens') }}</span>
             <span>{{ formatCompactNumber(usageTooltip.total) }}</span>
           </div>
         </div>
@@ -234,6 +238,7 @@ async function fetchEntryModels() {
 const chartYear = ref(new Date().getFullYear())
 const chartMonth = ref(new Date().getMonth() + 1) // 1-12
 const chartModelName = ref('')
+const chartModelType = ref<'entry' | 'channel'>('entry')
 const chartApiKeyId = ref<number | null>(null)
 const usageChartData = ref<LogUsageChart | null>(null)
 const chartLoading = ref(false)
@@ -276,6 +281,7 @@ async function loadUsageChart() {
     const res = await logApi.usageChart({
       year: chartYear.value,
       month: chartMonth.value,
+      modelType: chartModelType.value,
       modelName: chartModelName.value || undefined,
       gatewayApiKeyId: chartApiKeyId.value ?? undefined,
     })
@@ -322,6 +328,7 @@ const CHART_COLOR_PALETTE = [
 ]
 
 function modelColor(model: string): string {
+  if (model === '请求失败') return '#e57373'
   if (!usageChartData.value) return CHART_COLOR_PALETTE[0]
   const idx = usageChartData.value.models.indexOf(model)
   return CHART_COLOR_PALETTE[(idx >= 0 ? idx : 0) % CHART_COLOR_PALETTE.length]
@@ -814,6 +821,11 @@ function cleanLogs() {
 }
 
 /**
+ * 模型类型切换时仅重载图表（不影响日志列表过滤条件）。
+ */
+watch(chartModelType, loadUsageChart)
+
+/**
  * 图表筛选状态变化时，日志列表按新条件重拉。
  * 监听来源：月份翻页、All Models / All Keys 下拉。
  */
@@ -1095,6 +1107,38 @@ onUnmounted(() => {
   margin-top: 4px;
   font-weight: 400;
 }
+/* 图表右上角模型类型切换 */
+.chart-model-type-switch {
+  flex-shrink: 0;
+}
+.tab-switch {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-primary);
+  border-radius: 6px;
+  padding: 2px;
+}
+.tab-btn {
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.tab-btn:hover {
+  color: var(--text-primary);
+}
+.tab-btn.active {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
 .usage-history-controls {
   display: flex;
   align-items: center;

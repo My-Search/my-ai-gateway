@@ -993,12 +993,14 @@ public class AdminApiController {
     /**
      * "请求日志"页面顶部"使用历史"堆叠柱状图数据。
      * <p>
-     * 按 (date, model_name) 聚合指定月份的 token 用量，返回 days/models/values 矩阵。
+     * 按 modelType 分支聚合指定月份的 token 用量，返回 days/models/values 矩阵。
+     * modelType=entry 时按 model_name（入口模型）聚合；modelType=channel 时按 channel_model_name（渠道模型）聚合。
      * 仅统计成功请求的 token（与本系统其他用量统计保持一致口径）。
      * </p>
      *
      * @param year            目标年份（默认当前年）
      * @param month           目标月份 1-12（默认当前月）
+     * @param modelType       模型类型：entry（入口模型，默认）或 channel（渠道模型）
      * @param modelName       可选：按入口模型名过滤
      * @param gatewayApiKeyId 可选：按网关 API Key 主键过滤（与 apiKeyName 同时存在时优先使用）
      * @param apiKeyName      可选：按 API Key 名过滤（兼容旧调用，对应渠道 API Key 名）
@@ -1007,6 +1009,7 @@ public class AdminApiController {
     public ResponseEntity<Map<String, Object>> logUsageChart(
             @RequestParam(required = false) Integer year,
             @RequestParam(required = false) Integer month,
+            @RequestParam(required = false, defaultValue = "entry") String modelType,
             @RequestParam(required = false) String modelName,
             @RequestParam(required = false) Long gatewayApiKeyId,
             @RequestParam(required = false) String apiKeyName) {
@@ -1016,7 +1019,7 @@ public class AdminApiController {
         if (m < 1 || m > 12) {
             return ResponseEntity.ok(Map.of("error", "month 必须在 1-12 之间"));
         }
-        return ResponseEntity.ok(statsService.getLogUsageChart(y, m, modelName, gatewayApiKeyId, apiKeyName));
+        return ResponseEntity.ok(statsService.getLogUsageChart(y, m, modelType, modelName, gatewayApiKeyId, apiKeyName));
     }
 
     /**

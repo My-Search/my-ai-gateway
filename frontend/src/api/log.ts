@@ -64,14 +64,16 @@ export const logApi = {
    * 获取"使用历史"堆叠柱状图数据。
    * @param params.year 目标年份（不传则后端取当前年）
    * @param params.month 目标月份 1-12（不传则后端取当前月）
+   * @param params.modelType 模型类型：'entry'（入口模型，默认）或 'channel'（渠道模型）
    * @param params.modelName 可选：按入口模型名过滤
    * @param params.gatewayApiKeyId 可选：按网关 API Key 主键过滤（按 id 精确匹配）
    * @param params.apiKeyName 兼容旧版：按 API Key 名过滤（仅作旧数据兜底）
    */
-  usageChart(params: { year?: number; month?: number; modelName?: string; gatewayApiKeyId?: number; apiKeyName?: string } = {}) {
+  usageChart(params: { year?: number; month?: number; modelType?: string; modelName?: string; gatewayApiKeyId?: number; apiKeyName?: string } = {}) {
     const query: Record<string, string | number> = {}
     if (params.year != null) query.year = params.year
     if (params.month != null) query.month = params.month
+    if (params.modelType) query.modelType = params.modelType
     if (params.modelName) query.modelName = params.modelName
     if (params.gatewayApiKeyId != null) query.gatewayApiKeyId = params.gatewayApiKeyId
     if (params.apiKeyName) query.apiKeyName = params.apiKeyName

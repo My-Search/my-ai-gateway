@@ -299,7 +299,12 @@ public class StatsService {
      * 主干流程：
      * <ol>
      *   <li>把 year/month 转成 [since, until) 半开区间（含起始日 00:00、不含次月 00:00）</li>
-     *   <li>调用一次 SQL 按 (date, model_name) 聚合该月 token 用量</li>
+     *   <li>按 modelType 分支调用 SQL 聚合该月数据：
+     *     <ul>
+     *       <li>entry 模式：按入口模型名聚合 token 用量（仅统计 success 行）</li>
+     *       <li>channel 模式：按 trace 级聚合，最终成功归入该次渠道模型名，最终失败归为"请求失败"，统计请求次数</li>
+     *     </ul>
+     *   </li>
      *   <li>遍历当月每一天，组装 days/dates 数组（无论是否有数据都补齐，便于前端稳定渲染）</li>
      *   <li>将模型按该月总用量降序排序，确保色板稳定分配（最常用模型固定拿主色）</li>
      *   <li>构建 values 矩阵：model -> List&lt;Long&gt;，长度等于 days.length</li>
@@ -308,22 +313,29 @@ public class StatsService {
      *
      * @param year            目标年份（如 2026）
      * @param month           目标月份，1-12
+     * @param modelType       模型类型："entry"（入口模型，默认）或 "channel"（渠道模型）
      * @param modelName       入口模型过滤（可选；null/空表示不过滤）
      * @param gatewayApiKeyId 网关 API Key 主键过滤（可选；与 apiKeyName 同时存在时优先使用 id）
      * @param apiKeyName      API Key 过滤（可选；null/空表示不过滤，兼容旧调用，对应渠道 Key 名）
      * @return 包含 year/month/days/models/values/maxValue/totalValue 的 Map
      */
-    public Map<String, Object> getLogUsageChart(int year, int month, String modelName,
+    public Map<String, Object> getLogUsageChart(int year, int month, String modelType, String modelName,
                                                 Long gatewayApiKeyId, String apiKeyName) {
-        return getLogUsageChartInternal(year, month, modelName, gatewayApiKeyId, apiKeyName);
+        return getLogUsageChartInternal(year, month, modelType, modelName, gatewayApiKeyId, apiKeyName);
     }
 
-    /** 兼容旧调用：仅传 apiKeyName */
+    /** 兼容旧调用：仅传 modelName + apiKeyName */
     public Map<String, Object> getLogUsageChart(int year, int month, String modelName, String apiKeyName) {
-        return getLogUsageChartInternal(year, month, modelName, null, apiKeyName);
+        return getLogUsageChartInternal(year, month, "entry", modelName, null, apiKeyName);
     }
 
-    private Map<String, Object> getLogUsageChartInternal(int year, int month, String modelName,
+    /** 兼容旧调用：传 modelName + gatewayApiKeyId + apiKeyName */
+    public Map<String, Object> getLogUsageChart(int year, int month, String modelName, Long gatewayApiKeyId, String apiKeyName) {
+        return getLogUsageChartInternal(year, month, "entry", modelName, gatewayApiKeyId, apiKeyName);
+    }
+
+    private Map<String, Object> getLogUsageChartInternal(int year, int month, String modelType,
+                                                         String modelName,
                                                          Long gatewayApiKeyId, String apiKeyName) {
         // 1. 规范化入参并计算 [since, until)
         YearMonth ym = YearMonth.of(year, month);
@@ -333,8 +345,12 @@ public class StatsService {
         LocalDateTime until = untilDate.atStartOfDay();
         int daysInMonth = ym.lengthOfMonth();
 
-        // 2. 一次性拉取该月所有 (date, model_name, total_tokens) 聚合行
-        List<Map<String, Object>> rows = requestLogMapper.selectDailyModelTokenUsage(
+        // 2. 按 modelType 分支拉取该月 (date, model_name, total_tokens) 聚合行
+        boolean isChannel = "channel".equals(modelType);
+        List<Map<String, Object>> rows = isChannel
+            ? requestLogMapper.selectDailyChannelModelTokenUsage(
+                since, until, emptyToNull(modelName), gatewayApiKeyId, emptyToNull(apiKeyName))
+            : requestLogMapper.selectDailyModelTokenUsage(
                 since, until, emptyToNull(modelName), gatewayApiKeyId, emptyToNull(apiKeyName));
 
         // 3. 预生成 days 数组（yyyy-MM-dd 形式）+ 用于 O(1) 查找的 dateIndex
