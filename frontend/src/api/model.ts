@@ -14,6 +14,12 @@ export interface CustomModel {
   relMode?: RelMode
   /** 继承源模型 ID（仅在 relMode='inherit' 时有值） */
   inheritFromModelId?: number | null
+  /** 图片失效会话数：0=关闭；N>0 表示最近一个含图片的 user 消息后有 N 个 user 消息时，图片失效被移除 */
+  imageInvalidateCount?: number
+  /** 视频失效会话数：0=关闭 */
+  videoInvalidateCount?: number
+  /** 音频失效会话数：0=关闭 */
+  audioInvalidateCount?: number
 }
 
 export interface ModelChannelRel {

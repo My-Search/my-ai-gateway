@@ -344,3 +344,42 @@ CREATE TABLE IF NOT EXISTS multimodal_rules (
 
 -- 渠道模型 input 类型字段：标记模型支持的输入模态，如 'text' / 'text,image'
 ALTER TABLE channel_models ADD COLUMN input TEXT DEFAULT 'text';
+
+-- ========================================
+-- VERSION:v1.18.0
+-- request_logs 新增 request_headers / request_body 字段，用于查看原始请求
+-- ========================================
+
+ALTER TABLE request_logs ADD COLUMN request_headers TEXT;
+ALTER TABLE request_logs ADD COLUMN request_body TEXT;
+
+-- ========================================
+-- VERSION:v1.19.0
+-- 入口模型添加多模态失效会话数字段（图片/视频/音频独立配置）
+-- ========================================
+
+ALTER TABLE models ADD COLUMN image_invalidate_count INTEGER DEFAULT 0;
+ALTER TABLE models ADD COLUMN video_invalidate_count INTEGER DEFAULT 0;
+ALTER TABLE models ADD COLUMN audio_invalidate_count INTEGER DEFAULT 0;
+
+-- ========================================
+-- VERSION:v1.20.0
+-- 系统配置：原始请求数据保留时长（request_headers / request_body 的 TTL）
+-- request_body_ttl_hours: 超过此小时数的原始请求数据将被定时清理（request_headers/body 置 NULL）
+-- 0=永久保留（默认），>0 表示保留 N 小时后清理
+-- ========================================
+
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('request_body_ttl_hours', '4', '原始请求数据保留时长（小时），超过此时间的 request_headers/body 将被清理，0=永久保留');
+
+-- ========================================
+-- VERSION:v1.21.0
+-- request_logs 新增 gateway_api_key_id 字段（网关 API Key 主键）
+-- 用途：让"使用历史"图表和"请求日志"按网关 API Key 过滤时，按 id 精确匹配，
+--      避免网关 API Key 名称与渠道 API Key 名称同名时筛选错乱。
+-- 历史数据该列为 NULL（无法回填网关 Key），过滤时不命中历史记录。
+-- ========================================
+
+ALTER TABLE request_logs ADD COLUMN gateway_api_key_id INTEGER;
+
+-- 为按网关 Key 过滤的查询加索引（图表聚合 / 日志列表）
+CREATE INDEX IF NOT EXISTS idx_request_logs_gateway_api_key_id ON request_logs(gateway_api_key_id);

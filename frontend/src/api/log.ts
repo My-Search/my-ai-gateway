@@ -12,6 +12,8 @@ export interface RequestLog {
   message?: string
   retryIndex?: number
   responseTimeMs?: number
+  requestHeaders?: string
+  requestBody?: string
   createdAt: string
 }
 
@@ -29,6 +31,10 @@ export interface LogTrace {
 
 export interface LogFilters {
   modelName?: string
+  /** 网关 API Key 主键（按 id 精确匹配，区别于渠道 API Key） */
+  gatewayApiKeyId?: number
+  /** 兼容旧版：API Key 名（精确匹配，可选）。新代码请优先使用 gatewayApiKeyId */
+  apiKeyName?: string
   startTime?: string
   endTime?: string
 }
@@ -45,13 +51,50 @@ export const logApi = {
   list(offset = 0, limit = 50, filters?: LogFilters) {
     const params: Record<string, string | number> = { offset, limit }
     if (filters?.modelName) params.modelName = filters.modelName
+    if (filters?.gatewayApiKeyId != null) params.gatewayApiKeyId = filters.gatewayApiKeyId
+    if (filters?.apiKeyName) params.apiKeyName = filters.apiKeyName
     if (filters?.startTime) params.startTime = filters.startTime
     if (filters?.endTime) params.endTime = filters.endTime
     return http.get<LogsResponse>('/logs', { params })
   },
   clean() {
     return http.post<{ success: boolean; message: string }>('/logs/clean')
+  },
+  /**
+   * 获取"使用历史"堆叠柱状图数据。
+   * @param params.year 目标年份（不传则后端取当前年）
+   * @param params.month 目标月份 1-12（不传则后端取当前月）
+   * @param params.modelName 可选：按入口模型名过滤
+   * @param params.gatewayApiKeyId 可选：按网关 API Key 主键过滤（按 id 精确匹配）
+   * @param params.apiKeyName 兼容旧版：按 API Key 名过滤（仅作旧数据兜底）
+   */
+  usageChart(params: { year?: number; month?: number; modelName?: string; gatewayApiKeyId?: number; apiKeyName?: string } = {}) {
+    const query: Record<string, string | number> = {}
+    if (params.year != null) query.year = params.year
+    if (params.month != null) query.month = params.month
+    if (params.modelName) query.modelName = params.modelName
+    if (params.gatewayApiKeyId != null) query.gatewayApiKeyId = params.gatewayApiKeyId
+    if (params.apiKeyName) query.apiKeyName = params.apiKeyName
+    return http.get<LogUsageChart>('/logs/usage-chart', { params: query })
   }
+}
+
+/**
+ * "使用历史"图表数据形状。
+ * - days: 当月所有日期（yyyy-MM-dd），固定长度（28/29/30/31），便于前端稳定渲染 X 轴
+ * - models: 当月出现过的入口模型，按总用量降序（前端可按顺序分配固定色板，保证 TopN 模型颜色稳定）
+ * - values: model -> 长度为 days.length 的数组，按 days 顺序给出该日 token 用量
+ * - maxValue: 当月所有 (date, model) 单元格中的最大值，用于 Y 轴自适应刻度
+ * - totalValue: 当月所有单元格总和
+ */
+export interface LogUsageChart {
+  year: number
+  month: number
+  days: string[]
+  models: string[]
+  values: Record<string, number[]>
+  maxValue: number
+  totalValue: number
 }
 
 /** SSE 日志事件回调 */

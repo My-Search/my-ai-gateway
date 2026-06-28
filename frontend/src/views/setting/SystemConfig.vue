@@ -52,21 +52,35 @@
           </div>
         </div>
 
+      </div>
+      <!-- End Log Management -->
+
+      <!-- Request Data Management -->
+      <div class="section">
+        <div class="section-header">
+          <SvgIcon name="log" :size="18" />
+          <span>{{ t('systemConfig.requestDataManagement') }}</span>
+        </div>
+        <div class="section-desc">{{ t('systemConfig.requestDataManagementDesc') }}</div>
+
         <div class="config-row">
           <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.cleanupTime') }}</div>
-            <div class="config-hint">{{ t('systemConfig.cleanupTimeHint') }}</div>
+            <div class="config-label">{{ t('systemConfig.requestBodyTtl') }}</div>
+            <div class="config-hint">{{ t('systemConfig.requestBodyTtlHint') }}</div>
           </div>
           <div class="config-row-control">
-            <code class="model-tag">03:00 ({{ t('systemConfig.daily') }})</code>
+            <input type="number" class="form-control" style="width:120px;"
+                   v-model.number="form.request_body_ttl_hours"
+                   :min="0" :max="8760" />
           </div>
         </div>
+      </div>
 
-        <div class="section-footer">
-          <button class="btn btn-primary" @click="handleSave" :disabled="saving">
-            <SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('common.save') }}
-          </button>
-        </div>
+      <!-- Save -->
+      <div class="section-footer">
+        <button class="btn btn-primary" @click="handleSave" :disabled="saving">
+          <SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('common.save') }}
+        </button>
       </div>
     </div>
   </div>
@@ -86,7 +100,8 @@ const successMsg = ref('')
 
 const form = reactive({
   log_retention_days: 30,
-  log_cleanup_enabled: '1'
+  log_cleanup_enabled: '1',
+  request_body_ttl_hours: 4
 })
 
 async function loadConfig() {
@@ -98,6 +113,7 @@ async function loadConfig() {
     if (res.data.success && res.data.data) {
       form.log_retention_days = parseInt(res.data.data.log_retention_days) || 30
       form.log_cleanup_enabled = res.data.data.log_cleanup_enabled === '1' ? '1' : '0'
+      form.request_body_ttl_hours = parseInt(res.data.data.request_body_ttl_hours) || 0
     }
   } catch (e: any) {
     error.value = e.message || t('error.loadFailed')
@@ -125,7 +141,8 @@ async function handleSave() {
   try {
     const res = await systemApi.updateConfig({
       log_retention_days: String(form.log_retention_days),
-      log_cleanup_enabled: form.log_cleanup_enabled
+      log_cleanup_enabled: form.log_cleanup_enabled,
+      request_body_ttl_hours: String(form.request_body_ttl_hours)
     })
     if (res.data.success) {
       successMsg.value = t('systemConfig.saveSuccess')

@@ -109,9 +109,14 @@ public class RelayService {
      */
     public Mono<String> chatCompletions(String authHeader, String requestBody) {
         String traceId = requestLogService.startTrace();
-        return Mono.fromCallable(() -> parseRequest(requestBody, "openai"))
+        Long gatewayApiKeyId = logOriginalRequest(traceId, authHeader, buildOpenaiHeadersJson(authHeader), requestBody);
+        return Mono.fromCallable(() -> {
+                    InternalRequest req = parseRequest(requestBody, "openai");
+                    preprocessMediaInvalidation(req);
+                    return req;
+                })
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .flatMap(req -> executeRelay(traceId, authHeader, req, "openai", false));
+                .flatMap(req -> executeRelay(traceId, authHeader, gatewayApiKeyId, req, "openai", false));
     }
 
     /**
@@ -119,9 +124,14 @@ public class RelayService {
      */
     public Mono<String> messages(String apiKeyHeader, String requestBody, String anthropicVersion) {
         String traceId = requestLogService.startTrace();
-        return Mono.fromCallable(() -> parseRequest(requestBody, "anthropic"))
+        Long gatewayApiKeyId = logOriginalRequest(traceId, apiKeyHeader, buildAnthropicHeadersJson(apiKeyHeader, anthropicVersion), requestBody);
+        return Mono.fromCallable(() -> {
+                    InternalRequest req = parseRequest(requestBody, "anthropic");
+                    preprocessMediaInvalidation(req);
+                    return req;
+                })
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .flatMap(req -> executeRelay(traceId, apiKeyHeader, req, "anthropic", false));
+                .flatMap(req -> executeRelay(traceId, apiKeyHeader, gatewayApiKeyId, req, "anthropic", false));
     }
 
     /**
@@ -132,6 +142,7 @@ public class RelayService {
     public SseEmitter chatCompletionsStream(String authHeader, String requestBody, boolean internalClient) {
         SseEmitter emitter = new SseEmitter(300_000L);
         String traceId = requestLogService.startTrace();
+        Long gatewayApiKeyId = logOriginalRequest(traceId, authHeader, buildOpenaiHeadersJson(authHeader), requestBody);
         // 注册资源清理回调：无论正常完成、超时还是客户端断开，都清理 StreamContentManager 和 streamUsageMap
         emitter.onCompletion(() -> cleanupStreamResources(traceId));
         emitter.onTimeout(() -> {
@@ -139,9 +150,13 @@ public class RelayService {
             cleanupStreamResources(traceId);
             emitter.complete();
         });
-        Mono.fromCallable(() -> parseRequest(requestBody, "openai"))
+        Mono.fromCallable(() -> {
+                    InternalRequest req = parseRequest(requestBody, "openai");
+                    preprocessMediaInvalidation(req);
+                    return req;
+                })
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .flatMapMany(req -> executeStreamRelay(traceId, authHeader, req, "openai", internalClient))
+                .flatMapMany(req -> executeStreamRelay(traceId, authHeader, gatewayApiKeyId, req, "openai", internalClient))
                 // publishOn(prefetch=1)：每处理完一个事件再请求下一个，让 SSE 发送之间有空隙，
                 // 确保 Tomcat flush 能真正将数据推送到 TCP 栈，避免多个事件被合并发送
                 .publishOn(reactor.core.scheduler.Schedulers.boundedElastic(), 1)
@@ -168,6 +183,7 @@ public class RelayService {
     public SseEmitter messagesStream(String apiKeyHeader, String requestBody, String anthropicVersion, boolean internalClient) {
         SseEmitter emitter = new SseEmitter(300_000L);
         String traceId = requestLogService.startTrace();
+        Long gatewayApiKeyId = logOriginalRequest(traceId, apiKeyHeader, buildAnthropicHeadersJson(apiKeyHeader, anthropicVersion), requestBody);
         // 注册资源清理回调：无论正常完成、超时还是客户端断开，都清理 StreamContentManager 和 streamUsageMap
         emitter.onCompletion(() -> cleanupStreamResources(traceId));
         emitter.onTimeout(() -> {
@@ -175,9 +191,13 @@ public class RelayService {
             cleanupStreamResources(traceId);
             emitter.complete();
         });
-        Mono.fromCallable(() -> parseRequest(requestBody, "anthropic"))
+        Mono.fromCallable(() -> {
+                    InternalRequest req = parseRequest(requestBody, "anthropic");
+                    preprocessMediaInvalidation(req);
+                    return req;
+                })
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .flatMapMany(req -> executeStreamRelay(traceId, apiKeyHeader, req, "anthropic", internalClient))
+                .flatMapMany(req -> executeStreamRelay(traceId, apiKeyHeader, gatewayApiKeyId, req, "anthropic", internalClient))
                 // publishOn(prefetch=1)：同 OpenAI 流式，确保事件逐个发送
                 .publishOn(reactor.core.scheduler.Schedulers.boundedElastic(), 1)
                 .subscribe(
@@ -213,19 +233,20 @@ public class RelayService {
     /**
      * 执行非流式中继
      */
-    private Mono<String> executeRelay(String traceId, String authHeader, InternalRequest req, String provider, boolean retry) {
+    private Mono<String> executeRelay(String traceId, String authHeader, Long gatewayApiKeyId,
+                                     InternalRequest req, String provider, boolean retry) {
         long startTime = System.currentTimeMillis();
         String originalModel = req.getModel();
-        logSkippedCandidates(traceId, req);
+        logSkippedCandidates(traceId, gatewayApiKeyId, req);
         List<RoutingCandidate> candidates = getAvailableCandidates(req);
         if (candidates.isEmpty()) {
-            requestLogService.logComplete(traceId, null, originalModel, null, null,
+            requestLogService.logComplete(traceId, null, gatewayApiKeyId, originalModel, null, null,
                     "fail", "error", "没有可用的路由候选", System.currentTimeMillis() - startTime, 0);
             return Mono.just(messageTransformer.buildErrorResponse(req.getClientApiFormat(),
                     "没有可用的路由候选（渠道/API Key/模型都被熔断或不可用）", "api_error", 503));
         }
 
-        return tryCandidates(traceId, new ArrayList<>(candidates), authHeader, req, provider, 0, startTime);
+        return tryCandidates(traceId, new ArrayList<>(candidates), authHeader, gatewayApiKeyId, req, provider, 0, startTime);
     }
 
     /**
@@ -233,9 +254,9 @@ public class RelayService {
      * （包级可见，便于单元测试）
      */
     Mono<String> tryCandidates(String traceId, List<RoutingCandidate> remaining,
-                                        String authHeader, InternalRequest req,
+                                        String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                         String provider, int retryIndex, long startTime) {
-        return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex, startTime, null);
+        return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex, startTime, null);
     }
 
     /**
@@ -243,12 +264,12 @@ public class RelayService {
      * 携带 lastErrorMsg 用于在全部候选失败时展示具体的失败原因。
      */
     private Mono<String> tryCandidates(String traceId, List<RoutingCandidate> remaining,
-                                        String authHeader, InternalRequest req,
+                                        String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                         String provider, int retryIndex, long startTime,
                                         String lastErrorMsg) {
         if (remaining.isEmpty()) {
             String failMsg = buildFailMessage(lastErrorMsg);
-            requestLogService.logComplete(traceId, null, req.getModel(), null, null,
+            requestLogService.logComplete(traceId, null, gatewayApiKeyId, req.getModel(), null, null,
                     "fail", "error", failMsg, System.currentTimeMillis() - startTime, retryIndex);
             log.warn("所有候选均失败，无法完成请求 - traceId={}, lastError={}", traceId, lastErrorMsg);
             return Mono.just(messageTransformer.buildErrorResponse(req.getClientApiFormat(),
@@ -274,28 +295,16 @@ public class RelayService {
                     candidate.getChannel().getName(),
                     candidate.getChannelModel().getModelName(),
                     candidate.getChannelApiKey().getKeyName());
-            logPhase(traceId, candidate, req, "skip",
+            logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
                     "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
-            return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, lastErrorMsg);
+            return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, lastErrorMsg);
         }
 
-        // 请求含图片但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
-        if (skipIfImageUnsupported(traceId, candidate, req, retryIndex)) {
+        // 请求含媒体类型但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
+        if (skipIfMediaTypeUnsupported(traceId, gatewayApiKeyId, candidate, req, retryIndex)) {
             remaining.remove(candidate);
-            return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, lastErrorMsg);
-        }
-
-        // 请求含视频但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
-        if (skipIfVideoUnsupported(traceId, candidate, req, retryIndex)) {
-            remaining.remove(candidate);
-            return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, lastErrorMsg);
-        }
-
-        // 请求含音频但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
-        if (skipIfAudioUnsupported(traceId, candidate, req, retryIndex)) {
-            remaining.remove(candidate);
-            return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, lastErrorMsg);
+            return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, lastErrorMsg);
         }
 
         log.info("路由决策 - traceId={} retryIndex={} 选中候选: channel={} model={} key={} (剩余{}个候选)",
@@ -305,14 +314,14 @@ public class RelayService {
                 candidate.getChannelApiKey().getKeyName(),
                 remaining.size());
 
-        logPhase(traceId, candidate, req, "start",
+        logPhase(traceId, gatewayApiKeyId, candidate, req, "start",
                 "路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
 
         int maxAttempts = getMaxAttempts(req.getModel());
         log.info("开始调用候选 - traceId={} maxAttempts={} (retryCount={})",
                 traceId, maxAttempts, getRetryCount(req.getModel()));
 
-        return invokeCandidateWithRetries(traceId, authHeader, req, candidate, provider, retryIndex, 1, maxAttempts)
+        return invokeCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, req, candidate, provider, retryIndex, 1, maxAttempts)
                 .flatMap(body -> {
                     balancer.markSuccess(candidate);
                     // 更新渠道模型最后使用时间（用于轮询 LRU 排序）
@@ -324,7 +333,7 @@ public class RelayService {
                             System.currentTimeMillis() - startTime);
                     String transformed = transformResponse(body, candidate, req, provider, false);
                     int[] usage = extractUsageFromProviderResponse(body);
-                    requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(),
+                    requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(), gatewayApiKeyId,
                             req.getModel(), candidate.getChannelModel().getModelName(),
                             candidate.getChannel().getName(),
                             "success", "success", "请求成功",
@@ -347,7 +356,7 @@ public class RelayService {
                         log.info("候选失败已移除，准备重路由 - traceId={} 剩余候选数={}", traceId, remaining.size());
                         // 下一个候选继续使用剥离 tool 消息的请求，避免重复 400
                         InternalRequest fixedReq = fixRequestFor400(req);
-                        return tryCandidates(traceId, remaining, authHeader, fixedReq, provider, retryIndex + 1, startTime, err.getMessage());
+                        return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, fixedReq, provider, retryIndex + 1, startTime, err.getMessage());
                     }
                     // 非 400 错误（超时、5xx、429 等）：触发熔断，重路由到下一候选
                     log.warn("候选失败（重试耗尽）channel={} key={} model={} (已重试{}次): {}",
@@ -365,14 +374,14 @@ public class RelayService {
                         log.info("  剩余候选[{}]: channel={} model={} key={}", i,
                                 c.getChannel().getName(), c.getChannelModel().getModelName(), c.getChannelApiKey().getKeyName());
                     }
-                    return tryCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, err.getMessage());
+                    return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, err.getMessage());
                 });
     }
 
     /**
      * 对单个候选按重试次数进行调用，每次失败立即重试同一候选
      */
-    private Mono<String> invokeCandidateWithRetries(String traceId, String authHeader, InternalRequest req,
+    private Mono<String> invokeCandidateWithRetries(String traceId, String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                                       RoutingCandidate candidate, String provider,
                                                       int retryIndex, int attempt, int maxAttempts) {
         long attemptStartTime = System.currentTimeMillis();
@@ -414,7 +423,7 @@ public class RelayService {
                                     attempt, err.getMessage());
                         String retryErrDetail = err.getMessage() != null ? err.getMessage() : "";
                         retryErrDetail = retryErrDetail.length() > 150 ? retryErrDetail.substring(0, 150) + "..." : retryErrDetail;
-                        logPhase(traceId, candidate, req, "retry",
+                        logPhase(traceId, gatewayApiKeyId, candidate, req, "retry",
                                 "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）: " + retryErrDetail, retryIndex, attemptDurationMs);
                             return Mono.error(err);
                         }
@@ -430,9 +439,9 @@ public class RelayService {
                         }
                         String retryErrDetail2 = err.getMessage() != null ? err.getMessage() : "";
                         retryErrDetail2 = retryErrDetail2.length() > 150 ? retryErrDetail2.substring(0, 150) + "..." : retryErrDetail2;
-                        logPhase(traceId, candidate, retryReq, "retry",
+                        logPhase(traceId, gatewayApiKeyId, candidate, retryReq, "retry",
                                 "第 " + attempt + " 次失败: " + retryErrDetail2 + "，准备第 " + (attempt + 1) + " 次重试", retryIndex, attemptDurationMs);
-                        return invokeCandidateWithRetries(traceId, authHeader, retryReq, candidate, provider,
+                        return invokeCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, retryReq, candidate, provider,
                                 retryIndex, attempt + 1, maxAttempts);
                     }
                     return Mono.error(err);
@@ -444,17 +453,18 @@ public class RelayService {
      *
      * @param internalClient 是否为内部客户端，true 时发送路由进度等自定义 SSE 事件
      */
-    private Flux<SseEvent> executeStreamRelay(String traceId, String authHeader, InternalRequest req, String provider, boolean internalClient) {
+    private Flux<SseEvent> executeStreamRelay(String traceId, String authHeader, Long gatewayApiKeyId,
+                                            InternalRequest req, String provider, boolean internalClient) {
         long startTime = System.currentTimeMillis();
-        logSkippedCandidates(traceId, req);
+        logSkippedCandidates(traceId, gatewayApiKeyId, req);
         List<RoutingCandidate> candidates = getAvailableCandidates(req);
         if (candidates.isEmpty()) {
-            requestLogService.logComplete(traceId, null, req.getModel(), null, null,
+            requestLogService.logComplete(traceId, null, gatewayApiKeyId, req.getModel(), null, null,
                     "fail", "error", "没有可用的路由候选", System.currentTimeMillis() - startTime, 0);
             return Flux.error(new RuntimeException("没有可用的路由候选"));
         }
 
-        return tryStreamCandidates(traceId, new ArrayList<>(candidates), authHeader, req, provider, 0, startTime, internalClient);
+        return tryStreamCandidates(traceId, new ArrayList<>(candidates), authHeader, gatewayApiKeyId, req, provider, 0, startTime, internalClient);
     }
 
     /**
@@ -464,10 +474,10 @@ public class RelayService {
      * @param internalClient 是否为内部客户端，true 时发送 _routing_progress 等自定义 SSE 事件
      */
     Flux<SseEvent> tryStreamCandidates(String traceId, List<RoutingCandidate> remaining,
-                                                String authHeader, InternalRequest req,
+                                                String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                                 String provider, int retryIndex, long startTime,
                                                 boolean internalClient) {
-        return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex, startTime, internalClient, null);
+        return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex, startTime, internalClient, null);
     }
 
     /**
@@ -475,7 +485,7 @@ public class RelayService {
      * 携带 lastErrorMsg 用于在全部候选失败时展示具体的失败原因。
      */
     private Flux<SseEvent> tryStreamCandidates(String traceId, List<RoutingCandidate> remaining,
-                                                String authHeader, InternalRequest req,
+                                                String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                                 String provider, int retryIndex, long startTime,
                                                 boolean internalClient, String lastErrorMsg) {
         if (remaining.isEmpty()) {
@@ -483,7 +493,7 @@ public class RelayService {
             streamContentManager.clearContent(traceId);
             String extraInfo = req.isContextRetry() ? "（已拼接上下文但无剩余候选）" : "";
             String failMsg = buildFailMessage(lastErrorMsg);
-            requestLogService.logComplete(traceId, null, req.getModel(), null, null,
+            requestLogService.logComplete(traceId, null, gatewayApiKeyId, req.getModel(), null, null,
                     "fail", "error", failMsg, System.currentTimeMillis() - startTime, retryIndex);
             log.warn("所有流式候选均失败 - traceId={}{}, lastError={}", traceId, extraInfo, lastErrorMsg);
             return Flux.error(new RuntimeException(failMsg));
@@ -506,28 +516,16 @@ public class RelayService {
                     candidate.getChannel().getName(),
                     candidate.getChannelModel().getModelName(),
                     candidate.getChannelApiKey().getKeyName());
-            logPhase(traceId, candidate, req, "skip",
+            logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
                     "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
-            return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
+            return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
         }
 
-        // 请求含图片但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
-        if (skipIfImageUnsupported(traceId, candidate, req, retryIndex)) {
+        // 请求含媒体类型但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
+        if (skipIfMediaTypeUnsupported(traceId, gatewayApiKeyId, candidate, req, retryIndex)) {
             remaining.remove(candidate);
-            return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
-        }
-
-        // 请求含视频但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
-        if (skipIfVideoUnsupported(traceId, candidate, req, retryIndex)) {
-            remaining.remove(candidate);
-            return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
-        }
-
-        // 请求含音频但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
-        if (skipIfAudioUnsupported(traceId, candidate, req, retryIndex)) {
-            remaining.remove(candidate);
-            return tryStreamCandidates(traceId, remaining, authHeader, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
+            return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
         }
 
         log.info("流式路由决策 - traceId={} retryIndex={} 选中候选: channel={} model={} key={} (剩余{}个候选){}",
@@ -538,7 +536,7 @@ public class RelayService {
                 remaining.size(),
                 req.isContextRetry() ? " [已拼接]" : "");
 
-        logPhase(traceId, candidate, req, "start",
+        logPhase(traceId, gatewayApiKeyId, candidate, req, "start",
                 "流式路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
 
         int maxAttempts = getMaxAttempts(req.getModel());
@@ -547,7 +545,7 @@ public class RelayService {
                 ? Flux.just(new SseEvent(null, buildRoutingProgressJson("trying", candidate, retryIndex, null)))
                 : Flux.empty();
         return Flux.concat(routingStart,
-                invokeStreamCandidateWithRetries(traceId, authHeader, req, candidate, provider, retryIndex, 1, maxAttempts, internalClient))
+                invokeStreamCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, req, candidate, provider, retryIndex, 1, maxAttempts, internalClient))
                 .doOnNext(event -> {
                     int[] usage = extractUsageFromSseData(event.data());
                     if (usage != null) {
@@ -582,7 +580,7 @@ public class RelayService {
                             System.currentTimeMillis() - startTime);
                     // 清理流式内容累积
                     streamContentManager.clearContent(traceId);
-                    requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(),
+                    requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(), gatewayApiKeyId,
                             req.getModel(), candidate.getChannelModel().getModelName(),
                             candidate.getChannel().getName(),
                             "success", "success", resultMsg,
@@ -612,7 +610,7 @@ public class RelayService {
                         // 下一个候选继续使用剥离 tool 消息的请求，避免重复 400
                         InternalRequest fixedReq = fixRequestFor400(req);
                         return Flux.concat(
-                                tryStreamCandidates(traceId, remaining, authHeader, fixedReq, provider, retryIndex + 1, startTime, internalClient, err.getMessage()));
+                                tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, fixedReq, provider, retryIndex + 1, startTime, internalClient, err.getMessage()));
                     }
                     // 非 400 错误（超时、5xx、429 等）：触发熔断，重路由到下一候选
                     log.warn("流式候选失败（重试耗尽）channel={} key={} model={} (已重试{}次): {}",
@@ -653,7 +651,7 @@ public class RelayService {
                                 "switching", candidate, retryIndex + 1, failReason)));
                     }
                     return Flux.concat(routingSwitch,
-                            tryStreamCandidates(traceId, remaining, authHeader, contextReq, provider, retryIndex + 1, startTime, internalClient, err.getMessage()));
+                            tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, contextReq, provider, retryIndex + 1, startTime, internalClient, err.getMessage()));
                 });
     }
 
@@ -662,7 +660,7 @@ public class RelayService {
      *
      * @param internalClient 是否为内部客户端，true 时发送 _routing_progress 重试事件
      */
-    private Flux<SseEvent> invokeStreamCandidateWithRetries(String traceId, String authHeader, InternalRequest req,
+    private Flux<SseEvent> invokeStreamCandidateWithRetries(String traceId, String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                                               RoutingCandidate candidate, String provider,
                                                               int retryIndex, int attempt, int maxAttempts,
                                                               boolean internalClient) {
@@ -699,7 +697,7 @@ public class RelayService {
                                     attempt, err.getMessage());
                             String streamRetryErrDetail = err.getMessage() != null ? err.getMessage() : "";
                             streamRetryErrDetail = streamRetryErrDetail.length() > 150 ? streamRetryErrDetail.substring(0, 150) + "..." : streamRetryErrDetail;
-                            logPhase(traceId, candidate, req, "retry",
+                            logPhase(traceId, gatewayApiKeyId, candidate, req, "retry",
                                     "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）: " + streamRetryErrDetail, retryIndex, attemptDurationMs);
                             return Flux.error(err);
                         }
@@ -723,7 +721,7 @@ public class RelayService {
                         }
                         String streamRetryErrDetail2 = err.getMessage() != null ? err.getMessage() : "";
                             streamRetryErrDetail2 = streamRetryErrDetail2.length() > 150 ? streamRetryErrDetail2.substring(0, 150) + "..." : streamRetryErrDetail2;
-                            logPhase(traceId, candidate, retryReq, "retry",
+                            logPhase(traceId, gatewayApiKeyId, candidate, retryReq, "retry",
                                     "第 " + attempt + " 次失败: " + streamRetryErrDetail2 + "，准备第 " + (attempt + 1) + " 次重试", retryIndex, attemptDurationMs);
                         // 仅内部客户端发送路由进度事件：候选内重试
                         Flux<SseEvent> routingRetry = internalClient
@@ -732,7 +730,7 @@ public class RelayService {
                                         "第" + attempt + "次失败，第" + (attempt + 1) + "次重试")))
                                 : Flux.empty();
                         return Flux.concat(routingRetry,
-                                invokeStreamCandidateWithRetries(traceId, authHeader, retryReq, candidate, provider,
+                                invokeStreamCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, retryReq, candidate, provider,
                                         retryIndex, attempt + 1, maxAttempts, internalClient));
                     }
                     return Flux.error(err);
@@ -1320,124 +1318,213 @@ public class RelayService {
     }
 
     /**
-     * 检测请求中是否包含图片等多模态内容
-     * 检查所有消息的 contentParts 中的 type 是否为 image_url（OpenAI 格式）
-     * 使用 startsWith 以兼容未来可能的变体（如 image_file）
+     * 预处理请求：根据入口模型的多模态失效配置，移除已失效的媒体内容。
+     * <p>
+     * 处理流程：
+     * <ol>
+     *   <li>根据模型名查询入口模型的 imageInvalidateCount / videoInvalidateCount / audioInvalidateCount</li>
+     *   <li>对每个 >0 的媒体类型，找到最后一个含有该媒体类型的 user 消息</li>
+     *   <li>统计该消息之后还有多少个 user 消息</li>
+     *   <li>如果后续 user 消息数 ≥ 配置值，则将该类型的所有媒体内容替换为纯文本提示</li>
+     * </ol>
+     * 替换后清除 detectedMediaTypes 缓存，使后续检测重新计算。
+     * </p>
+     *
+     * @param req 内部请求（会直接修改 messages 中的 contentParts）
      */
-    private boolean hasImageContent(InternalRequest req) {
-        if (req.getMessages() == null) return false;
-        for (InternalMessage msg : req.getMessages()) {
-            if (msg.getContentParts() == null) continue;
-            for (Map<String, Object> part : msg.getContentParts()) {
-                Object type = part.get("type");
-                if (type != null && type.toString().startsWith("image")) {
-                    return true;
-                }
+    private void preprocessMediaInvalidation(InternalRequest req) {
+        if (req.getMessages() == null || req.getMessages().isEmpty()) return;
+
+        Long customModelId = resolveModelId(req.getModel());
+        if (customModelId == null) return;
+
+        Model model = modelService.getById(customModelId);
+        if (model == null) return;
+
+        // 检查三种媒体类型的配置
+        int imageN = model.getImageInvalidateCount() != null ? model.getImageInvalidateCount() : 0;
+        int videoN = model.getVideoInvalidateCount() != null ? model.getVideoInvalidateCount() : 0;
+        int audioN = model.getAudioInvalidateCount() != null ? model.getAudioInvalidateCount() : 0;
+
+        if (imageN > 0) {
+            preprocessMediaInvalidationForType(req, "image", imageN, MEDIA_REPLACE_TEXT_IMAGE);
+        }
+        if (videoN > 0) {
+            preprocessMediaInvalidationForType(req, "video", videoN, MEDIA_REPLACE_TEXT_VIDEO);
+        }
+        if (audioN > 0) {
+            preprocessMediaInvalidationForType(req, "audio", audioN, MEDIA_REPLACE_TEXT_AUDIO);
+        }
+    }
+
+    /**
+     * 对指定媒体类型执行失效检查与替换。
+     * <p>
+     * 主干流程：
+     * <ol>
+     *   <li>从后向前遍历 messages，找到最后一个包含该媒体类型的 user 消息</li>
+     *   <li>统计该消息之后的 user 消息数量</li>
+     *   <li>如果后续 user 消息数 ≥ 配置值，遍历所有消息将该媒体类型的 contentPart 替换为文本</li>
+     * </ol>
+     * </p>
+     */
+    private void preprocessMediaInvalidationForType(InternalRequest req, String mediaTypePrefix,
+                                                     int invalidateCount, String replaceText) {
+        List<InternalMessage> messages = req.getMessages();
+        List<InternalMessage> userMessages = new ArrayList<>();
+        for (int i = 0; i < messages.size(); i++) {
+            if ("user".equals(messages.get(i).getRole())) {
+                userMessages.add(messages.get(i));
+            }
+        }
+
+        // 从后向前找到最后一个含该媒体类型的 user 消息
+        int lastMediaUserIdx = -1;
+        for (int i = userMessages.size() - 1; i >= 0; i--) {
+            InternalMessage msg = userMessages.get(i);
+            if (hasMediaType(msg, mediaTypePrefix)) {
+                lastMediaUserIdx = i;
+                break;
+            }
+        }
+
+        // 没找到则无需处理
+        if (lastMediaUserIdx < 0) return;
+
+        // 统计该消息之后还有多少个 user 消息
+        int userMsgsAfter = userMessages.size() - 1 - lastMediaUserIdx;
+
+        // 如果后续 user 消息数 >= 配置值，则替换所有该类型的媒体内容
+        if (userMsgsAfter >= invalidateCount) {
+            log.info("多模态失效触发: mediaType={}, invalidateCount={}, userMsgsAfter={}, model={}",
+                    mediaTypePrefix, invalidateCount, userMsgsAfter, req.getModel());
+            for (InternalMessage msg : messages) {
+                replaceMediaParts(msg, mediaTypePrefix, replaceText);
+            }
+            // 清除 detectedMediaTypes 缓存，使后续检测重新计算
+            req.setDetectedMediaTypes(null);
+        }
+    }
+
+    /**
+     * 检查消息中是否包含指定前缀的媒体类型
+     */
+    private boolean hasMediaType(InternalMessage msg, String typePrefix) {
+        if (msg.getContentParts() == null) return false;
+        for (Map<String, Object> part : msg.getContentParts()) {
+            Object type = part.get("type");
+            if (type != null && type.toString().startsWith(typePrefix)) {
+                return true;
             }
         }
         return false;
     }
 
     /**
-     * 检测请求中是否包含视频等多模态内容
-     * 检查所有消息的 contentParts 中的 type 是否为 video（如 video_url、video_file）
-     * 使用 startsWith 以兼容未来可能的变体
+     * 将消息中指定前缀的媒体 contentPart 替换为纯文本
      */
-    private boolean hasVideoContent(InternalRequest req) {
-        if (req.getMessages() == null) return false;
+    private void replaceMediaParts(InternalMessage msg, String typePrefix, String replaceText) {
+        if (msg.getContentParts() == null) return;
+        List<Map<String, Object>> newParts = new ArrayList<>();
+        boolean replaced = false;
+        for (Map<String, Object> part : msg.getContentParts()) {
+            Object type = part.get("type");
+            if (type != null && type.toString().startsWith(typePrefix)) {
+                if (!replaced) {
+                    // 只添加一次替换文本（多个连续媒体只生成一个文本提示）
+                    Map<String, Object> textPart = new LinkedHashMap<>();
+                    textPart.put("type", "text");
+                    textPart.put("text", replaceText);
+                    newParts.add(textPart);
+                    replaced = true;
+                }
+                // 跳过原媒体 part
+            } else {
+                newParts.add(part);
+            }
+        }
+        // 如果原消息只有媒体 part（无文本），替换后只保留文本提示
+        // 如果原消息有文本 + 媒体，媒体 part 被替换为一条提示文本
+        msg.setContentParts(newParts);
+    }
+
+    /**
+     * 检测请求中包含的所有媒体类型（image/video/audio）
+     * 遍历所有消息的 contentParts，收集 type 字段前缀作为媒体类型。
+     * 使用 startsWith 以兼容未来可能的变体（如 image_url、image_file、video_file）。
+     * 检测结果会缓存到 req.detectedMediaTypes 避免重复遍历。
+     *
+     * @return 包含的媒体类型集合（不会包含 text），如 ["image", "video"]
+     */
+    private Set<String> detectRequestMediaTypes(InternalRequest req) {
+        // 优先使用缓存结果
+        if (req.getDetectedMediaTypes() != null) {
+            return req.getDetectedMediaTypes();
+        }
+        if (req.getMessages() == null) {
+            req.setDetectedMediaTypes(Collections.emptySet());
+            return Collections.emptySet();
+        }
+        Set<String> types = new HashSet<>();
         for (InternalMessage msg : req.getMessages()) {
             if (msg.getContentParts() == null) continue;
             for (Map<String, Object> part : msg.getContentParts()) {
                 Object type = part.get("type");
-                if (type != null && type.toString().startsWith("video")) {
-                    return true;
+                if (type != null) {
+                    String t = type.toString();
+                    if (t.startsWith("image")) {
+                        types.add("image");
+                    } else if (t.startsWith("video")) {
+                        types.add("video");
+                    } else if (t.startsWith("audio")) {
+                        types.add("audio");
+                    }
                 }
             }
         }
-        return false;
+        req.setDetectedMediaTypes(types);
+        return types;
     }
 
     /**
-     * 检查渠道模型是否支持图片输入
+     * 检查渠道模型是否支持指定的媒体类型
+     *
+     * @param channelModel 渠道模型
+     * @param mediaType    媒体类型（如 "image"、"video"、"audio"）
+     * @return true 表示支持
      */
-    private boolean supportsImage(ChannelModel channelModel) {
+    private boolean supportsMediaType(ChannelModel channelModel, String mediaType) {
         String input = channelModel.getInput();
-        return input != null && input.contains("image");
+        return input != null && input.contains(mediaType);
     }
 
     /**
-     * 检查渠道模型是否支持视频输入
+     * 候选不支持请求中的媒体类型时返回 true，并记录跳过原因
+     * <p>
+     * 一次性检测请求中的所有媒体类型，与模型的 input 字段逐一比对，
+     * 将所有不支持的媒体类型合并为一条日志输出，格式如：
+     * "当前模型不支持请求中含有的这些类型：image、video"
+     * </p>
+     *
+     * @return true 表示候选不满足请求的媒体类型要求，应由调用方移除候选并继续
      */
-    private boolean supportsVideo(ChannelModel channelModel) {
-        String input = channelModel.getInput();
-        return input != null && input.contains("video");
-    }
+    private boolean skipIfMediaTypeUnsupported(String traceId, Long gatewayApiKeyId, RoutingCandidate candidate,
+                                               InternalRequest req, int retryIndex) {
+        Set<String> types = detectRequestMediaTypes(req);
+        if (types.isEmpty()) return false;
 
-    /**
-     * 候选不支持图片时返回 true，并记录跳过原因（仅判断+日志，由调用方移除候选并继续递归）
-     */
-    private boolean skipIfImageUnsupported(String traceId, RoutingCandidate candidate,
-                                           InternalRequest req, int retryIndex) {
-        if (hasImageContent(req) && !supportsImage(candidate.getChannelModel())) {
-            logPhase(traceId, candidate, req, "skip",
-                    "请求含有图片但当前模型不支持因此跳过 " + candidate.getChannel().getName()
-                            + "/" + candidate.getChannelApiKey().getKeyName()
-                            + "/" + candidate.getChannelModel().getModelName(), retryIndex);
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * 候选不支持视频时返回 true，并记录跳过原因（仅判断+日志，由调用方移除候选并继续递归）
-     */
-    private boolean skipIfVideoUnsupported(String traceId, RoutingCandidate candidate,
-                                           InternalRequest req, int retryIndex) {
-        if (hasVideoContent(req) && !supportsVideo(candidate.getChannelModel())) {
-            logPhase(traceId, candidate, req, "skip",
-                    "请求含有视频但当前模型不支持因此跳过 " + candidate.getChannel().getName()
-                            + "/" + candidate.getChannelApiKey().getKeyName()
-                            + "/" + candidate.getChannelModel().getModelName(), retryIndex);
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * 检测请求中是否包含音频等多模态内容
-     * 检查所有消息的 contentParts 中的 type 是否为 audio（如 audio_url、audio_file）
-     * 使用 startsWith 以兼容未来可能的变体
-     */
-    private boolean hasAudioContent(InternalRequest req) {
-        if (req.getMessages() == null) return false;
-        for (InternalMessage msg : req.getMessages()) {
-            if (msg.getContentParts() == null) continue;
-            for (Map<String, Object> part : msg.getContentParts()) {
-                Object type = part.get("type");
-                if (type != null && type.toString().startsWith("audio")) {
-                    return true;
-                }
+        // 找出所有不支持的媒体类型
+        List<String> unsupportedTypes = new ArrayList<>();
+        for (String type : types) {
+            if (!supportsMediaType(candidate.getChannelModel(), type)) {
+                unsupportedTypes.add(type);
             }
         }
-        return false;
-    }
 
-    /**
-     * 检查渠道模型是否支持音频输入
-     */
-    private boolean supportsAudio(ChannelModel channelModel) {
-        String input = channelModel.getInput();
-        return input != null && input.contains("audio");
-    }
-
-    /**
-     * 候选不支持音频时返回 true，并记录跳过原因（仅判断+日志，由调用方移除候选并继续递归）
-     */
-    private boolean skipIfAudioUnsupported(String traceId, RoutingCandidate candidate,
-                                           InternalRequest req, int retryIndex) {
-        if (hasAudioContent(req) && !supportsAudio(candidate.getChannelModel())) {
-            logPhase(traceId, candidate, req, "skip",
-                    "请求含有音频但当前模型不支持因此跳过 " + candidate.getChannel().getName()
+        if (!unsupportedTypes.isEmpty()) {
+            logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
+                    "当前模型不支持请求中含有的这些类型：" + String.join("、", unsupportedTypes)
+                            + " 因此跳过 " + candidate.getChannel().getName()
                             + "/" + candidate.getChannelApiKey().getKeyName()
                             + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             return true;
@@ -1587,27 +1674,117 @@ public class RelayService {
     /**
      * 记录请求阶段日志
      */
-    private void logPhase(String traceId, RoutingCandidate candidate, InternalRequest req,
+    private void logPhase(String traceId, Long gatewayApiKeyId, RoutingCandidate candidate, InternalRequest req,
                           String phase, String message, int retryIndex) {
-        logPhase(traceId, candidate, req, phase, message, retryIndex, null);
+        logPhase(traceId, gatewayApiKeyId, candidate, req, phase, message, retryIndex, null);
     }
 
     /**
      * 记录请求阶段日志（带响应时间）——用于"该次尝试耗时"已知但尚未走到 success/fail 的场景，
      * 例如：候选内重试失败时，把本次尝试的耗时写入 retry 日志，让前端能展示每次真实请求的用时。
      */
-    private void logPhase(String traceId, RoutingCandidate candidate, InternalRequest req,
+    private void logPhase(String traceId, Long gatewayApiKeyId, RoutingCandidate candidate, InternalRequest req,
                           String phase, String message, int retryIndex, Long responseTimeMs) {
         String apiKeyName = candidate != null ? candidate.getChannelApiKey().getKeyName() : null;
         String modelName = req != null ? req.getModel() : null;
         String channelModelName = candidate != null ? candidate.getChannelModel().getModelName() : null;
         String channelName = candidate != null ? candidate.getChannel().getName() : null;
         if (responseTimeMs != null) {
-            requestLogService.logWithResponseTime(traceId, apiKeyName, modelName, channelModelName, channelName,
+            requestLogService.logWithResponseTime(traceId, apiKeyName, gatewayApiKeyId, modelName, channelModelName, channelName,
                     phase, message, retryIndex, responseTimeMs);
         } else {
-            requestLogService.log(traceId, apiKeyName, modelName, channelModelName, channelName, phase, message, retryIndex);
+            requestLogService.log(traceId, apiKeyName, gatewayApiKeyId, modelName, channelModelName, channelName, phase, message, retryIndex);
         }
+    }
+
+    /** 原始请求体最大存储长度（超出部分截断），约 64KB */
+    private static final int MAX_REQUEST_BODY_STORE_LENGTH = 64 * 1024;
+
+    /** 多模态失效替换文本：图片输入已被后续对话覆盖，由系统自动移除以路由到文本模型 */
+    private static final String MEDIA_REPLACE_TEXT_IMAGE = "图片输入已失效已被系统移除";
+    /** 多模态失效替换文本：视频输入已被后续对话覆盖 */
+    private static final String MEDIA_REPLACE_TEXT_VIDEO = "视频输入已失效已被系统移除";
+    /** 多模态失效替换文本：音频输入已被后续对话覆盖 */
+    private static final String MEDIA_REPLACE_TEXT_AUDIO = "音频输入已失效已被系统移除";
+
+    /**
+     * 记录原始请求数据（请求头 + 请求体），在每个入口方法生成 traceId 后立即调用。
+     * 前端"请求日志"中的"查看原始请求"功能依赖此记录。
+     * <p>
+     * 请求体超过 {@value #MAX_REQUEST_BODY_STORE_LENGTH} 字符时会被截断，
+     * 避免单条日志体占用过多数据库空间。
+     * </p>
+     *
+     * @param traceId        追踪 ID
+     * @param authHeader     原始 Authorization 头（用于解析网关 API Key id）
+     * @param headersJson    原始请求头（已转 JSON 字符串）
+     * @param requestBody    原始请求体
+     * @return 解析出的网关 API Key id（与本请求内所有日志记录共用，避免每条日志都查一次 DB）
+     */
+    private Long logOriginalRequest(String traceId, String authHeader, String headersJson, String requestBody) {
+        String modelName = extractModelFromBody(requestBody);
+        String truncatedBody = requestBody;
+        if (truncatedBody != null && truncatedBody.length() > MAX_REQUEST_BODY_STORE_LENGTH) {
+            truncatedBody = truncatedBody.substring(0, MAX_REQUEST_BODY_STORE_LENGTH)
+                    + "\n\n-- 原始请求体过长，已截断（" + requestBody.length() + " chars）--";
+        }
+        Long gatewayApiKeyId = apiKeyService.resolveIdFromAuthHeader(authHeader);
+        requestLogService.logStart(traceId, null, gatewayApiKeyId, modelName, null, null,
+                "请求开始", 0, headersJson, truncatedBody);
+        return gatewayApiKeyId;
+    }
+
+    /**
+     * 从请求体中提取 model 字段。
+     * <p>
+     * 使用简单正则匹配 {@code "model": "xxx"}，避免全量 JSON 解析。
+     * 后续 {@code parseRequest(requestBody)} 会再做一次完整解析，这里只取 model 做日志记录，
+     * 不需要完整 AST。
+     * </p>
+     */
+    private String extractModelFromBody(String requestBody) {
+        if (requestBody == null || requestBody.isBlank()) return null;
+        java.util.regex.Matcher m = MODEL_NAME_PATTERN.matcher(requestBody);
+        return m.find() ? m.group(1) : null;
+    }
+
+    private static final java.util.regex.Pattern MODEL_NAME_PATTERN =
+            java.util.regex.Pattern.compile("\"model\"\\s*:\\s*\"([^\"]+)\"");
+
+    /**
+     * 构建 OpenAI 兼容格式的请求头 JSON（对 Authorization 做掩码处理）
+     */
+    private String buildOpenaiHeadersJson(String authHeader) {
+        if (authHeader == null || authHeader.isBlank()) {
+            return "{\"Content-Type\": \"application/json\"}";
+        }
+        String masked;
+        if (authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            masked = "Bearer " + maskBearerToken(token);
+        } else {
+            masked = maskBearerToken(authHeader);
+        }
+        return "{\"Authorization\": \"" + masked + "\", \"Content-Type\": \"application/json\"}";
+    }
+
+    /**
+     * 构建 Anthropic 兼容格式的请求头 JSON（对 x-api-key 做掩码处理）
+     */
+    private String buildAnthropicHeadersJson(String apiKeyHeader, String anthropicVersion) {
+        String masked = maskBearerToken(apiKeyHeader);
+        return "{\"x-api-key\": \"" + masked + "\", \"anthropic-version\": \"" + anthropicVersion + "\", \"Content-Type\": \"application/json\"}";
+    }
+
+    /**
+     * 对 Bearer Token / API Key 做掩码处理，避免敏感凭证明文存入日志数据库
+     */
+    private String maskBearerToken(String token) {
+        if (token == null || token.isBlank()) return "";
+        if (token.length() > 12) {
+            return token.substring(0, 6) + "..." + token.substring(token.length() - 4);
+        }
+        return token.substring(0, Math.min(6, token.length())) + "...";
     }
 
     /**
@@ -1625,7 +1802,9 @@ public class RelayService {
                 emitter.send(SseEmitter.event().data(event.data()));
             }
         } catch (IOException e) {
-            log.warn("Failed to send SSE event", e);
+            // 客户端已断开 / SseEmitter 已超时，抛出 RuntimeException 触发 subscriber onError
+            // → 上游 Flux 被取消（停止 Provider 计费）→ doOnComplete 不执行 → 日志不记 "success"
+            throw new RuntimeException("Client disconnected from SSE stream", e);
         }
     }
 
@@ -1639,8 +1818,12 @@ public class RelayService {
             emitter.send(SseEmitter.event().name("error").data(err.toString()));
             emitter.complete();
         } catch (IOException e) {
-            log.warn("Failed to send SSE error", e);
-            emitter.completeWithError(e);
+            log.warn("Failed to send SSE error (client already disconnected?): {}", e.getMessage());
+            try {
+                emitter.completeWithError(e);
+            } catch (Exception ignored) {
+                // SseEmitter 可能已关闭/已完成，忽略二次异常
+            }
         }
     }
 
@@ -1680,7 +1863,7 @@ public class RelayService {
      * 记录被跳过的路由候选到请求日志（熔断、图片能力不匹配等），
      * 让用户在 UI 中能看到完整的路由链路
      */
-    private void logSkippedCandidates(String traceId, InternalRequest req) {
+    private void logSkippedCandidates(String traceId, Long gatewayApiKeyId, InternalRequest req) {
         String modelName = req.getModel();
         Long customModelId = resolveModelId(modelName);
         if (customModelId == null) return;
@@ -1704,7 +1887,7 @@ public class RelayService {
                 boolean modelBroken = circuitBreakerService.isModelCircuitBroken(channelModel.getId(), apiKey.getId());
                 if (channelBroken || modelBroken) {
                     String scope = channelBroken ? "渠道级熔断" : "模型级熔断";
-                    logPhase(traceId, new RoutingCandidate(rel, channel, channelModel, apiKey),
+                    logPhase(traceId, gatewayApiKeyId, new RoutingCandidate(rel, channel, channelModel, apiKey),
                             req, "skip", scope + "跳过 " + channel.getName() + "/" + apiKey.getKeyName() + "/" + channelModel.getModelName(), 0);
                 }
             }

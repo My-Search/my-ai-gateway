@@ -27,6 +27,9 @@ public class AdminConfigService {
     /** 日志定时清理开关 */
     public static final String KEY_LOG_CLEANUP_ENABLED = "log_cleanup_enabled";
 
+    /** 原始请求数据保留时长（小时），0=永久保留 */
+    public static final String KEY_REQUEST_BODY_TTL_HOURS = "request_body_ttl_hours";
+
     private final AdminConfigMapper adminConfigMapper;
 
     public AdminConfigService(AdminConfigMapper adminConfigMapper) {
@@ -158,7 +161,7 @@ public class AdminConfigService {
      * 获取系统配置项（批量）
      * <p>
      * 返回所有系统运行相关的配置，如日志管理、通知等。
-     * 当前包含：日志保留天数、定时清理开关。
+     * 当前包含：日志保留天数、定时清理开关、原始请求数据保留时长。
      * </p>
      *
      * @return 系统配置项的 key-value 映射
@@ -166,12 +169,15 @@ public class AdminConfigService {
     public Map<String, String> getSystemConfig() {
         String retentionDays = getValueByKey(KEY_LOG_RETENTION_DAYS);
         String cleanupEnabled = getValueByKey(KEY_LOG_CLEANUP_ENABLED);
+        String requestBodyTtlHours = getValueByKey(KEY_REQUEST_BODY_TTL_HOURS);
         if (retentionDays == null) retentionDays = "7";
         if (cleanupEnabled == null) cleanupEnabled = "1";
+        if (requestBodyTtlHours == null) requestBodyTtlHours = "4";
 
         Map<String, String> config = new LinkedHashMap<>();
         config.put(KEY_LOG_RETENTION_DAYS, retentionDays);
         config.put(KEY_LOG_CLEANUP_ENABLED, cleanupEnabled);
+        config.put(KEY_REQUEST_BODY_TTL_HOURS, requestBodyTtlHours);
         return config;
     }
 

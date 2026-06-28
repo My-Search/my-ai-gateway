@@ -106,6 +106,12 @@ const router = createRouter({
           meta: { title: '熔断状态' }
         },
         {
+          path: 'model/advanced/:id',
+          name: 'model-advanced',
+          component: () => import('@/views/model/Advanced.vue'),
+          meta: { title: '高级配置' }
+        },
+        {
           path: 'apikey/list',
           name: 'apikey-list',
           component: () => import('@/views/apikey/List.vue'),

@@ -40,6 +40,15 @@ public class Model {
      */
     private Long inheritFromModelId;
 
+    /** 图片失效会话数：0=关闭；N>0 表示最近一个含图片的 user 消息后有 N 个 user 消息时，图片失效被移除 */
+    private Integer imageInvalidateCount = 0;
+
+    /** 视频失效会话数：0=关闭；同上 */
+    private Integer videoInvalidateCount = 0;
+
+    /** 音频失效会话数：0=关闭；同上 */
+    private Integer audioInvalidateCount = 0;
+
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
     private LocalDateTime createdAt;
 
@@ -85,6 +94,15 @@ public class Model {
 
     public Long getInheritFromModelId() { return inheritFromModelId; }
     public void setInheritFromModelId(Long inheritFromModelId) { this.inheritFromModelId = inheritFromModelId; }
+
+    public Integer getImageInvalidateCount() { return imageInvalidateCount; }
+    public void setImageInvalidateCount(Integer imageInvalidateCount) { this.imageInvalidateCount = imageInvalidateCount != null ? imageInvalidateCount : 0; }
+
+    public Integer getVideoInvalidateCount() { return videoInvalidateCount; }
+    public void setVideoInvalidateCount(Integer videoInvalidateCount) { this.videoInvalidateCount = videoInvalidateCount != null ? videoInvalidateCount : 0; }
+
+    public Integer getAudioInvalidateCount() { return audioInvalidateCount; }
+    public void setAudioInvalidateCount(Integer audioInvalidateCount) { this.audioInvalidateCount = audioInvalidateCount != null ? audioInvalidateCount : 0; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

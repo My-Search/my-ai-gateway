@@ -28,20 +28,26 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
     /**
      * 根据条件过滤后的分页 traceId 查询
      *
-     * @param modelName 入口模型名（精确匹配，可选）
-     * @param startTime 开始时间（可选）
-     * @param endTime   结束时间（可选）
+     * @param modelName       入口模型名（精确匹配，可选）
+     * @param gatewayApiKeyId 网关 API Key 主键（精确匹配，可选；优先于 apiKeyName 使用）
+     * @param apiKeyName      API Key 名（精确匹配，可选；旧字段，对应渠道 API Key 名）
+     * @param startTime       开始时间（可选）
+     * @param endTime         结束时间（可选）
      */
     @Select("<script>"
             + "SELECT trace_id FROM request_logs"
             + "<where>"
             + "<if test='modelName != null and modelName != \"\"'>AND model_name = #{modelName}</if>"
+            + "<if test='gatewayApiKeyId != null'>AND gateway_api_key_id = #{gatewayApiKeyId}</if>"
+            + "<if test='apiKeyName != null and apiKeyName != \"\"'>AND api_key_name = #{apiKeyName}</if>"
             + "<if test='startTime != null'>AND created_at &gt;= #{startTime}</if>"
             + "<if test='endTime != null'>AND created_at &lt;= #{endTime}</if>"
             + "</where>"
             + " GROUP BY trace_id ORDER BY MAX(created_at) DESC LIMIT #{limit} OFFSET #{offset}"
             + "</script>")
     List<String> selectTraceIdsByFilters(@Param("modelName") String modelName,
+                                         @Param("gatewayApiKeyId") Long gatewayApiKeyId,
+                                         @Param("apiKeyName") String apiKeyName,
                                          @Param("startTime") LocalDateTime startTime,
                                          @Param("endTime") LocalDateTime endTime,
                                          @Param("offset") int offset,
@@ -54,11 +60,15 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             + "SELECT COUNT(DISTINCT trace_id) FROM request_logs"
             + "<where>"
             + "<if test='modelName != null and modelName != \"\"'>AND model_name = #{modelName}</if>"
+            + "<if test='gatewayApiKeyId != null'>AND gateway_api_key_id = #{gatewayApiKeyId}</if>"
+            + "<if test='apiKeyName != null and apiKeyName != \"\"'>AND api_key_name = #{apiKeyName}</if>"
             + "<if test='startTime != null'>AND created_at &gt;= #{startTime}</if>"
             + "<if test='endTime != null'>AND created_at &lt;= #{endTime}</if>"
             + "</where>"
             + "</script>")
     long countDistinctTracesByFilters(@Param("modelName") String modelName,
+                                      @Param("gatewayApiKeyId") Long gatewayApiKeyId,
+                                      @Param("apiKeyName") String apiKeyName,
                                       @Param("startTime") LocalDateTime startTime,
                                       @Param("endTime") LocalDateTime endTime);
 
@@ -186,4 +196,39 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             ") latest ON r.id = latest.id " +
             "ORDER BY r.created_at DESC")
     List<RequestLog> selectRecentTraces();
+
+    // ==================== 请求日志使用图表（按日 + 入口模型聚合） ====================
+
+    /**
+     * 在指定时间范围内，按 (date, model_name) 聚合 token 用量。
+     * <p>
+     * 用于"请求日志"页面顶部的"使用历史"堆叠柱状图：每日一根柱、按入口模型堆叠。
+     * 仅统计成功请求的 token（与其他用量统计保持一致口径）。可选按入口模型 / API Key 过滤。
+     * </p>
+     *
+     * @param since            起始时间（含）
+     * @param until            结束时间（不含）
+     * @param modelName        入口模型名（可选；为 null/空时不过滤）
+     * @param gatewayApiKeyId  网关 API Key 主键（可选；优先于 apiKeyName 使用）
+     * @param apiKeyName       API Key 名（可选；旧字段，对应渠道 API Key 名；为 null/空时不过滤）
+     * @return 每行包含 date (yyyy-MM-dd)、model_name、total_tokens
+     */
+    @Select("<script>" +
+            "SELECT DATE(created_at) as date, " +
+            "model_name, " +
+            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as total_tokens " +
+            "FROM request_logs " +
+            "WHERE created_at &gt;= #{since} AND created_at &lt; #{until} " +
+            "AND model_name IS NOT NULL AND model_name != '' " +
+            "<if test='modelName != null and modelName != \"\"'>AND model_name = #{modelName}</if>" +
+            "<if test='gatewayApiKeyId != null'>AND gateway_api_key_id = #{gatewayApiKeyId}</if>" +
+            "<if test='apiKeyName != null and apiKeyName != \"\"'>AND api_key_name = #{apiKeyName}</if>" +
+            "GROUP BY DATE(created_at), model_name " +
+            "ORDER BY date ASC, total_tokens DESC" +
+            "</script>")
+    List<Map<String, Object>> selectDailyModelTokenUsage(@Param("since") LocalDateTime since,
+                                                        @Param("until") LocalDateTime until,
+                                                        @Param("modelName") String modelName,
+                                                        @Param("gatewayApiKeyId") Long gatewayApiKeyId,
+                                                        @Param("apiKeyName") String apiKeyName);
 }

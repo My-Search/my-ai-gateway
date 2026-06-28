@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="chat-playground" :class="{ compact }">
     <button v-if="!compact" class="mobile-sidebar-toggle" @click="showSidebar = !showSidebar">
       <SvgIcon name="settings" :size="14" />
@@ -123,8 +123,12 @@
               <div v-if="expandedThinking[idx]" class="thinking-content markdown-body" v-html="renderReasoningMarkdown(msg.reasoningContent)"></div>
             </div>
             <div class="chat-bubble" :class="{ 'cursor-blink': idx === messages.length - 1 && streaming }">
+              <div v-if="msg.images && msg.images.length" class="chat-images">
+                <img v-for="(imgUrl, imgIdx) in msg.images" :key="imgIdx"
+                     :src="imgUrl" class="chat-image" alt="image" @click="expandImage(imgUrl)" />
+              </div>
               <div v-if="msg.role === 'assistant'" class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
-              <template v-else>{{ msg.content }}</template>
+              <template v-else-if="msg.content">{{ msg.content }}</template>
             </div>
             <div v-if="msg.truncated" class="chat-truncated-hint">{{ t('playground.truncated') }}</div>
             <div v-if="msg.meta" class="chat-meta" v-html="msg.meta"></div>
@@ -132,13 +136,35 @@
         </div>
       </div>
 
+      <!-- Image Lightbox -->
+      <Teleport to="body">
+        <div v-if="expandedImageUrl" class="image-lightbox" @click.self="expandedImageUrl = ''">
+          <button class="image-lightbox-close" @click="expandedImageUrl = ''">&times;</button>
+          <img :src="expandedImageUrl" class="image-lightbox-img" alt="expanded" />
+        </div>
+      </Teleport>
+
       <div v-if="!compact" class="chat-quick-actions">
         <button class="btn btn-secondary btn-quick" :disabled="streaming || !selectedModel" @click="quickSend('hello')"><SvgIcon name="hello" :size="14" /> hello</button>
       </div>
 
       <div class="chat-input-area">
         <textarea v-model="userInput" class="form-control" :placeholder="t('playground.inputPlaceholder')"
-                  :rows="compact ? 2 : 3" @keydown="handleKeydown"></textarea>
+                  :rows="compact ? 2 : 3" @keydown="handleKeydown" @paste="handlePaste"></textarea>
+        <div v-if="pastedImages.length" class="pasted-images">
+          <div v-for="img in pastedImages" :key="img.id" class="pasted-image-item" :class="{ uploading: img.uploading }">
+            <img :src="img.dataUrl" class="pasted-image-preview" alt="pasted image" />
+            <div v-if="img.uploading" class="pasted-image-overlay">
+              <span class="upload-spinner"></span>
+            </div>
+            <div v-else-if="img.error" class="pasted-image-overlay error">
+              <SvgIcon name="x" :size="14" />
+            </div>
+            <button v-if="!img.uploading" class="pasted-image-remove" @click="removePastedImage(img.id)" :title="t('common.delete')">
+              <SvgIcon name="x" :size="12" />
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -148,8 +174,24 @@
 import { ref, computed, nextTick, onMounted, watch, shallowRef, triggerRef } from 'vue'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { chatStream } from '@/api/chat'
+import { uploadApi } from '@/api/upload'
 import { marked } from 'marked'
+import { markedHighlight } from 'marked-highlight'
+import hljs from 'highlight.js'
+import 'github-markdown-css/github-markdown-dark.css'
+import 'highlight.js/styles/github-dark.min.css'
 import { useI18n } from '@/composables/useI18n'
+
+/* 高亮模式下不再注入行号，如有 CSS 干扰则清除 */
+marked.use(markedHighlight({
+  langPrefix: 'hljs language-',
+  highlight(code: string, lang: string) {
+    if (lang && hljs.getLanguage(lang)) {
+      return hljs.highlight(code, { language: lang }).value
+    }
+    return hljs.highlightAuto(code).value
+  }
+}))
 
 const { t } = useI18n()
 
@@ -173,12 +215,23 @@ const props = withDefaults(defineProps<{
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system-msg'
   content: string
+  /** 多模态图片 URL 列表（上传后或 data URI），用于用户消息 */
+  images?: string[]
   /** 思考/推理过程内容（如 reasoning_content），展开后可查看 */
   reasoningContent?: string
   meta?: string
   channelInfo?: any
   /** 回答因 max_tokens 限制被截断 */
   truncated?: boolean
+}
+
+/** 粘贴的待发送图片 */
+interface PastedImage {
+  id: string
+  dataUrl: string
+  serverUrl: string
+  uploading: boolean
+  error?: string
 }
 
 const isShareMode = ref(!!props.fixedShareCode)
@@ -198,6 +251,72 @@ const routingProgress = ref<{ phase: string; channel: string; channel_model: str
 const showSidebar = ref(false)
 /** 每条消息的推理内容展开状态 */
 const expandedThinking = ref<Record<number, boolean>>({})
+
+/* ========== 粘贴图片 ========== */
+/** 待发送的粘贴图片列表 */
+const pastedImages = ref<PastedImage[]>([])
+/** 图片预览放大 */
+const expandedImageUrl = ref('')
+
+function expandImage(url: string) {
+  expandedImageUrl.value = url
+}
+
+function removePastedImage(id: string) {
+  pastedImages.value = pastedImages.value.filter(i => i.id !== id)
+}
+
+/**
+ * 将 File 读取为 base64 data URI
+ */
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+/**
+ * 处理粘贴事件：检测剪贴板中的图片并上传
+ */
+async function handlePaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items
+  if (!items) return
+
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault()
+      const file = item.getAsFile()
+      if (!file) continue
+
+      // 读为 data URI 用于本地预览
+      const dataUrl = await fileToDataUrl(file)
+      const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+
+      const pasted: PastedImage = { id, dataUrl, serverUrl: '', uploading: true }
+      pastedImages.value.push(pasted)
+
+      // 上传到服务器
+      try {
+        const res = await uploadApi.upload(file)
+        const found = pastedImages.value.find(i => i.id === id)
+        if (found) {
+          found.serverUrl = res.data.url
+          found.uploading = false
+        }
+      } catch (err: any) {
+        const found = pastedImages.value.find(i => i.id === id)
+        if (found) {
+          found.error = err.message || t('common.fail')
+          found.uploading = false
+        }
+      }
+      break
+    }
+  }
+}
 
 /** 是否已选好模型（必要配置），用于自动收起侧栏
  *  selectedApiKey 默认 0 = 自动选择，也是有效配置 */
@@ -346,8 +465,8 @@ function quickSend(text: string) {
   sendMessage()
 }
 
-function addMessage(role: ChatMessage['role'], content: string, meta?: string, channelInfo?: any) {
-  messages.value.push({ role, content, meta, channelInfo })
+function addMessage(role: ChatMessage['role'], content: string, meta?: string, channelInfo?: any, images?: string[]) {
+  messages.value.push({ role, content, meta, channelInfo, images: images?.length ? images : undefined })
   triggerRef(messages)  // 手动触发 shallowRef 更新
   scrollToBottom()
   return messages.value[messages.value.length - 1]
@@ -357,10 +476,20 @@ function addMessage(role: ChatMessage['role'], content: string, meta?: string, c
 function buildRequestBody() {
   const body: Record<string, any> = {
     model: selectedModel.value,
-    messages: messages.value.filter(m => m.role !== 'system-msg' && m.content.trim() !== '').map(m => ({
-      role: m.role === 'user' ? 'user' : 'assistant',
-      content: m.content
-    })),
+    messages: messages.value.filter(m => m.role !== 'system-msg').filter(m => m.content.trim() !== '' || (m.images && m.images.length)).map(m => {
+      // 用户消息含图片时构建多模态 content 数组
+      if (m.role === 'user' && m.images && m.images.length > 0) {
+        const content: any[] = []
+        if (m.content.trim()) {
+          content.push({ type: 'text', text: m.content })
+        }
+        for (const imgUrl of m.images) {
+          content.push({ type: 'image_url', image_url: { url: imgUrl } })
+        }
+        return { role: 'user', content }
+      }
+      return { role: m.role === 'user' ? 'user' : 'assistant', content: m.content }
+    }),
     temperature: temperature.value,
     max_tokens: maxTokens.value
   }
@@ -373,15 +502,20 @@ function buildRequestBody() {
 
 async function sendMessage() {
   const content = userInput.value.trim()
-  if (!content || streaming.value || !selectedModel.value) return
+  const pendingImages = pastedImages.value.filter(i => !i.error && !i.uploading)
+  if (!content && pendingImages.length === 0) return
+  if (streaming.value) return
 
   if (!selectedModel.value) {
     addMessage('system-msg', t('playground.selectModelFirst'))
     return
   }
 
-  addMessage('user', content)
+  // 收集已上传完成的图片 URL（优先服务器 URL，上传失败时回退 data URI）
+  const msgImages = pendingImages.map(i => i.serverUrl || i.dataUrl)
+  addMessage('user', content, undefined, undefined, msgImages.length ? msgImages : undefined)
   userInput.value = ''
+  pastedImages.value = []
   streaming.value = true
 
   const assistantMsg: ChatMessage = { role: 'assistant', content: '' }
@@ -702,6 +836,135 @@ function renderReasoningMarkdown(text: string): string {
   font-weight: 600; letter-spacing: 0.5px;
 }
 
+/* ===== 粘贴图片预览 ===== */
+.pasted-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0 4px;
+}
+.pasted-image-item {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  flex-shrink: 0;
+}
+.pasted-image-item.uploading {
+  opacity: 0.7;
+}
+.pasted-image-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.pasted-image-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.4);
+  border-radius: 8px;
+}
+.pasted-image-overlay.error {
+  background: rgba(248,81,73,0.3);
+}
+.upload-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.pasted-image-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.pasted-image-item:hover .pasted-image-remove {
+  opacity: 1;
+}
+
+/* ===== 聊天消息中的图片 ===== */
+.chat-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.chat-image {
+  max-width: 240px;
+  max-height: 240px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  cursor: zoom-in;
+  object-fit: contain;
+  background: var(--bg-tertiary);
+  transition: border-color 0.15s;
+}
+.chat-image:hover {
+  border-color: var(--accent-blue);
+}
+
+/* ===== 图片放大灯箱 ===== */
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0,0,0,0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+.image-lightbox-img {
+  max-width: 90vw;
+  max-height: 90vh;
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+}
+.image-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 24px;
+  background: rgba(0,0,0,0.5);
+  border: none;
+  color: #fff;
+  font-size: 28px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.image-lightbox-close:hover {
+  background: rgba(0,0,0,0.8);
+}
+
 .status-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 
 .chat-channel-info {
@@ -846,64 +1109,119 @@ function renderReasoningMarkdown(text: string): string {
 
 
 <style>
-/* Markdown 渲染样式（v-html 注入内容，无法用 scoped，故使用全局 style block）
- *
- * 间距策略：块级元素用 margin-bottom 自然间隔，首尾清零，flow-root 防崩塌 */
+/* github-markdown-css 提供结构排版（字号、间距、边框圆角等），
+ * 但所有颜色属性都是硬编码 hex，与 App 的 CSS 变量体系不兼容。
+ * 此覆盖块将所有颜色属性映射到 App 主题变量，使 markdown 渲染融入当前主题。 */
+
+/* ── 基础 ── */
+/* 关键：markdown-body 内的所有元素都需要重置 line-height，
+ * 避免被 chat-bubble 的 1.6 撑出过多空白（14px × 1.6 = 22.4px 单行）
+ * 同时 line-height 1.3 让单行 box 高度接近 font-size（18.2px ≈ 14px 文字），
+ * 消除视觉上的"半行距空行"错觉 */
 .chat-playground .markdown-body {
-  line-height: 1.6;
-  word-wrap: break-word;
-  white-space: normal;    /* 覆写父级 pre-wrap，防止 marked 输出的换行文本节点被渲染 */
-  display: flow-root;
+  background-color: transparent !important;
+  color: var(--text-primary);
+  white-space: normal;
+  font-size: 14px !important;
+  line-height: 1.3 !important;
 }
-/* —— 首尾清零 —— */
-.chat-playground .markdown-body > *:first-child { margin-top: 0; }
-.chat-playground .markdown-body > *:last-child  { margin-bottom: 0; }
-/* —— 段落 —— */
-.chat-playground .markdown-body p { margin: 0 0 10px; }
-/* —— 标题 —— */
+.chat-playground .markdown-body *,
+.chat-playground .markdown-body {
+  line-height: 1.3 !important;
+}
+.chat-playground .thinking-content.markdown-body {
+  white-space: normal;
+}
+
+/* ── 垂直间距压缩 ── */
+/* 关键：聊天场景下完全抛弃 markdown 库默认的 margin 体系，
+ * 改用外层 chat-bubble 的 padding + flex gap 控制视觉距离。
+ * markdown-body 内部元素之间几乎不依赖 margin。 */
+.chat-playground .markdown-body p {
+  margin: 0 !important;
+  line-height: 1.3 !important;
+}
+.chat-playground .markdown-body li {
+  line-height: 1.3 !important;
+}
+/* 非段落块级元素保留极小间距，仅用于结构分隔 */
+.chat-playground .markdown-body blockquote,
+.chat-playground .markdown-body pre,
+.chat-playground .markdown-body hr,
+.chat-playground .markdown-body table,
+.chat-playground .markdown-body ul,
+.chat-playground .markdown-body ol,
+.chat-playground .markdown-body dl,
+.chat-playground .markdown-body figure {
+  margin-top: 4px !important;
+  margin-bottom: 4px !important;
+}
+/* 列表内段落：消除库默认 li>p { margin-top: 1rem } 的 16px 顶部间距 */
+.chat-playground .markdown-body li > p {
+  margin: 0 !important;
+}
+/* 列表项之间：消除 0.25em 间距 */
+.chat-playground .markdown-body li + li {
+  margin-top: 0 !important;
+}
+/* 收尾：首元素无上间距，末元素无下间距 */
+.chat-playground .markdown-body > *:first-child {
+  margin-top: 0 !important;
+}
+.chat-playground .markdown-body > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* ── 标题 ── */
+/* 聊天场景下标题字号应与正文比例协调（参考 h2=1.5em 缩到 ~1.1~1.4em），
+ * 不再沿用 github 文档 2em 的巨大字号 */
 .chat-playground .markdown-body h1,
 .chat-playground .markdown-body h2,
 .chat-playground .markdown-body h3,
+.chat-playground .markdown-body h4,
+.chat-playground .markdown-body h5,
+.chat-playground .markdown-body h6 {
+  margin: 4px 0 0 0 !important;
+  padding: 0 !important;
+  font-weight: 600 !important;
+  line-height: 1.2 !important;
+}
+.chat-playground .markdown-body h1 {
+  font-size: 1.4em !important;
+  border-bottom: 1px solid var(--border-color);
+}
+.chat-playground .markdown-body h2 {
+  font-size: 1.25em !important;
+  border-bottom: 1px solid var(--border-color);
+}
+.chat-playground .markdown-body h3 {
+  font-size: 1.1em !important;
+}
 .chat-playground .markdown-body h4 {
-  margin: 16px 0 8px;
-  font-weight: 600;
-  line-height: 1.4;
+  font-size: 1em !important;
 }
-.chat-playground .markdown-body h1 { font-size: 18px; }
-.chat-playground .markdown-body h2 { font-size: 16px; }
-.chat-playground .markdown-body h3 { font-size: 15px; }
-.chat-playground .markdown-body h4 { font-size: 14px; }
+.chat-playground .markdown-body h5,
+.chat-playground .markdown-body h6 {
+  font-size: .9em !important;
+}
+/* 标题作为首元素时无需顶部 margin（chat-bubble padding 已给） */
+.chat-playground .markdown-body > h1:first-child,
+.chat-playground .markdown-body > h2:first-child,
+.chat-playground .markdown-body > h3:first-child,
+.chat-playground .markdown-body > h4:first-child,
+.chat-playground .markdown-body > h5:first-child,
+.chat-playground .markdown-body > h6:first-child {
+  margin-top: 0 !important;
+}
 
-.chat-playground .markdown-body li:last-child { margin-bottom: 0; }
-/* 修复嵌套列表缩进 */
-.chat-playground .markdown-body li > ul,
-.chat-playground .markdown-body li > ol {
-  margin-top: 0.25em;
-  margin-bottom: 0;
-}
-/* 消除 li 内部 <p> 的多余间距 */
-.chat-playground .markdown-body li > p {
-  margin: 0;
-  display: inline;
-}
-/* 思考/推理内容保留换行和前导空格（v-html内容无法使用scoped CSS） */
-.chat-playground .thinking-content.markdown-body {
-  white-space: pre-wrap;
-}
-/* —— 代码块 —— */
+/* ── 代码 ── */
 .chat-playground .markdown-body pre {
-  margin: 0 0 12px;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
-  padding: 12px 16px;
-  overflow-x: auto;
-  font-size: 13px;
-  line-height: 1.5;
 }
 .chat-playground .markdown-body code {
-  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
-  font-size: 13px;
+  background: transparent;
 }
 .chat-playground .markdown-body p > code,
 .chat-playground .markdown-body li > code {
@@ -911,56 +1229,46 @@ function renderReasoningMarkdown(text: string): string {
   color: var(--accent-blue);
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 12.5px;
 }
 .chat-playground .markdown-body pre code {
   background: none;
-  padding: 0;
   color: inherit;
-  font-size: 13px;
 }
-/* —— 引用 —— */
+
+/* ── 引用 ── */
 .chat-playground .markdown-body blockquote {
-  margin: 0 0 10px;
-  padding: 4px 12px;
-  border-left: 3px solid var(--accent-purple);
-  color: var(--text-muted);
+  border-left-color: var(--accent-purple);
+  color: var(--text-secondary);
   background: color-mix(in srgb, var(--accent-purple) 6%, transparent);
   border-radius: 0 4px 4px 0;
+  padding: 4px 12px;
 }
-/* —— 表格 —— */
-.chat-playground .markdown-body table {
-  margin: 0 0 10px;
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 13px;
+
+/* ── 表格 ── */
+.chat-playground .markdown-body table th,
+.chat-playground .markdown-body table td {
+  border-color: var(--border-color);
 }
-.chat-playground .markdown-body th,
-.chat-playground .markdown-body td {
-  border: 1px solid var(--border-color);
-  padding: 6px 10px;
-  text-align: left;
-}
-.chat-playground .markdown-body th {
+.chat-playground .markdown-body table th {
   background: color-mix(in srgb, var(--accent-blue) 8%, transparent);
   font-weight: 600;
 }
-/* —— 分割线 —— */
+
+/* ── 分割线 ── */
 .chat-playground .markdown-body hr {
-  margin: 0 0 10px;
-  border: none;
-  border-top: 1px solid var(--border-color);
+  background: transparent;
+  border-bottom-color: var(--border-color);
 }
-/* —— 链接与图片 —— */
-.chat-playground .markdown-body a {
-  color: var(--accent-blue);
-  text-decoration: underline;
+
+/* ── 高亮标记 ── */
+.chat-playground .markdown-body mark {
+  background: color-mix(in srgb, var(--accent-yellow) 20%, transparent);
+  color: var(--text-primary);
 }
+
+/* ── 图片 ── */
 .chat-playground .markdown-body img {
   max-width: 100%;
   border-radius: 8px;
-}
-.chat-playground .markdown-body strong {
-  font-weight: 600;
 }
 </style>

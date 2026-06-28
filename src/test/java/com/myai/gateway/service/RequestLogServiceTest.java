@@ -1,13 +1,18 @@
 package com.myai.gateway.service;
 
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.myai.gateway.entity.RequestLog;
 import com.myai.gateway.mapper.RequestLogMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.mockito.ArgumentMatcher;
+
+import java.time.LocalDateTime;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
@@ -17,14 +22,14 @@ import static org.mockito.Mockito.*;
 class RequestLogServiceTest {
 
     private RequestLogMapper requestLogMapper;
-    private LogSseService logSseService;
+    private AsyncLogWriter asyncLogWriter;
     private RequestLogService service;
 
     @BeforeEach
     void setUp() {
         requestLogMapper = mock(RequestLogMapper.class);
-        logSseService = mock(LogSseService.class);
-        service = new RequestLogService(requestLogMapper, logSseService);
+        asyncLogWriter = mock(AsyncLogWriter.class);
+        service = new RequestLogService(requestLogMapper, asyncLogWriter);
     }
 
     @Test
@@ -33,7 +38,7 @@ class RequestLogServiceTest {
                 "start", "路由到 X", 0);
 
         ArgumentCaptor<RequestLog> captor = ArgumentCaptor.forClass(RequestLog.class);
-        verify(requestLogMapper).insert(captor.capture());
+        verify(asyncLogWriter).enqueue(captor.capture());
         RequestLog record = captor.getValue();
 
         assertThat(record.getTraceId()).isEqualTo("trace-1");
@@ -47,8 +52,6 @@ class RequestLogServiceTest {
         // start 阶段不写入 responseTimeMs，让前端不显示耗时
         assertThat(record.getResponseTimeMs()).isNull();
         assertThat(record.getCreatedAt()).isNotNull();
-        // 推送到 SSE
-        verify(logSseService).publish(record);
     }
 
     @Test
@@ -58,7 +61,7 @@ class RequestLogServiceTest {
                 "retry", "第 1 次失败（耗时 1234ms）", 0, 1234L);
 
         ArgumentCaptor<RequestLog> captor = ArgumentCaptor.forClass(RequestLog.class);
-        verify(requestLogMapper).insert(captor.capture());
+        verify(asyncLogWriter).enqueue(captor.capture());
         RequestLog record = captor.getValue();
 
         assertThat(record.getTraceId()).isEqualTo("trace-1");
@@ -66,7 +69,6 @@ class RequestLogServiceTest {
         assertThat(record.getRetryIndex()).isEqualTo(0);
         assertThat(record.getResponseTimeMs()).isEqualTo(1234);
         assertThat(record.getCreatedAt()).isNotNull();
-        verify(logSseService).publish(record);
     }
 
     @Test
@@ -76,7 +78,7 @@ class RequestLogServiceTest {
                 "retry", "瞬时失败", 0, 0L);
 
         ArgumentCaptor<RequestLog> captor = ArgumentCaptor.forClass(RequestLog.class);
-        verify(requestLogMapper).insert(captor.capture());
+        verify(asyncLogWriter).enqueue(captor.capture());
         assertThat(captor.getValue().getResponseTimeMs()).isEqualTo(0);
     }
 
@@ -87,7 +89,7 @@ class RequestLogServiceTest {
                 1, 100, 200, 300);
 
         ArgumentCaptor<RequestLog> captor = ArgumentCaptor.forClass(RequestLog.class);
-        verify(requestLogMapper).insert(captor.capture());
+        verify(asyncLogWriter).enqueue(captor.capture());
         RequestLog record = captor.getValue();
 
         assertThat(record.getPhase()).isEqualTo("success");
@@ -97,7 +99,6 @@ class RequestLogServiceTest {
         assertThat(record.getPromptTokens()).isEqualTo(100);
         assertThat(record.getCompletionTokens()).isEqualTo(200);
         assertThat(record.getTotalTokens()).isEqualTo(300);
-        verify(logSseService).publish(record);
     }
 
     @Test
@@ -106,7 +107,113 @@ class RequestLogServiceTest {
                 "start", "default index");
 
         ArgumentCaptor<RequestLog> captor = ArgumentCaptor.forClass(RequestLog.class);
-        verify(requestLogMapper).insert(captor.capture());
+        verify(asyncLogWriter).enqueue(captor.capture());
         assertThat(captor.getValue().getRetryIndex()).isEqualTo(0);
     }
+
+    // ──────────────────── getFilteredLogsByPage / getFilteredTraceCount ────────────────────
+
+    @Test
+    void getFilteredTraceCount_passesAllFiltersToMapper() {
+        when(requestLogMapper.countDistinctTracesByFilters(anyString(), any(), anyString(), any(), any()))
+                .thenReturn(42L);
+        LocalDateTime since = LocalDateTime.of(2026, 6, 1, 0, 0);
+        LocalDateTime until = LocalDateTime.of(2026, 7, 1, 0, 0);
+
+        long count = service.getFilteredTraceCount("gpt-4o", "prod-key", since, until);
+
+        assertThat(count).isEqualTo(42L);
+        // 兼容旧接口：gatewayApiKeyId 透传为 null
+        verify(requestLogMapper).countDistinctTracesByFilters("gpt-4o", null, "prod-key", since, until);
+    }
+
+    @Test
+    void getFilteredTraceCount_acceptsNullFilters() {
+        when(requestLogMapper.countDistinctTracesByFilters(any(), any(), any(), any(), any()))
+                .thenReturn(0L);
+
+        long count = service.getFilteredTraceCount(null, null, null, null);
+
+        assertThat(count).isEqualTo(0L);
+        verify(requestLogMapper).countDistinctTracesByFilters(null, null, null, null, null);
+    }
+
+    @Test
+    void getFilteredTraceCount_passesGatewayApiKeyId() {
+        when(requestLogMapper.countDistinctTracesByFilters(any(), any(), any(), any(), any()))
+                .thenReturn(7L);
+
+        long count = service.getFilteredTraceCount("gpt-4o", 42L, "ignored-name", null, null);
+
+        assertThat(count).isEqualTo(7L);
+        verify(requestLogMapper).countDistinctTracesByFilters("gpt-4o", 42L, "ignored-name", null, null);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void getFilteredLogsByPage_passesAllFiltersToMapperAndFetchesLogsByTraceIds() {
+        // 1. 第一步：mapper 返回 traceId 列表
+        when(requestLogMapper.selectTraceIdsByFilters(anyString(), any(), anyString(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(List.of("t-1", "t-2"));
+        // 2. 第二步：按 traceId 列表反查完整日志
+        RequestLog l1 = new RequestLog();
+        l1.setId(1L); l1.setTraceId("t-1");
+        RequestLog l2 = new RequestLog();
+        l2.setId(2L); l2.setTraceId("t-2");
+        when(requestLogMapper.selectList(any(Wrapper.class))).thenReturn(List.of(l1, l2));
+
+        LocalDateTime since = LocalDateTime.of(2026, 6, 1, 0, 0);
+        LocalDateTime until = LocalDateTime.of(2026, 7, 1, 0, 0);
+        List<RequestLog> result = service.getFilteredLogsByPage(0, 50, "gpt-4o", "prod-key", since, until);
+
+        // 过滤条件被透传（兼容旧接口：gatewayApiKeyId 透传为 null）
+        verify(requestLogMapper).selectTraceIdsByFilters("gpt-4o", null, "prod-key", since, until, 0, 50);
+        // 返回按 traceId 查到的完整日志
+        assertThat(result).hasSize(2);
+        assertThat(result).extracting(RequestLog::getTraceId).containsExactly("t-1", "t-2");
+    }
+
+    @Test
+    void getFilteredLogsByPage_emptyTraceIds_returnsEmptyWithoutSecondQuery() {
+        when(requestLogMapper.selectTraceIdsByFilters(any(), any(), any(), any(), any(), anyInt(), anyInt()))
+                .thenReturn(List.of());
+
+        List<RequestLog> result = service.getFilteredLogsByPage(0, 50, "gpt-4o", null, null, null);
+
+        // 空 traceId 列表应直接短路返回，不再触发 selectList
+        assertThat(result).isEmpty();
+        verify(requestLogMapper, never()).selectList(any(Wrapper.class));
+    }
+
+    // ──────────────────── cleanExpiredRequestData ────────────────────
+
+    @Test
+    void cleanExpiredRequestData_ttlZero_skipsWithoutDbCalls() {
+        // TTL <= 0 表示永久保留，不应查 DB
+        service.cleanExpiredRequestData(0);
+
+        verify(requestLogMapper, never()).selectList(any(Wrapper.class));
+        verify(requestLogMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void cleanExpiredRequestData_ttlNegative_skipsWithoutDbCalls() {
+        service.cleanExpiredRequestData(-1);
+
+        verify(requestLogMapper, never()).selectList(any(Wrapper.class));
+        verify(requestLogMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void cleanExpiredRequestData_noExpiredRecords_noUpdateCall() {
+        when(requestLogMapper.selectList(any(Wrapper.class))).thenReturn(List.of());
+
+        service.cleanExpiredRequestData(4);
+
+        // selectList 被调用一次（查过期记录），查到为空则不再调用 update
+        verify(requestLogMapper, times(1)).selectList(any(Wrapper.class));
+        verify(requestLogMapper, never()).update(any(), any());
+    }
+
+
 }

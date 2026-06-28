@@ -197,7 +197,7 @@ class RelayServiceTest {
         when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
                 .thenReturn("{\"success\":true}");
 
-        String result = spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
+        String result = spyService.tryCandidates("trace-1", candidates, "auth", null, req, "openai", 0, System.currentTimeMillis())
                 .block(Duration.ofSeconds(5));
         assertThat(result).isEqualTo("{\"success\":true}");
 
@@ -261,7 +261,7 @@ class RelayServiceTest {
         when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
                 .thenReturn("{\"success\":true}");
 
-        spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
+        spyService.tryCandidates("trace-1", candidates, "auth", null, req, "openai", 0, System.currentTimeMillis())
                 .block(Duration.ofSeconds(5));
 
         // 1 次失败重试 → 应调用 1 次 logWithResponseTime 写入带耗时的 retry 日志
@@ -270,6 +270,7 @@ class RelayServiceTest {
         verify(requestLogService, times(1)).logWithResponseTime(
                 eq("trace-1"),
                 eq("ak1"),
+                eq((Long) null),  // gatewayApiKeyId：测试未传网关 Key
                 eq("x"),
                 eq("a1"),
                 eq("A"),
@@ -282,6 +283,7 @@ class RelayServiceTest {
         verify(requestLogService, atLeastOnce()).log(
                 eq("trace-1"),
                 eq("ak1"),
+                eq((Long) null),  // gatewayApiKeyId
                 eq("x"),
                 eq("a1"),
                 eq("A"),
@@ -357,7 +359,7 @@ class RelayServiceTest {
         when(messageTransformer.buildErrorResponse(anyString(), anyString(), anyString(), anyInt()))
                 .thenReturn("{\"error\":true}");
 
-        String result = spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
+        String result = spyService.tryCandidates("trace-1", candidates, "auth", null, req, "openai", 0, System.currentTimeMillis())
                 .block(Duration.ofSeconds(5));
         assertThat(result).isEqualTo("{\"error\":true}");
 
@@ -418,7 +420,7 @@ class RelayServiceTest {
         when(messageTransformer.buildErrorResponse(anyString(), anyString(), anyString(), anyInt()))
                 .thenReturn("{\"error\":true}");
 
-        spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
+        spyService.tryCandidates("trace-1", candidates, "auth", null, req, "openai", 0, System.currentTimeMillis())
                 .block(Duration.ofSeconds(5));
 
         // enabled=0 时，getRetryCount 返回 0，只尝试 1 次（不重试）
@@ -490,7 +492,7 @@ class RelayServiceTest {
         when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
                 .thenReturn("{\"success\":true}");
 
-        String result = spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
+        String result = spyService.tryCandidates("trace-1", candidates, "auth", null, req, "openai", 0, System.currentTimeMillis())
                 .block(Duration.ofSeconds(5));
         assertThat(result).isEqualTo("{\"success\":true}");
 
@@ -572,7 +574,7 @@ class RelayServiceTest {
         when(circuitBreakerService.isModelCircuitBroken(eq(101L), eq(1000L)))
                 .thenReturn(false);
 
-        String result = spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
+        String result = spyService.tryCandidates("trace-1", candidates, "auth", null, req, "openai", 0, System.currentTimeMillis())
                 .block(Duration.ofSeconds(5));
         assertThat(result).isEqualTo("{\"success\":true}");
 
@@ -634,7 +636,7 @@ class RelayServiceTest {
         when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
                 .thenReturn("{\"success\":true}");
 
-        String result = spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
+        String result = spyService.tryCandidates("trace-1", candidates, "auth", null, req, "openai", 0, System.currentTimeMillis())
                 .block(Duration.ofSeconds(5));
         assertThat(result).isEqualTo("{\"success\":true}");
 
@@ -890,7 +892,7 @@ class RelayServiceTest {
         when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
                 .thenReturn("{\"success\":true}");
 
-        String result = spyService.tryCandidates("trace-1", candidates, "auth", req, "openai", 0, System.currentTimeMillis())
+        String result = spyService.tryCandidates("trace-1", candidates, "auth", null, req, "openai", 0, System.currentTimeMillis())
                 .block(Duration.ofSeconds(5));
         assertThat(result).isEqualTo("{\"success\":true}");
 

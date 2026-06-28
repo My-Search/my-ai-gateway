@@ -8,6 +8,8 @@ import org.springframework.stereotype.Service;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -289,6 +291,114 @@ public class StatsService {
         result.put("modelStats", modelStatsList);
         result.put("channelAvgResponseTimeRecent30", channelAvgResponseTimeRecent30);
         return result;
+    }
+
+    /**
+     * 获取"请求日志"页面顶部"使用历史"堆叠柱状图数据。
+     * <p>
+     * 主干流程：
+     * <ol>
+     *   <li>把 year/month 转成 [since, until) 半开区间（含起始日 00:00、不含次月 00:00）</li>
+     *   <li>调用一次 SQL 按 (date, model_name) 聚合该月 token 用量</li>
+     *   <li>遍历当月每一天，组装 days/dates 数组（无论是否有数据都补齐，便于前端稳定渲染）</li>
+     *   <li>将模型按该月总用量降序排序，确保色板稳定分配（最常用模型固定拿主色）</li>
+     *   <li>构建 values 矩阵：model -> List&lt;Long&gt;，长度等于 days.length</li>
+     * </ol>
+     * </p>
+     *
+     * @param year            目标年份（如 2026）
+     * @param month           目标月份，1-12
+     * @param modelName       入口模型过滤（可选；null/空表示不过滤）
+     * @param gatewayApiKeyId 网关 API Key 主键过滤（可选；与 apiKeyName 同时存在时优先使用 id）
+     * @param apiKeyName      API Key 过滤（可选；null/空表示不过滤，兼容旧调用，对应渠道 Key 名）
+     * @return 包含 year/month/days/models/values/maxValue/totalValue 的 Map
+     */
+    public Map<String, Object> getLogUsageChart(int year, int month, String modelName,
+                                                Long gatewayApiKeyId, String apiKeyName) {
+        return getLogUsageChartInternal(year, month, modelName, gatewayApiKeyId, apiKeyName);
+    }
+
+    /** 兼容旧调用：仅传 apiKeyName */
+    public Map<String, Object> getLogUsageChart(int year, int month, String modelName, String apiKeyName) {
+        return getLogUsageChartInternal(year, month, modelName, null, apiKeyName);
+    }
+
+    private Map<String, Object> getLogUsageChartInternal(int year, int month, String modelName,
+                                                         Long gatewayApiKeyId, String apiKeyName) {
+        // 1. 规范化入参并计算 [since, until)
+        YearMonth ym = YearMonth.of(year, month);
+        LocalDate sinceDate = ym.atDay(1);
+        LocalDate untilDate = ym.plusMonths(1).atDay(1);
+        LocalDateTime since = sinceDate.atStartOfDay();
+        LocalDateTime until = untilDate.atStartOfDay();
+        int daysInMonth = ym.lengthOfMonth();
+
+        // 2. 一次性拉取该月所有 (date, model_name, total_tokens) 聚合行
+        List<Map<String, Object>> rows = requestLogMapper.selectDailyModelTokenUsage(
+                since, until, emptyToNull(modelName), gatewayApiKeyId, emptyToNull(apiKeyName));
+
+        // 3. 预生成 days 数组（yyyy-MM-dd 形式）+ 用于 O(1) 查找的 dateIndex
+        DateTimeFormatter dateFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        List<String> days = new ArrayList<>(daysInMonth);
+        Map<String, Integer> dateIndex = new HashMap<>(daysInMonth);
+        for (int d = 1; d <= daysInMonth; d++) {
+            String dateStr = sinceDate.withDayOfMonth(d).format(dateFmt);
+            days.add(dateStr);
+            dateIndex.put(dateStr, d - 1);
+        }
+
+        // 4. 遍历聚合行：累加到 modelTotals（用于排序）和 modelValues（按日填充）
+        //    使用 LinkedHashMap 保证遍历顺序稳定（与数据库返回顺序一致）
+        Map<String, long[]> modelValues = new LinkedHashMap<>();
+        Map<String, Long> modelTotals = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            String date = (String) row.get("date");
+            String model = (String) row.get("model_name");
+            long tokens = toLong(row.get("total_tokens"));
+            Integer idx = dateIndex.get(date);
+            if (idx == null || model == null || model.isEmpty()) continue;
+            long[] bucket = modelValues.computeIfAbsent(model, k -> new long[daysInMonth]);
+            bucket[idx] += tokens;
+            modelTotals.merge(model, tokens, Long::sum);
+        }
+
+        // 5. 按月总用量降序排序模型列表（保证前端颜色映射稳定：TopN 模型固定拿主色）
+        List<String> sortedModels = modelValues.keySet().stream()
+                .sorted(Comparator.comparingLong((String m) -> modelTotals.getOrDefault(m, 0L)).reversed())
+                .collect(Collectors.toList());
+
+        // 6. 构建 values 矩阵（model -> List<Long>）+ 累计 maxValue/totalValue
+        Map<String, Object> values = new LinkedHashMap<>();
+        long maxValue = 0L;
+        long totalValue = 0L;
+        for (String model : sortedModels) {
+            long[] bucket = modelValues.get(model);
+            List<Long> series = new ArrayList<>(daysInMonth);
+            for (long v : bucket) {
+                series.add(v);
+                if (v > maxValue) maxValue = v;
+                totalValue += v;
+            }
+            values.put(model, series);
+        }
+
+        // 7. 组装返回结果
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("year", year);
+        result.put("month", month);
+        result.put("days", days);
+        result.put("models", sortedModels);
+        result.put("values", values);
+        result.put("maxValue", maxValue);
+        result.put("totalValue", totalValue);
+        return result;
+    }
+
+    /** null/空字符串/纯空白统一归一为 null，便于在 MyBatis 动态 SQL 中按空判断跳过条件。 */
+    private String emptyToNull(String s) {
+        if (s == null) return null;
+        String trimmed = s.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
 }

@@ -150,6 +150,21 @@ public class ApiKeyService {
     }
 
     /**
+     * 从 Authorization 头中解析网关 API Key 主键。
+     * <p>
+     * 用于中继过程中给日志记录 {@code gateway_api_key_id}，单次请求仅查一次 DB（拿到 id 即返回）。
+     * 与 {@link #validateKey(String)} 共用 Bearer 前缀剥离逻辑。
+     * </p>
+     *
+     * @param authHeader 原始 Authorization 头（可为 "Bearer xxx" 或裸 key）
+     * @return 网关 API Key id；无法解析（无头 / 未启用 / 不存在）时返回 null
+     */
+    public Long resolveIdFromAuthHeader(String authHeader) {
+        ApiKey key = validateKey(authHeader);
+        return key != null ? key.getId() : null;
+    }
+
+    /**
      * 自动生成 API Key
      * 生成格式: sk-myai-{32位随机字符}
      */

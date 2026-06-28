@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 内部统一请求模型
@@ -56,6 +57,12 @@ public class InternalRequest {
     /** 思考强度（reasoning_effort），如 low/medium/high，null 表示不设置 */
     private String reasoningEffort;
 
+    /**
+     * 已检测到的请求中媒体类型缓存
+     * 由 RelayService.detectRequestMediaTypes() 填充，避免重复遍历 messages
+     */
+    private Set<String> detectedMediaTypes;
+
     public String getModel() { return model; }
     public void setModel(String model) { this.model = model; }
 
@@ -100,4 +107,7 @@ public class InternalRequest {
 
     public String getReasoningEffort() { return reasoningEffort; }
     public void setReasoningEffort(String reasoningEffort) { this.reasoningEffort = reasoningEffort; }
+
+    public Set<String> getDetectedMediaTypes() { return detectedMediaTypes; }
+    public void setDetectedMediaTypes(Set<String> detectedMediaTypes) { this.detectedMediaTypes = detectedMediaTypes; }
 }

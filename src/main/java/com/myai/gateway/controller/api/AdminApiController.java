@@ -20,6 +20,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -901,17 +902,21 @@ public class AdminApiController {
             @RequestParam(defaultValue = "0") int offset,
             @RequestParam(defaultValue = "50") int limit,
             @RequestParam(required = false) String modelName,
+            @RequestParam(required = false) Long gatewayApiKeyId,
+            @RequestParam(required = false) String apiKeyName,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
         // 获取总数（带过滤）
-        boolean hasFilters = modelName != null && !modelName.isEmpty()
+        boolean hasFilters = (modelName != null && !modelName.isEmpty())
+                || gatewayApiKeyId != null
+                || (apiKeyName != null && !apiKeyName.isEmpty())
                 || startTime != null
                 || endTime != null;
         long totalTraces;
         List<RequestLog> logs;
         if (hasFilters) {
-            totalTraces = requestLogService.getFilteredTraceCount(modelName, startTime, endTime);
-            logs = requestLogService.getFilteredLogsByPage(offset, limit, modelName, startTime, endTime);
+            totalTraces = requestLogService.getFilteredTraceCount(modelName, gatewayApiKeyId, apiKeyName, startTime, endTime);
+            logs = requestLogService.getFilteredLogsByPage(offset, limit, modelName, gatewayApiKeyId, apiKeyName, startTime, endTime);
         } else {
             totalTraces = requestLogService.getTraceCount();
             logs = requestLogService.getLogsByPage(offset, limit);
@@ -983,6 +988,35 @@ public class AdminApiController {
             result.put("error", e.getMessage());
         }
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * "请求日志"页面顶部"使用历史"堆叠柱状图数据。
+     * <p>
+     * 按 (date, model_name) 聚合指定月份的 token 用量，返回 days/models/values 矩阵。
+     * 仅统计成功请求的 token（与本系统其他用量统计保持一致口径）。
+     * </p>
+     *
+     * @param year            目标年份（默认当前年）
+     * @param month           目标月份 1-12（默认当前月）
+     * @param modelName       可选：按入口模型名过滤
+     * @param gatewayApiKeyId 可选：按网关 API Key 主键过滤（与 apiKeyName 同时存在时优先使用）
+     * @param apiKeyName      可选：按 API Key 名过滤（兼容旧调用，对应渠道 API Key 名）
+     */
+    @GetMapping(value = "/logs/usage-chart", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> logUsageChart(
+            @RequestParam(required = false) Integer year,
+            @RequestParam(required = false) Integer month,
+            @RequestParam(required = false) String modelName,
+            @RequestParam(required = false) Long gatewayApiKeyId,
+            @RequestParam(required = false) String apiKeyName) {
+        java.time.LocalDate now = java.time.LocalDate.now();
+        int y = year != null ? year : now.getYear();
+        int m = month != null ? month : now.getMonthValue();
+        if (m < 1 || m > 12) {
+            return ResponseEntity.ok(Map.of("error", "month 必须在 1-12 之间"));
+        }
+        return ResponseEntity.ok(statsService.getLogUsageChart(y, m, modelName, gatewayApiKeyId, apiKeyName));
     }
 
     /**
@@ -1076,6 +1110,21 @@ public class AdminApiController {
                     return ResponseEntity.ok(result);
                 }
             }
+            if (body.containsKey(AdminConfigService.KEY_REQUEST_BODY_TTL_HOURS)) {
+                String val = body.get(AdminConfigService.KEY_REQUEST_BODY_TTL_HOURS);
+                try {
+                    int hours = Integer.parseInt(val);
+                    if (hours < 0 || hours > 8760) {
+                        result.put("success", false);
+                        result.put("error", "原始请求保留时长必须在 0-8760 小时之间（0=永久保留）");
+                        return ResponseEntity.ok(result);
+                    }
+                } catch (NumberFormatException e) {
+                    result.put("success", false);
+                    result.put("error", "原始请求保留时长必须为有效数字");
+                    return ResponseEntity.ok(result);
+                }
+            }
 
             adminConfigService.updateSystemConfig(body);
             result.put("success", true);
@@ -1091,6 +1140,70 @@ public class AdminApiController {
         return ResponseEntity.ok(result);
     }
 
+    // ==================== File Upload ====================
+
+    /**
+     * 上传文件（图片），返回可访问的 URL
+     * POST /admin/api/upload
+     * 请求：multipart/form-data，字段名 file
+     * 返回：{ success: true, url: "/uploads/xxx.jpg", originalName: "xxx.jpg" }
+     */
+    /** 允许上传的图片文件扩展名 */
+    private static final java.util.Set<String> ALLOWED_IMAGE_EXTENSIONS = java.util.Set.of(
+            ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg"
+    );
+
+    @PostMapping(value = "/upload", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> uploadFile(@RequestParam("file") MultipartFile file) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            if (file.isEmpty()) {
+                result.put("success", false);
+                result.put("error", "文件为空");
+                return ResponseEntity.ok(result);
+            }
+            // 校验文件类型：只允许图片
+            String contentType = file.getContentType();
+            if (contentType == null || !contentType.startsWith("image/")) {
+                result.put("success", false);
+                result.put("error", "只允许上传图片文件");
+                return ResponseEntity.ok(result);
+            }
+            // 校验文件扩展名白名单
+            String originalName = file.getOriginalFilename();
+            if (originalName != null) {
+                String ext = "";
+                int dotIdx = originalName.lastIndexOf(".");
+                if (dotIdx >= 0) {
+                    ext = originalName.substring(dotIdx).toLowerCase();
+                }
+                if (!ALLOWED_IMAGE_EXTENSIONS.contains(ext)) {
+                    result.put("success", false);
+                    result.put("error", "不允许上传该文件类型（仅支持: jpg/png/gif/webp/bmp/svg）");
+                    return ResponseEntity.ok(result);
+                }
+            }
+            // 生成存储路径：data/uploads/yyyy/MM/dd/uuid.ext
+            String ext = "";
+            if (originalName != null && originalName.contains(".")) {
+                ext = originalName.substring(originalName.lastIndexOf("."));
+            }
+            String datePath = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd"));
+            String uuid = java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+            String relativePath = datePath + "/" + uuid + ext;
+            java.io.File dest = new java.io.File("data/uploads/" + relativePath);
+            dest.getParentFile().mkdirs();
+            file.transferTo(dest);
+            result.put("success", true);
+            result.put("url", "/uploads/" + relativePath);
+            result.put("originalName", originalName);
+        } catch (Exception e) {
+            log.error("文件上传失败", e);
+            result.put("success", false);
+            result.put("error", "上传失败: " + e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
     // ==================== Helpers ====================
 
     private List<ChannelApiKey> parseApiKeysJson(String json) {

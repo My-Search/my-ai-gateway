@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 /**
  * 日志清理定时任务
  * <p>
- * 每天凌晨 3:00 执行，根据系统配置的日志保留天数清理过期的请求日志，
+ * 每 30 分钟执行一次，根据系统配置清理过期的请求日志和原始请求数据（request_headers / request_body），
  * 防止 SQLite 数据库文件持续增长占用过多磁盘空间。
  * </p>
  *
@@ -18,8 +18,8 @@ import org.springframework.stereotype.Component;
  * 处理流程：
  * 1. 从 admin_config 读取日志清理开关（log_cleanup_enabled）
  * 2. 若开关关闭则跳过本次执行
- * 3. 读取日志保留天数（log_retention_days）
- * 4. 调用 RequestLogService.cleanOldLogs() 清理过期日志
+ * 3. 读取日志保留天数（log_retention_days），调用 cleanOldLogs() 清理过期日志
+ * 4. 读取原始请求数据保留时长（request_body_ttl_hours），调用 cleanExpiredRequestData() 清理过期原始请求数据
  * 5. 记录本次清理结果
  * </pre>
  */
@@ -37,25 +37,23 @@ public class LogCleanupTask {
     }
 
     /**
-     * 定时清理过期日志
+     * 定时清理过期日志与原始请求数据
      * <p>
-     * 每天凌晨 3:00（北京时间）执行一次。
-     * Spring Cron 表达式按服务器本地时间执行，若服务器为 UTC 时区则为 3:00 UTC，
-     * 若为北京时间（UTC+8）则对应实际北京时间的凌晨 3:00。
-     * 项目已在 TimeZoneConfig 中固定时区为 Asia/Shanghai（UTC+8），
-     * 因此 cron = "0 0 3 * * ?" 对应北京时间每天凌晨 3:00。
+     * 每 30 分钟执行一次（0 分和 30 分时触发），统一处理两种数据的过期清理：
+     * 日志按天、原始请求数据按小时。<br>
+     * cron = "0 0/30 * * * ?" 对应每小时的 0 分和 30 分执行。
      * </p>
      */
-    @Scheduled(cron = "0 0 3 * * ?")
-    public void cleanExpiredLogs() {
+    @Scheduled(cron = "0 0/30 * * * ?")
+    public void cleanExpiredData() {
         // 1. 检查定时清理开关
         String enabled = adminConfigService.getValueByKey(AdminConfigService.KEY_LOG_CLEANUP_ENABLED);
         if (!"1".equals(enabled)) {
-            log.debug("日志定时清理已关闭，跳过本次执行");
+            log.debug("定时清理已关闭，跳过本次执行");
             return;
         }
 
-        // 2. 读取日志保留天数配置
+        // 2. 执行过期日志清理
         String daysStr = adminConfigService.getValueByKey(AdminConfigService.KEY_LOG_RETENTION_DAYS);
         int retentionDays;
         try {
@@ -69,13 +67,34 @@ public class LogCleanupTask {
             retentionDays = 7;
         }
 
-        // 3. 执行清理
-        log.info("开始清理 {} 天前的过期日志", retentionDays);
+        if (retentionDays > 0) {
+            log.debug("开始清理 {} 天前的过期日志", retentionDays);
+            try {
+                requestLogService.cleanOldLogs(retentionDays);
+            } catch (Exception e) {
+                log.error("过期日志清理失败", e);
+            }
+        }
+
+        // 3. 清理过期的原始请求数据
+        String ttlStr = adminConfigService.getValueByKey(AdminConfigService.KEY_REQUEST_BODY_TTL_HOURS);
+        int ttlHours;
         try {
-            requestLogService.cleanOldLogs(retentionDays);
-            log.info("日志清理完成（保留 {} 天）", retentionDays);
-        } catch (Exception e) {
-            log.error("日志清理失败", e);
+            ttlHours = Integer.parseInt(ttlStr);
+            if (ttlHours < 0) {
+                ttlHours = 0;
+            }
+        } catch (NumberFormatException e) {
+            ttlHours = 0;
+        }
+
+        if (ttlHours > 0) {
+            log.debug("开始清理超过 {} 小时的原始请求数据", ttlHours);
+            try {
+                requestLogService.cleanExpiredRequestData(ttlHours);
+            } catch (Exception e) {
+                log.error("原始请求数据清理失败", e);
+            }
         }
     }
 }

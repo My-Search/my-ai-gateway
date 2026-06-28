@@ -20,6 +20,16 @@ public class RequestLog {
     /** API 密钥名称 */
     private String apiKeyName;
 
+    /**
+     * 网关 API Key 主键（{@code api_keys.id}）
+     * <p>
+     * 用于"使用历史"图表和"请求日志"按网关 API Key 过滤：按 id 精确匹配，
+     * 避免网关 Key 名称与渠道 Key 名称同名时筛选错乱。
+     * 历史数据该字段为 NULL。
+     * </p>
+     */
+    private Long gatewayApiKeyId;
+
     /** 请求的模型名（自定义模型名） */
     private String modelName;
 
@@ -53,6 +63,12 @@ public class RequestLog {
     /** 总 token 数 */
     private Integer totalTokens;
 
+    /** 原始请求头（JSON 格式） */
+    private String requestHeaders;
+
+    /** 原始请求体 */
+    private String requestBody;
+
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
     private LocalDateTime createdAt;
 
@@ -65,6 +81,9 @@ public class RequestLog {
 
     public String getApiKeyName() { return apiKeyName; }
     public void setApiKeyName(String apiKeyName) { this.apiKeyName = apiKeyName; }
+
+    public Long getGatewayApiKeyId() { return gatewayApiKeyId; }
+    public void setGatewayApiKeyId(Long gatewayApiKeyId) { this.gatewayApiKeyId = gatewayApiKeyId; }
 
     public String getModelName() { return modelName; }
     public void setModelName(String modelName) { this.modelName = modelName; }
@@ -98,6 +117,12 @@ public class RequestLog {
 
     public Integer getTotalTokens() { return totalTokens; }
     public void setTotalTokens(Integer totalTokens) { this.totalTokens = totalTokens; }
+
+    public String getRequestHeaders() { return requestHeaders; }
+    public void setRequestHeaders(String requestHeaders) { this.requestHeaders = requestHeaders; }
+
+    public String getRequestBody() { return requestBody; }
+    public void setRequestBody(String requestBody) { this.requestBody = requestBody; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

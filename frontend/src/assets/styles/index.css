@@ -288,6 +288,62 @@ textarea.form-control {
   resize: vertical;
 }
 
+/* 基础表单控件：input/select/textarea 通用样式。
+   适用于工具栏、内联筛选等非全宽场景；表单内仍优先用 .form-control。 */
+.form-input {
+  padding: 8px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.form-input:hover:not(:disabled):not(:focus) {
+  border-color: color-mix(in srgb, var(--text-muted) 50%, var(--border-color));
+}
+.form-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 20%, transparent);
+}
+.form-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.form-input::placeholder {
+  color: var(--text-muted);
+}
+select.form-input {
+  cursor: pointer;
+  /* 用 SVG 内联箭头，避免依赖第三方图标库；颜色随主题切换 */
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 28px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='none' stroke='%236b6b6b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M1 1l4 4 4-4'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+[data-theme="dark"] select.form-input {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='none' stroke='%23a3a3a3' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M1 1l4 4 4-4'/></svg>");
+}
+select.form-input option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+/* 紧凑变体：用于工具栏、筛选条等密度较高的地方 */
+.form-input-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+}
+.form-input-sm[type="datetime-local"] {
+  color-scheme: dark;
+}
+
 .form-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -420,28 +476,6 @@ textarea.form-control {
 }
 
 /* Responsive */
-/* ── ChatPlayground Markdown 列表样式（在此全局文件中，避免 Vue scoped 属性导致 v-html 元素匹配失败） ── */
-.chat-playground .markdown-body > ol,
-.chat-playground .markdown-body > ul {
-  margin: 0 0 10px;
-  padding-left: 1.5em;
-  text-indent: -1.5em;
-}
-.chat-playground .markdown-body > ol > li,
-.chat-playground .markdown-body > ul > li {
-  padding-left: 1.5em;
-  text-indent: -1.5em;
-}
-.chat-playground .markdown-body li > ul,
-.chat-playground .markdown-body li > ol {
-  margin-top: 0.25em;
-  margin-bottom: 0;
-}
-.chat-playground .markdown-body li > p {
-  margin: 0;
-  display: inline;
-}
-
 @media (max-width: 768px) {
   .main-content {
     margin-left: 0;

@@ -42,6 +42,7 @@
               <div style="display:flex;gap:6px;">
                 <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> {{ t('model.list.manageRels') }}</router-link>
                 <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="zap" :size="14" /> {{ t('model.list.config') }}</router-link>
+                <router-link :to="`/admin/model/advanced/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="settings" :size="14" /> {{ t('model.list.advanced') }}</router-link>
                 <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('model.list.edit') }}</router-link>
                 <button class="btn btn-sm btn-danger" @click="confirmDelete(m)"><SvgIcon name="trash" :size="14" /> {{ t('model.list.delete') }}</button>
               </div>
@@ -85,6 +86,7 @@
         <div class="mobile-card-actions">
           <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> {{ t('model.list.manageRels') }}</router-link>
           <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="zap" :size="14" /> {{ t('model.list.config') }}</router-link>
+          <router-link :to="`/admin/model/advanced/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="settings" :size="14" /> {{ t('model.list.advanced') }}</router-link>
           <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('model.list.edit') }}</router-link>
           <button class="btn btn-sm btn-danger" @click="confirmDelete(m)"><SvgIcon name="trash" :size="14" /> {{ t('model.list.delete') }}</button>
         </div>
