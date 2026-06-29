@@ -59,6 +59,7 @@ const props = withDefaults(defineProps<{
   depth: 0,
 })
 
+/** 仅根节点默认展开，子节点默认折叠；用户可点击 ▶ 展开/折叠 */
 const expanded = ref(props.depth === 0)
 
 function toggle() {

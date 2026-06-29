@@ -201,9 +201,14 @@
           </div>
         </div>
         <div v-if="requestBodyText" class="request-section">
-          <div class="request-section-title">{{ t('log.list.requestBody') }}</div>
+          <div class="request-section-title">
+            <span>{{ t('log.list.requestBody') }}</span>
+            <button class="btn-download-json" @click="downloadRequestBody" :title="t('log.list.downloadJson')">
+              <SvgIcon name="download" :size="12" />
+            </button>
+          </div>
           <div class="request-pre">
-            <JsonTreeViewer :json="requestBodyText" :max-depth="0" />
+            <JsonTreeViewer :json="requestBodyText" />
           </div>
         </div>
         <div v-if="!requestHeadersText && !requestBodyText && !requestDataLoading" class="empty-state">
@@ -519,6 +524,31 @@ async function openRequestView(traceId: string) {
     requestDataExpired.value = true
   } finally {
     requestDataLoading.value = false
+  }
+}
+
+/** 下载请求体为 JSON 文件 */
+function downloadRequestBody() {
+  if (!requestBodyText.value) return
+  try {
+    // 尝试格式化为美观 JSON
+    const formatted = JSON.stringify(JSON.parse(requestBodyText.value), null, 2)
+    const blob = new Blob([formatted], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `request-body-${Date.now()}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    // 若非合法 JSON 则直接下载原始文本
+    const blob = new Blob([requestBodyText.value], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `request-body-${Date.now()}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 }
 
@@ -964,6 +994,8 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  max-height: 70vh;
+  overflow-y: auto;
 }
 .request-section {
   display: flex;
@@ -978,11 +1010,30 @@ onUnmounted(() => {
   background: var(--bg-secondary);
   border-radius: 4px;
   border: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.btn-download-json {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 0.15s, color 0.15s;
+}
+.btn-download-json:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 .request-pre {
-  max-height: 35vh;
   margin: 0;
-  overflow-y: auto;
+  overflow: auto;
   padding: 8px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-color);

@@ -396,6 +396,7 @@ export default {
   'log.list.requestBody': '请求体',
   'log.list.noRequestData': '暂无原始请求数据',
   'log.list.requestDataExpired': '原始请求数据已过期，已被系统清理',
+  'log.list.downloadJson': '下载 JSON 文件',
   'log.list.filterSummaryTitle': '当前筛选条件由"使用历史"图表控制',
   /* ========== Log Usage Chart ========== */
   'log.chart.title': '使用历史',

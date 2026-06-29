@@ -421,8 +421,8 @@ public class RelayService {
                                     candidate.getChannelApiKey().getKeyName(),
                                     candidate.getChannelModel().getModelName(),
                                     attempt, err.getMessage());
+                            // 保留完整错误信息：列表视图依赖 CSS 截断，详情弹框依赖 .dialog-pre 的 max-height + 滚动
                         String retryErrDetail = err.getMessage() != null ? err.getMessage() : "";
-                        retryErrDetail = retryErrDetail.length() > 150 ? retryErrDetail.substring(0, 150) + "..." : retryErrDetail;
                         logPhase(traceId, gatewayApiKeyId, candidate, req, "retry",
                                 "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）: " + retryErrDetail, retryIndex, attemptDurationMs);
                             return Mono.error(err);
@@ -437,8 +437,8 @@ public class RelayService {
                                     candidate.getChannelModel().getModelName(),
                                     candidate.getChannelApiKey().getKeyName());
                         }
+                        // 保留完整错误信息：列表视图依赖 CSS 截断，详情弹框依赖 .dialog-pre 的 max-height + 滚动
                         String retryErrDetail2 = err.getMessage() != null ? err.getMessage() : "";
-                        retryErrDetail2 = retryErrDetail2.length() > 150 ? retryErrDetail2.substring(0, 150) + "..." : retryErrDetail2;
                         logPhase(traceId, gatewayApiKeyId, candidate, retryReq, "retry",
                                 "第 " + attempt + " 次失败: " + retryErrDetail2 + "，准备第 " + (attempt + 1) + " 次重试", retryIndex, attemptDurationMs);
                         return invokeCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, retryReq, candidate, provider,
@@ -695,8 +695,8 @@ public class RelayService {
                                     candidate.getChannelApiKey().getKeyName(),
                                     candidate.getChannelModel().getModelName(),
                                     attempt, err.getMessage());
+                            // 保留完整错误信息：列表视图依赖 CSS 截断，详情弹框依赖 .dialog-pre 的 max-height + 滚动
                             String streamRetryErrDetail = err.getMessage() != null ? err.getMessage() : "";
-                            streamRetryErrDetail = streamRetryErrDetail.length() > 150 ? streamRetryErrDetail.substring(0, 150) + "..." : streamRetryErrDetail;
                             logPhase(traceId, gatewayApiKeyId, candidate, req, "retry",
                                     "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）: " + streamRetryErrDetail, retryIndex, attemptDurationMs);
                             return Flux.error(err);
@@ -719,8 +719,8 @@ public class RelayService {
                                         traceId, attempt, maxAttempts, accumulatedContent.length());
                             }
                         }
-                        String streamRetryErrDetail2 = err.getMessage() != null ? err.getMessage() : "";
-                            streamRetryErrDetail2 = streamRetryErrDetail2.length() > 150 ? streamRetryErrDetail2.substring(0, 150) + "..." : streamRetryErrDetail2;
+                        // 保留完整错误信息：列表视图依赖 CSS 截断，详情弹框依赖 .dialog-pre 的 max-height + 滚动
+                            String streamRetryErrDetail2 = err.getMessage() != null ? err.getMessage() : "";
                             logPhase(traceId, gatewayApiKeyId, candidate, retryReq, "retry",
                                     "第 " + attempt + " 次失败: " + streamRetryErrDetail2 + "，准备第 " + (attempt + 1) + " 次重试", retryIndex, attemptDurationMs);
                         // 仅内部客户端发送路由进度事件：候选内重试
@@ -1304,8 +1304,9 @@ public class RelayService {
                 } catch (Exception ignored) {
                     // 解析失败回退到截取错误描述
                 }
+                // JSON 解析失败时回退到完整 body，避免详情弹框看不到真实错误
                 String statusPart = errorMsg.substring("Provider error:".length(), bodyIdx).trim();
-                return statusPart + " " + (body.length() > 120 ? body.substring(0, 120) + "..." : body);
+                return statusPart + " " + body;
             }
             return errorMsg;
         }
@@ -1313,8 +1314,8 @@ public class RelayService {
         if (lower.contains("empty response") || lower.contains("treated as timeout")) {
             return "请求超时";
         }
-        // 其他错误：截取过长消息
-        return errorMsg.length() > 200 ? errorMsg.substring(0, 200) + "..." : errorMsg;
+        // 其他错误：保留完整信息，列表视图靠 CSS 截断，详情弹框靠滚动
+        return errorMsg;
     }
 
     /**

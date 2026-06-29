@@ -1,6 +1,6 @@
 <template>
   <div class="json-tree">
-    <JsonNode :data="parsedData" :depth="0" :max-depth="maxDepth" />
+    <JsonNode :data="parsedData" :depth="0" />
   </div>
 </template>
 
@@ -8,13 +8,9 @@
 import { computed } from 'vue'
 import JsonNode from './JsonNode.vue'
 
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   json: string
-  /** 默认展开的最大深度（0=只展开根，1=展开第一层子节点，以此类推） */
-  maxDepth?: number
-}>(), {
-  maxDepth: 0,
-})
+}>()
 
 const parsedData = computed(() => {
   if (!props.json) return null

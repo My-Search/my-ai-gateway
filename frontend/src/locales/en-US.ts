@@ -396,6 +396,7 @@ export default {
   'log.list.requestBody': 'Body',
   'log.list.noRequestData': 'No raw request data available',
   'log.list.requestDataExpired': 'Raw request data has expired and been cleaned up',
+  'log.list.downloadJson': 'Download JSON file',
   'log.list.filterSummaryTitle': 'Current filters are controlled by the Usage History chart',
   /* ========== Log Usage Chart ========== */
   'log.chart.title': 'Usage History',
