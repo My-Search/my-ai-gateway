@@ -292,16 +292,10 @@ public class MessageTransformer {
             for (Map<String, Object> tool : req.getTools()) {
                 if ("function".equals(tool.get("type"))) {
                     // 标准 OpenAI 格式：透传保留所有字段（如 strict 等扩展属性）
-                    toolsNode.add(objectMapper.valueToTree(tool));
-                    // 兜底补齐：透传后检查 function.name 是否缺失
-                    JsonNode toolNode = toolsNode.get(toolsNode.size() - 1);
-                    JsonNode funcNode = toolNode.get("function");
-                    if (funcNode instanceof ObjectNode funcObj) {
-                        if (!funcObj.has("name") || funcObj.get("name").isNull()) {
-                            if (toolNode.has("name")) {
-                                funcObj.put("name", toolNode.get("name").asText());
-                            }
-                        }
+                    JsonNode added = toolsNode.add(objectMapper.valueToTree(tool));
+                    // 对非标准格式进行修补以兼容不同提供商
+                    if (added instanceof ObjectNode obj) {
+                        patchToolForCompatibility(obj);
                     }
                 } else {
                     // 非 function 类型（如 Anthropic 格式），手动构建为标准 OpenAI 格式
@@ -605,6 +599,27 @@ public class MessageTransformer {
             case 529 -> "overloaded_error";
             default -> "api_error";
         };
+    }
+
+    /**
+     * 对非标准 OpenAI 格式的 tool 定义进行修补以兼容不同提供商。
+     * <p>
+     * 某些 AI 提供商的 tool 定义可能不符合标准 OpenAI 格式，
+     * 例如 name 字段在 tool 外层而非 function.name，
+     * 该方法尝试自动补齐缺失字段，确保上游 API 正确识别。
+     *
+     * @param toolNode 已序列化的 tool JSON 节点（会被原地修改）
+     */
+    private void patchToolForCompatibility(ObjectNode toolNode) {
+        JsonNode funcNode = toolNode.get("function");
+        if (funcNode instanceof ObjectNode funcObj) {
+            // 兜底补齐：有些提供商的 name 字段在 tool 外层而非 function.name
+            if (!funcObj.has("name") || funcObj.get("name").isNull()) {
+                if (toolNode.has("name")) {
+                    funcObj.put("name", toolNode.get("name").asText());
+                }
+            }
+        }
     }
 
     private boolean hasToolResultBlock(JsonNode contentArray) {

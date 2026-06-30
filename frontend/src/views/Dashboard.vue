@@ -216,7 +216,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { dashboardApi, type DashboardStats } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
 import { formatLocalTime } from '@/utils/date'
@@ -225,6 +225,7 @@ const { t } = useI18n()
 
 const stats = ref<DashboardStats>({} as DashboardStats)
 const loading = ref(true)
+let dashboardRefreshTimer: ReturnType<typeof setInterval> | null = null
 const modelRankTab = ref<'entry' | 'channel'>('entry')
 const channelRankPeriod = ref('today')
 const modelRankPeriod = ref('today')
@@ -274,6 +275,11 @@ onMounted(async () => {
   loading.value = true
   await fetchStats()
   loading.value = false
+  dashboardRefreshTimer = setInterval(fetchStats, 15000)
+})
+
+onUnmounted(() => {
+  if (dashboardRefreshTimer) clearInterval(dashboardRefreshTimer)
 })
 </script>
 

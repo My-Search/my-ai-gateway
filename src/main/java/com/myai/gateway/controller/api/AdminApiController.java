@@ -1083,23 +1083,23 @@ public class AdminApiController {
      * </pre>
      */
     @GetMapping(value = "/logs/stream", produces = "text/event-stream;charset=UTF-8")
-    public SseEmitter streamLogs(HttpServletResponse response) {
-        response.setContentType("text/event-stream;charset=UTF-8");
-        response.setCharacterEncoding("UTF-8");
+    public SseEmitter streamLogs() {
+        // SSE 超时设为 5 分钟，防止低流量时连接长期挂起。
+        // 前端 EventSource 有 onReconnecting/onReconnected 自动重连回调，
+        // 超时后前端会自动恢复连接，不会造成功能中断。
+        SseEmitter emitter = new SseEmitter(300_000L);
 
-        // 不设超时，由前端断开时清理
-        SseEmitter emitter = new SseEmitter(0L);
-
-        // 创建订阅者独立队列
         LogSseService.SubscriberQueue sq = logSseService.subscribe();
 
-        // 从共享线程池获取线程轮询订阅者队列，推送 SSE 事件
-        // 使用共享线程池避免每个连接创建一个独立线程
         ssePollExecutor.execute(() -> {
             try {
                 while (true) {
-                    RequestLog record = sq.poll(5, TimeUnit.SECONDS);
+                    // 1s 超时让线程在 unsubscribe 后最多 1 秒内退出（5s → 1s）
+                    RequestLog record = sq.poll(1, TimeUnit.SECONDS);
                     if (record == null) {
+                        if (!sq.isActive()) {
+                            break;
+                        }
                         continue;
                     }
                     String json = objectMapper.writeValueAsString(record);
@@ -1118,11 +1118,32 @@ public class AdminApiController {
             }
         });
 
-        // 连接断开/超时/异常时清理
         emitter.onCompletion(() -> logSseService.unsubscribe(sq));
         emitter.onTimeout(() -> logSseService.unsubscribe(sq));
         emitter.onError(e -> logSseService.unsubscribe(sq));
 
+        return emitter;
+    }
+
+    /**
+     * 最小化 SSE 测试端点
+     */
+    @GetMapping(value = "/sse-test")
+    public SseEmitter sseTest() {
+        SseEmitter emitter = new SseEmitter(0L);
+        // 立即发送消息并完成，finally 确保任意发送失败后都能正确完成 emitter
+        try {
+            emitter.send(SseEmitter.event().name("test").data("{\"msg\":\"hello\"}"));
+            emitter.send(SseEmitter.event().name("test").data("{\"msg\":\"world\"}"));
+        } catch (IOException e) {
+            log.error("sseTest error", e);
+        } finally {
+            try {
+                emitter.complete();
+            } catch (Exception ignored) {
+                // emitter 已处于错误状态，忽略
+            }
+        }
         return emitter;
     }
 

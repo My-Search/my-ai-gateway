@@ -92,6 +92,15 @@ public class LogSseService {
         volatile boolean active = true;
 
         /**
+         * 判断订阅者队列是否仍处于活跃状态
+         *
+         * @return true 如果队列仍活跃
+         */
+        public boolean isActive() {
+            return active;
+        }
+
+        /**
          * 从订阅者队列获取一条日志，等待指定时间
          *
          * @param timeout 等待超时
@@ -106,7 +115,7 @@ public class LogSseService {
         /**
          * 关闭订阅者队列，标记为非活跃并清空缓存
          */
-        void close() {
+        public void close() {
             active = false;
             queue.clear();
         }

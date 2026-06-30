@@ -238,6 +238,9 @@ const loadingMore = ref(false)
 const sseConnected = ref(false)
 const sseReconnecting = ref(false)
 
+// 图表 15s 自动刷新定时器
+let chartRefreshTimer: ReturnType<typeof setInterval> | null = null
+
 // SSE 缓冲队列：合并短时间内的多条事件，减少重复计算和渲染次数
 const sseBuffer: RequestLog[] = []
 let sseFlushTimer: ReturnType<typeof setTimeout> | null = null
@@ -934,6 +937,7 @@ onMounted(() => {
   fetchEntryModels()
   fetchChartApiKeys()
   loadUsageChart()
+  chartRefreshTimer = setInterval(loadUsageChart, 15000)
   loadLogs()
   startSse()
 
@@ -953,6 +957,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (chartRefreshTimer) clearInterval(chartRefreshTimer)
   if (sseFlushTimer) clearTimeout(sseFlushTimer)
   stopSse()
   observer?.disconnect()
