@@ -8,6 +8,7 @@ import com.myai.gateway.relay.balancer.RoutingCandidate;
 import com.myai.gateway.relay.transformer.InternalMessage;
 import com.myai.gateway.relay.transformer.InternalRequest;
 import com.myai.gateway.relay.transformer.MessageTransformer;
+import com.myai.gateway.relay.transformer.registry.TranslatorRegistry;
 import com.myai.gateway.service.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +38,7 @@ class RelayServiceTest {
     private LoadBalancerFactory loadBalancerFactory;
     private ObjectMapper objectMapper;
     private MessageTransformer messageTransformer;
+    private TranslatorRegistry translatorRegistry;
     private StreamContentManager streamContentManager;
     private LatencyTracker latencyTracker;
 
@@ -53,13 +55,14 @@ class RelayServiceTest {
         loadBalancerFactory = mock(LoadBalancerFactory.class);
         objectMapper = new ObjectMapper();
         messageTransformer = mock(MessageTransformer.class);
+        translatorRegistry = mock(TranslatorRegistry.class);
         streamContentManager = new StreamContentManager();
         latencyTracker = mock(LatencyTracker.class);
         when(latencyTracker.getTimeout(any(), any())).thenReturn(60_000L);
 
         relayService = new RelayService(channelService, channelApiKeyService, apiKeyService,
                 modelService, circuitBreakerService, requestLogService, loadBalancerFactory,
-                objectMapper, messageTransformer, streamContentManager, latencyTracker);
+                objectMapper, messageTransformer, translatorRegistry, streamContentManager, latencyTracker);
 
         when(loadBalancerFactory.getBalancer(anyString())).thenReturn(new FailoverBalancer());
         when(requestLogService.startTrace()).thenReturn("trace-1");

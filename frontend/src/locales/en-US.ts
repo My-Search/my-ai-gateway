@@ -411,7 +411,7 @@ export default {
   'log.chart.empty': 'No usage data this month',
   'log.chart.loadFailed': 'Failed to load usage history',
   'log.chart.monthLabel': '{year}-{month}',
-  'log.chart.totalTokens': 'Total tokens this month',
+  'log.chart.totalTokens': 'Total tokens this day',
   'log.chart.totalRequests': 'Requests',
 
   /* ========== Playground ========== */

@@ -10,6 +10,9 @@ import com.myai.gateway.relay.balancer.RoutingCandidate;
 import com.myai.gateway.relay.transformer.InternalMessage;
 import com.myai.gateway.relay.transformer.InternalRequest;
 import com.myai.gateway.relay.transformer.MessageTransformer;
+import com.myai.gateway.relay.transformer.registry.ProtocolTranslator;
+import com.myai.gateway.relay.transformer.registry.StreamTranslateState;
+import com.myai.gateway.relay.transformer.registry.TranslatorRegistry;
 import com.myai.gateway.entity.ApiKey;
 import com.myai.gateway.service.*;
 import org.slf4j.Logger;
@@ -66,11 +69,15 @@ public class RelayService {
     private final ObjectMapper objectMapper;
     private final WebClient webClient;
     private final MessageTransformer messageTransformer;
+    private final TranslatorRegistry translatorRegistry;
     private final StreamContentManager streamContentManager;
     private final LatencyTracker latencyTracker;
 
     /** 流式请求 token 用量累积器：traceId -> [promptTokens, completionTokens, totalTokens] */
     private final ConcurrentHashMap<String, int[]> streamUsageMap = new ConcurrentHashMap<>();
+
+    /** 流式请求跨 chunk 翻译状态：traceId -> StreamTranslateState */
+    private final ConcurrentHashMap<String, StreamTranslateState> streamTranslateStates = new ConcurrentHashMap<>();
 
     public RelayService(ChannelService channelService,
                         ChannelApiKeyService channelApiKeyService,
@@ -81,6 +88,7 @@ public class RelayService {
                         LoadBalancerFactory loadBalancerFactory,
                         ObjectMapper objectMapper,
                         MessageTransformer messageTransformer,
+                        TranslatorRegistry translatorRegistry,
                         StreamContentManager streamContentManager,
                         LatencyTracker latencyTracker) {
         this.channelService = channelService;
@@ -92,6 +100,7 @@ public class RelayService {
         this.loadBalancerFactory = loadBalancerFactory;
         this.objectMapper = objectMapper;
         this.messageTransformer = messageTransformer;
+        this.translatorRegistry = translatorRegistry;
         this.streamContentManager = streamContentManager;
         this.latencyTracker = latencyTracker;
         // 配置 HttpClient 超时：连接超时 10s、响应超时 60s
@@ -1127,14 +1136,66 @@ public class RelayService {
         flushEvent(events, event, data, candidate, provider, req, null);
     }
 
+    /**
+     * 处理单个 SSE 事件：通过 {@link TranslatorRegistry} 进行协议转换，
+     * 使用 per-traceId 的 {@link StreamTranslateState} 维护跨 chunk 上下文。
+     *
+     * <p>CPA 参考：对应 Go executor 中 {@code var param any; ... TranslateStream(&param)} 模式。
+     */
     private void flushEvent(List<SseEvent> events, String event, String data,
                             RoutingCandidate candidate, String provider, InternalRequest req, String traceId) {
+        String clientFormat = req.getClientApiFormat();
+        String originalModel = req.getModel();
+
+        // 需要协议转换
+        if (!provider.equals(clientFormat)) {
+            ProtocolTranslator translator = translatorRegistry.find(provider, clientFormat);
+            if (translator != null) {
+                String transformed;
+                if ("[DONE]".equals(data)) {
+                    // [DONE] 信号：刷出终结事件并清理状态
+                    if (traceId != null) {
+                        StreamTranslateState state = streamTranslateStates.remove(traceId);
+                        if (state != null) {
+                            transformed = translator.translateStreamEnd(originalModel, state);
+                            if (transformed != null) {
+                                addSseEventSplit(events, null, transformed);
+                            }
+                        }
+                    }
+                    events.add(new SseEvent(null, "[DONE]"));
+                    return;
+                }
+
+                // 获取或创建跨 chunk 状态
+                StreamTranslateState state = traceId != null
+                        ? streamTranslateStates.computeIfAbsent(traceId, k -> translator.createStreamState())
+                        : translator.createStreamState();
+
+                transformed = translator.translateStreamEvent(event, data, originalModel, state);
+                if (transformed == null) {
+                    log.debug("SSE事件被丢弃 - event={}, provider={}, clientFormat={}", event, provider, clientFormat);
+                    return;
+                }
+                // 累积流式内容，用于候选切换时的上下文传递
+                if (traceId != null) {
+                    String content = extractTextContentFromRawData(data, provider);
+                    if (content != null && !content.isEmpty()) {
+                        streamContentManager.appendContent(traceId, content);
+                    }
+                }
+                addSseEventSplit(events, event, transformed);
+                return;
+            }
+            // 无翻译器时降级到 MessageTransformer 旧逻辑
+            log.debug("未找到翻译器 {}→{}，降级到 MessageTransformer", provider, clientFormat);
+        }
+
+        // 同格式或降级：走 MessageTransformer 原有逻辑
         if ("[DONE]".equals(data)) {
             events.add(new SseEvent(null, "[DONE]"));
             return;
         }
-        String clientFormat = req.getClientApiFormat();
-        String originalModel = req.getModel();
         String transformed;
         if ("anthropic".equals(provider)) {
             transformed = messageTransformer.transformAnthropicStreamEvent(event, data, clientFormat, originalModel);
@@ -1152,7 +1213,27 @@ public class RelayService {
                 streamContentManager.appendContent(traceId, content);
             }
         }
-        events.add(new SseEvent(event, transformed));
+        addSseEventSplit(events, event, transformed);
+    }
+
+    /**
+     * 添加 SSE 事件，如果 data 包含换行符则拆分为多个独立的 {@link SseEvent}。
+     * <p>
+     * 某些翻译器（如 OpenAI→Anthropic 处理多个 tool_calls 时）可能将多个 JSON 事件
+     * 拼接到同一个字符串中返回，此处按行拆分确保每个事件单独发送。
+     * </p>
+     */
+    private void addSseEventSplit(List<SseEvent> events, String event, String data) {
+        if (data.contains("\n")) {
+            String[] parts = data.split("\n", -1);
+            for (String part : parts) {
+                if (!part.isEmpty()) {
+                    events.add(new SseEvent(event, part));
+                }
+            }
+        } else {
+            events.add(new SseEvent(event, data));
+        }
     }
 
     /**
@@ -1698,9 +1779,6 @@ public class RelayService {
         }
     }
 
-    /** 原始请求体最大存储长度（超出部分截断），约 64KB */
-    private static final int MAX_REQUEST_BODY_STORE_LENGTH = 64 * 1024;
-
     /** 多模态失效替换文本：图片输入已被后续对话覆盖，由系统自动移除以路由到文本模型 */
     private static final String MEDIA_REPLACE_TEXT_IMAGE = "图片输入已失效已被系统移除";
     /** 多模态失效替换文本：视频输入已被后续对话覆盖 */
@@ -1711,10 +1789,6 @@ public class RelayService {
     /**
      * 记录原始请求数据（请求头 + 请求体），在每个入口方法生成 traceId 后立即调用。
      * 前端"请求日志"中的"查看原始请求"功能依赖此记录。
-     * <p>
-     * 请求体超过 {@value #MAX_REQUEST_BODY_STORE_LENGTH} 字符时会被截断，
-     * 避免单条日志体占用过多数据库空间。
-     * </p>
      *
      * @param traceId        追踪 ID
      * @param authHeader     原始 Authorization 头（用于解析网关 API Key id）
@@ -1724,14 +1798,9 @@ public class RelayService {
      */
     private Long logOriginalRequest(String traceId, String authHeader, String headersJson, String requestBody) {
         String modelName = extractModelFromBody(requestBody);
-        String truncatedBody = requestBody;
-        if (truncatedBody != null && truncatedBody.length() > MAX_REQUEST_BODY_STORE_LENGTH) {
-            truncatedBody = truncatedBody.substring(0, MAX_REQUEST_BODY_STORE_LENGTH)
-                    + "\n\n-- 原始请求体过长，已截断（" + requestBody.length() + " chars）--";
-        }
         Long gatewayApiKeyId = apiKeyService.resolveIdFromAuthHeader(authHeader);
         requestLogService.logStart(traceId, null, gatewayApiKeyId, modelName, null, null,
-                "请求开始", 0, headersJson, truncatedBody);
+                "请求开始", 0, headersJson, requestBody);
         return gatewayApiKeyId;
     }
 
@@ -1834,6 +1903,7 @@ public class RelayService {
     private void cleanupStreamResources(String traceId) {
         streamContentManager.clearContent(traceId);
         streamUsageMap.remove(traceId);
+        streamTranslateStates.remove(traceId);
     }
 
     /**

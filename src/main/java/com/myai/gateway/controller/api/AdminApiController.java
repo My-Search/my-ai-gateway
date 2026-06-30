@@ -23,10 +23,12 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -41,6 +43,26 @@ public class AdminApiController {
 
     private static final Logger log = LoggerFactory.getLogger(AdminApiController.class);
     private static final DateTimeFormatter DT_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    /**
+     * SSE 日志推送的共享线程池，避免每个连接创建一个独立线程。
+     * <p>
+     * 核心线程数 = CPU 数，最大 32 个，空闲 60s 回收。
+     * 当超过 32 个并发连接时，后续连接会阻塞等待（SSE 连接数通常远小于此值）。
+     * </p>
+     */
+    private static final ExecutorService ssePollExecutor = new ThreadPoolExecutor(
+            Math.max(4, Runtime.getRuntime().availableProcessors()),
+            32,
+            60L, TimeUnit.SECONDS,
+            new SynchronousQueue<>(),
+            r -> {
+                Thread t = new Thread(r, "sse-reader");
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.AbortPolicy()
+    );
 
     private final StatsService statsService;
     private final ChannelService channelService;
@@ -80,6 +102,19 @@ public class AdminApiController {
         this.latencyTracker = latencyTracker;
         this.requestLogMapper = requestLogMapper;
         this.multiModalRuleService = multiModalRuleService;
+    }
+
+    @PreDestroy
+    public void shutdownSsePool() {
+        ssePollExecutor.shutdown();
+        try {
+            if (!ssePollExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                ssePollExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            ssePollExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     // ==================== Auth ====================
@@ -1026,9 +1061,20 @@ public class AdminApiController {
      * 日志实时推送 SSE 端点
      * GET /admin/api/logs/stream
      * <p>
-     * 前端通过 EventSource 连接后，每次有新日志写入时服务端主动推送
-     * event: log / data: {...RequestLog JSON...}
+     * 采用 CPA 模式：每个 SSE 连接分配一个独立队列，由专用分发线程统一写入，
+     * 确保生产线程（AsyncLogWriter）零阻塞。前端通过 EventSource 连接后，
+     * 服务端主动推送 event: log / data: {...RequestLog JSON...}
      * </p>
+     *
+     * <pre>
+     * AsyncLogWriter → centralQueue.offer()       ← 一次入队，零等待
+     *                        ↓
+     *                  分发线程 (批量 500 条)        ← 单线程批量分发
+     *                        ↓
+     *                  per-subscriber 独立队列       ← 每人一个队列，互不干扰
+     *                        ↓
+     *                  SSE 轮询线程 → emitter.send()  ← 前端可见
+     * </pre>
      */
     @GetMapping(value = "/logs/stream", produces = "text/event-stream;charset=UTF-8")
     public SseEmitter streamLogs(HttpServletResponse response) {
@@ -1038,26 +1084,38 @@ public class AdminApiController {
         // 不设超时，由前端断开时清理
         SseEmitter emitter = new SseEmitter(0L);
 
-        // 订阅日志流
-        var subscription = logSseService.subscribe().subscribe(
-                log -> {
-                    try {
-                        String json = objectMapper.writeValueAsString(log);
-                        emitter.send(SseEmitter.event()
-                                .name("log")
-                                .data(json, MediaType.APPLICATION_JSON));
-                    } catch (IOException e) {
-                        emitter.completeWithError(e);
-                    }
-                },
-                emitter::completeWithError,
-                emitter::complete
-        );
+        // 创建订阅者独立队列
+        LogSseService.SubscriberQueue sq = logSseService.subscribe();
 
-        // 连接断开/超时/异常时取消订阅
-        emitter.onCompletion(subscription::dispose);
-        emitter.onTimeout(subscription::dispose);
-        emitter.onError(e -> subscription.dispose());
+        // 从共享线程池获取线程轮询订阅者队列，推送 SSE 事件
+        // 使用共享线程池避免每个连接创建一个独立线程
+        ssePollExecutor.execute(() -> {
+            try {
+                while (true) {
+                    RequestLog record = sq.poll(5, TimeUnit.SECONDS);
+                    if (record == null) {
+                        continue;
+                    }
+                    String json = objectMapper.writeValueAsString(record);
+                    emitter.send(SseEmitter.event()
+                            .name("log")
+                            .data(json, MediaType.APPLICATION_JSON));
+                }
+            } catch (IOException e) {
+                // 连接已关闭，正常结束
+            } catch (Exception e) {
+                if (!"Broken pipe".equals(e.getMessage())) {
+                    log.debug("SSE 推送异常（连接可能已断开）: {}", e.getMessage());
+                }
+            } finally {
+                logSseService.unsubscribe(sq);
+            }
+        });
+
+        // 连接断开/超时/异常时清理
+        emitter.onCompletion(() -> logSseService.unsubscribe(sq));
+        emitter.onTimeout(() -> logSseService.unsubscribe(sq));
+        emitter.onError(e -> logSseService.unsubscribe(sq));
 
         return emitter;
     }
