@@ -394,3 +394,13 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_gateway_api_key_id ON request_logs(g
 -- ========================================
 
 INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('retry_fail_ttl_hours', '48', '重试/失败请求数据保留时长（小时），超过此时间的失败/重试记录的 request_headers/body 将被清理，0=永久保留');
+
+-- ========================================
+-- VERSION:v1.23.0
+-- 入口模型添加 hidden（隐藏）字段
+-- hidden=1 表示该模型在获取模型列表时不可见，但通过模型ID仍可直接调用
+-- 仅影响对外 API 的模型列表（/v1/models、分享接口），管理后台始终可见
+-- ========================================
+
+ALTER TABLE models ADD COLUMN hidden INTEGER DEFAULT 0;
+UPDATE models SET hidden = 0 WHERE hidden IS NULL;

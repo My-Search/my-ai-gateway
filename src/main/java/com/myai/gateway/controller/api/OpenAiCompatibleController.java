@@ -91,13 +91,12 @@ public class OpenAiCompatibleController {
     @GetMapping("/models")
     public ResponseEntity<String> listModels() {
         try {
-            List<Model> models = modelService.listAll();
+            List<Model> models = modelService.listVisible();
             ObjectNode root = objectMapper.createObjectNode();
             root.put("object", "list");
             ArrayNode data = root.putArray("data");
 
             for (Model model : models) {
-                if (model.getEnabled() != 1) continue;
                 ObjectNode modelNode = data.addObject();
                 modelNode.put("id", model.getModelName());
                 modelNode.put("object", "model");

@@ -63,7 +63,7 @@ class ShareApiControllerTest {
     @Test
     void getShareInfo_withValidCode_returns200AndShareData() {
         when(apiKeyService.findByShareCode("valid-share-code-123")).thenReturn(validKey);
-        when(modelService.listAll()).thenReturn(List.of());
+        when(modelService.listVisible()).thenReturn(List.of());
         when(modelService.getChannelRels(anyLong())).thenReturn(List.of());
 
         ResponseEntity<?> response = controller.getShareInfo("valid-share-code-123");
@@ -106,7 +106,7 @@ class ShareApiControllerTest {
     @Test
     void getShareInfo_masksKeyValue() {
         when(apiKeyService.findByShareCode("valid-share-code-123")).thenReturn(validKey);
-        when(modelService.listAll()).thenReturn(List.of());
+        when(modelService.listVisible()).thenReturn(List.of());
         when(modelService.getChannelRels(anyLong())).thenReturn(List.of());
 
         ResponseEntity<?> response = controller.getShareInfo("valid-share-code-123");
@@ -134,7 +134,7 @@ class ShareApiControllerTest {
         model2.setEnabled(1);
 
         when(apiKeyService.findByShareCode("valid-share-code-123")).thenReturn(validKey);
-        when(modelService.listAll()).thenReturn(List.of(model1, model2));
+        when(modelService.listVisible()).thenReturn(List.of(model1, model2));
         when(modelService.getChannelRels(10L)).thenReturn(List.of(createRel("openai")));
         when(modelService.getChannelRels(20L)).thenReturn(List.of(createRel("anthropic")));
 
@@ -159,7 +159,8 @@ class ShareApiControllerTest {
         disabledModel.setEnabled(0);
 
         when(apiKeyService.findByShareCode("valid-share-code-123")).thenReturn(validKey);
-        when(modelService.listAll()).thenReturn(List.of(enabledModel, disabledModel));
+        // listVisible 只返回 enabled=1 且 hidden=0 的模型
+        when(modelService.listVisible()).thenReturn(List.of(enabledModel));
         when(modelService.getChannelRels(10L)).thenReturn(List.of(createRel("openai")));
 
         ResponseEntity<?> response = controller.getShareInfo("valid-share-code-123");
@@ -176,7 +177,7 @@ class ShareApiControllerTest {
     @Test
     void getShareInfoByKey_withValidKey_returns200() {
         when(apiKeyService.findByKeyValueForShare("sk-myai-test-key-value-12345678")).thenReturn(validKey);
-        when(modelService.listAll()).thenReturn(List.of());
+        when(modelService.listVisible()).thenReturn(List.of());
 
         ResponseEntity<?> response = controller.getShareInfoByKey("sk-myai-test-key-value-12345678");
 

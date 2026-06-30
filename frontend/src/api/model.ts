@@ -9,6 +9,8 @@ export interface CustomModel {
   description?: string
   strategy?: string
   enabled: number
+  /** 是否隐藏（hidden=1 时不在模型列表中展示，但通过模型ID仍可直接调用） */
+  hidden?: number
   createdAt?: string
   /** 关联模式：self_add | inherit，默认 self_add */
   relMode?: RelMode

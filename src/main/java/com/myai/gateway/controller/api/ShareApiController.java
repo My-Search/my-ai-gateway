@@ -97,10 +97,8 @@ public class ShareApiController {
     private ResponseEntity<?> buildShareResponse(ApiKey apiKey) {
         Map<String, Object> result = new LinkedHashMap<>();
 
-        // 获取所有启用的自定义模型
-        List<Model> allModels = modelService.listAll().stream()
-                .filter(m -> m.getEnabled() == 1)
-                .collect(Collectors.toList());
+        // 获取可见的自定义模型（enabled=1 且 hidden=0）
+        List<Model> allModels = modelService.listVisible();
 
         // 获取模型关联的渠道信息
         List<Map<String, Object>> modelList = new ArrayList<>();

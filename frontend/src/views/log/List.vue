@@ -31,10 +31,7 @@
       </div>
     </div>
 
-    <div v-if="chartLoading" class="usage-history-loading">
-      <span class="loading-spinner"></span> {{ t('common.loading') }}
-    </div>
-    <div v-else-if="!usageChartData || usageChartData.models.length === 0" class="usage-history-empty">
+    <div v-if="!usageChartData || usageChartData.models.length === 0" class="usage-history-empty">
       {{ t('log.chart.empty') }}
     </div>
     <div v-else class="chart-wrapper" @mouseleave="hideUsageTooltip">
@@ -312,7 +309,6 @@ function nextChartMonth() {
 }
 
 async function loadUsageChart() {
-  chartLoading.value = true
   try {
     const res = await logApi.usageChart({
       year: chartYear.value,
@@ -324,9 +320,7 @@ async function loadUsageChart() {
     usageChartData.value = res.data
   } catch (e) {
     console.error('Failed to load usage chart:', e)
-    usageChartData.value = null
-  } finally {
-    chartLoading.value = false
+    // 失败时保留旧数据，图表不闪烁
   }
 }
 

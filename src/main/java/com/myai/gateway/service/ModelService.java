@@ -47,6 +47,18 @@ public class ModelService {
                 new LambdaQueryWrapper<Model>().orderByAsc(Model::getCreatedAt));
     }
 
+    /**
+     * 列出对外可见的模型列表（hidden=0 且 enabled=1）。
+     * 用于对外 API（/v1/models）和分享接口，隐藏模型仅在管理后台可见。
+     */
+    public List<Model> listVisible() {
+        return modelMapper.selectList(
+                new LambdaQueryWrapper<Model>()
+                        .eq(Model::getHidden, 0)
+                        .eq(Model::getEnabled, 1)
+                        .orderByAsc(Model::getCreatedAt));
+    }
+
     public Model getById(Long id) {
         return modelMapper.selectById(id);
     }

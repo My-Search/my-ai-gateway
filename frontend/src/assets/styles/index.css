@@ -197,6 +197,16 @@ a {
   background: color-mix(in srgb, var(--accent-green) 22%, transparent);
 }
 
+.btn-warning {
+  background: color-mix(in srgb, var(--accent-yellow) 12%, transparent);
+  color: var(--accent-yellow);
+  border-color: transparent;
+}
+
+.btn-warning:hover {
+  background: color-mix(in srgb, var(--accent-yellow) 22%, transparent);
+}
+
 .btn-sm {
   padding: 4px 12px;
   font-size: 12px;

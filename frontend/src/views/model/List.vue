@@ -19,9 +19,12 @@
         </thead>
         <tbody>
           <tr v-for="m in models" :key="m.id">
-            <td><strong>{{ m.modelName }}</strong></td>
+            <td>
+              <strong :class="{ 'is-hidden': m.hidden === 1 }">{{ m.modelName }}</strong>
+              <span v-if="m.hidden === 1" class="hidden-icon" :title="t('model.list.hidden')"><SvgIcon name="eye-off" :size="14" /></span>
+            </td>
             <td style="font-size:12px;color:var(--text-secondary);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-              {{ m.description || '--' }}
+              {{ m.description || '\u2014' }}
             </td>
             <td>
               <span class="badge" :class="strategyBadge(m.strategy)">
@@ -34,14 +37,24 @@
               </span>
             </td>
             <td>
-              <span v-if="m.enabled === 1" class="badge badge-success">{{ t('common.enabled') }}</span>
-              <span v-else class="badge badge-danger">{{ t('common.disabled') }}</span>
+              <button 
+                class="toggle-btn" 
+                :class="m.enabled === 1 ? 'active' : 'inactive'"
+                :title="m.enabled === 1 ? t('model.list.clickToDisable') : t('model.list.clickToEnable')"
+                @click.stop="toggleEnabled(m)"
+                :disabled="toggleLoading === m.id"
+              >
+                <span class="toggle-track">
+                  <span class="toggle-thumb"></span>
+                </span>
+                <span class="toggle-label">{{ m.enabled === 1 ? t('common.enabled') : t('common.disabled') }}</span>
+              </button>
             </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(m.createdAt) }}</td>
             <td>
               <div style="display:flex;gap:6px;">
                 <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> {{ t('model.list.manageRels') }}</router-link>
-                <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="zap" :size="14" /> {{ t('model.list.config') }}</router-link>
+                <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-warning"><SvgIcon name="zap" :size="14" /> {{ t('model.list.config') }}</router-link>
                 <router-link :to="`/admin/model/advanced/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="settings" :size="14" /> {{ t('model.list.advanced') }}</router-link>
                 <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('model.list.edit') }}</router-link>
                 <button class="btn btn-sm btn-danger" @click="confirmDelete(m)"><SvgIcon name="trash" :size="14" /> {{ t('model.list.delete') }}</button>
@@ -64,9 +77,22 @@
       </div>
       <div v-for="m in models" :key="m.id" class="mobile-card">
         <div class="mobile-card-header">
-          <strong class="mobile-card-title">{{ m.modelName }}</strong>
-          <span v-if="m.enabled === 1" class="badge badge-success">{{ t('common.enabled') }}</span>
-          <span v-else class="badge badge-danger">{{ t('common.disabled') }}</span>
+          <strong class="mobile-card-title" :class="{ 'is-hidden': m.hidden === 1 }">
+            {{ m.modelName }}
+            <span v-if="m.hidden === 1" class="hidden-icon" :title="t('model.list.hidden')"><SvgIcon name="eye-off" :size="14" /></span>
+          </strong>
+          <button 
+            class="toggle-btn toggle-btn-sm" 
+            :class="m.enabled === 1 ? 'active' : 'inactive'"
+            :title="m.enabled === 1 ? t('model.list.clickToDisable') : t('model.list.clickToEnable')"
+            @click.stop="toggleEnabled(m)"
+            :disabled="toggleLoading === m.id"
+          >
+            <span class="toggle-track">
+              <span class="toggle-thumb"></span>
+            </span>
+            <span class="toggle-label">{{ m.enabled === 1 ? t('common.enabled') : t('common.disabled') }}</span>
+          </button>
         </div>
         <div class="mobile-card-row">
           <span class="mobile-card-label">{{ t('model.list.description') }}:</span>
@@ -85,7 +111,7 @@
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
           <router-link :to="`/admin/model/rels/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="link" :size="14" /> {{ t('model.list.manageRels') }}</router-link>
-          <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="zap" :size="14" /> {{ t('model.list.config') }}</router-link>
+          <router-link :to="`/admin/model/circuit-breaker/${m.id}`" class="btn btn-sm btn-warning"><SvgIcon name="zap" :size="14" /> {{ t('model.list.config') }}</router-link>
           <router-link :to="`/admin/model/advanced/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="settings" :size="14" /> {{ t('model.list.advanced') }}</router-link>
           <router-link :to="`/admin/model/form/${m.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('model.list.edit') }}</router-link>
           <button class="btn btn-sm btn-danger" @click="confirmDelete(m)"><SvgIcon name="trash" :size="14" /> {{ t('model.list.delete') }}</button>
@@ -118,6 +144,7 @@ const { t } = useI18n()
 const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 
 const models = ref<CustomModel[]>([])
+const toggleLoading = ref<number | null>(null)
 
 function strategyLabel(s?: string) {
   return s === 'random' ? t('model.list.strategyRandom') : s === 'round_robin' ? t('model.list.strategyRoundRobin') : t('model.list.strategyFailover')
@@ -141,6 +168,29 @@ function confirmDelete(m: CustomModel) {
   })
 }
 
+async function toggleEnabled(m: CustomModel) {
+  const newEnabled = m.enabled === 1 ? 0 : 1
+  const action = newEnabled === 1 ? t('model.list.enableConfirm') : t('model.list.disableConfirm')
+  open({
+    title: t('model.list.toggleTitle'),
+    message: t('model.list.toggleMessage').replace('{name}', m.modelName).replace('{action}', action),
+    type: 'confirm',
+    confirmClass: newEnabled === 1 ? 'btn-success' : 'btn-warning',
+    onConfirm: async () => {
+      toggleLoading.value = m.id!
+      try {
+        await modelApi.update(m.id!, { enabled: newEnabled })
+        m.enabled = newEnabled
+        open({ message: t('model.list.toggleSuccess') })
+      } catch (e: any) {
+        open({ title: t('error.updateFailed'), message: e.message })
+      } finally {
+        toggleLoading.value = null
+      }
+    }
+  })
+}
+
 async function loadModels() {
   try {
     const res = await modelApi.list()
@@ -154,6 +204,81 @@ onMounted(loadModels)
 </script>
 
 <style scoped>
+/* Toggle button */
+.toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 20px;
+  transition: all 0.2s;
+}
+.toggle-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.toggle-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.toggle-track {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  position: relative;
+  transition: background 0.2s;
+}
+.toggle-btn.active .toggle-track {
+  background: var(--accent-green);
+}
+.toggle-btn.inactive .toggle-track {
+  background: var(--text-muted);
+}
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.toggle-btn.active .toggle-thumb {
+  transform: translateX(14px);
+}
+.toggle-label {
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 40px;
+}
+.toggle-btn.active .toggle-label {
+  color: var(--accent-green);
+}
+.toggle-btn.inactive .toggle-label {
+  color: var(--text-muted);
+}
+
+/* Small toggle for mobile */
+.toggle-btn-sm .toggle-track {
+  width: 28px;
+  height: 16px;
+}
+.toggle-btn-sm .toggle-thumb {
+  width: 12px;
+  height: 12px;
+}
+.toggle-btn-sm .toggle-label {
+  font-size: 11px;
+  min-width: 32px;
+}
+.toggle-btn-sm.active .toggle-thumb {
+  transform: translateX(12px);
+}
+
 /* Mobile card list — hidden on desktop, shown ≤ 768px */
 .mobile-card-list {
   display: none;
@@ -235,6 +360,21 @@ onMounted(loadModels)
 .mode-badge.mode-inherit {
   background: rgba(210, 153, 34, 0.15);
   color: #d29922;
+}
+
+/* Hidden model name dimmed */
+.is-hidden {
+  opacity: 0.45;
+}
+
+/* Hidden icon next to model name */
+.hidden-icon {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  margin-left: 6px;
+  color: var(--text-muted);
+  opacity: 0.6;
 }
 
 /* Responsive toggle */

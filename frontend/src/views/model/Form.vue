@@ -30,6 +30,13 @@
           <option :value="0">{{ t('common.disabled') }}</option>
         </select>
       </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" v-model="form.hidden" :true-value="1" :false-value="0" />
+          <span>{{ t('model.form.hidden') }}</span>
+        </label>
+        <div class="form-hint">{{ t('model.form.hiddenHint') }}</div>
+      </div>
       <div style="display:flex;gap:8px;margin-top:24px;">
         <button type="submit" class="btn btn-primary" :disabled="saving"><SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('model.form.save') }}</button>
         <router-link to="/admin/model/list" class="btn btn-secondary"><SvgIcon name="x" :size="14" /> {{ t('model.form.cancel') }}</router-link>
@@ -129,6 +136,24 @@ async function handleSave() {
 </script>
 
 <style scoped>
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-primary);
+}
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+.checkbox-label span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .question-icon {
   display: inline-flex;
   align-items: center;

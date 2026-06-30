@@ -478,6 +478,23 @@ class ModelServiceTest {
 
     // ==================== listInheritableModels ====================
 
+    // ==================== listVisible ====================
+
+    @Test
+    void listVisible_callsSelectListWithConditions() {
+        // listVisible 应调用 selectList 并返回 enabled=1 AND hidden=0 的模型
+        when(modelMapper.selectList(any(LambdaQueryWrapper.class)))
+                .thenReturn(List.of(newSelfAddModel(1L, "visible")));
+
+        List<Model> result = service.listVisible();
+
+        verify(modelMapper).selectList(any(LambdaQueryWrapper.class));
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getModelName()).isEqualTo("visible");
+    }
+
+    // ==================== listInheritableModels ====================
+
     @Test
     void listInheritableModels_buildsCorrectQuery() {
         // 验证方法被调用：实际 SQL 过滤由 MyBatis-Plus 负责，不在单元测试范围内

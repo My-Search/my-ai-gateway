@@ -27,6 +27,9 @@ public class Model {
     /** 是否启用 */
     private Integer enabled;
 
+    /** 是否隐藏（hidden=1 时不在模型列表中展示，但通过模型ID仍可直接调用） */
+    private Integer hidden;
+
     /**
      * 关联模式
      * - 'self_add'：使用本模型在 model_channel_rels 中的自有关联（默认）
@@ -62,6 +65,7 @@ public class Model {
         this.description = description;
         this.strategy = strategy;
         this.enabled = 1;
+        this.hidden = 0;
         this.relMode = "self_add";
     }
 
@@ -88,6 +92,9 @@ public class Model {
 
     public Integer getEnabled() { return enabled; }
     public void setEnabled(Integer enabled) { this.enabled = enabled; }
+
+    public Integer getHidden() { return hidden; }
+    public void setHidden(Integer hidden) { this.hidden = hidden; }
 
     public String getRelMode() { return relMode; }
     public void setRelMode(String relMode) { this.relMode = relMode; }
