@@ -968,21 +968,27 @@ public class AdminApiController {
                     .collect(Collectors.toList());
             trace.put("logs", sortedLogs);
 
-            int retryCount = (int) sortedLogs.stream().filter(l -> "retry".equals(l.getPhase())).count();
-            int successCount = (int) sortedLogs.stream().filter(l -> "success".equals(l.getPhase())).count();
-            int failCount = (int) sortedLogs.stream().filter(l -> "fail".equals(l.getPhase())).count();
+            // 单次遍历替代 5 次 stream()，O(n) 代替 O(5n)
+            int retryCount = 0, successCount = 0, failCount = 0;
+            String traceModelName = null;
+            long totalTime = 0;
+            for (RequestLog l : sortedLogs) {
+                String phase = l.getPhase();
+                if ("retry".equals(phase)) retryCount++;
+                else if ("success".equals(phase)) successCount++;
+                else if ("fail".equals(phase)) failCount++;
+                if (traceModelName == null && l.getModelName() != null) {
+                    traceModelName = l.getModelName();
+                }
+                if (("success".equals(phase) || "fail".equals(phase))
+                        && l.getResponseTimeMs() != null) {
+                    totalTime += l.getResponseTimeMs();
+                }
+            }
             trace.put("retryCount", retryCount);
             trace.put("successCount", successCount);
             trace.put("failCount", failCount);
-
-            String traceModelName = sortedLogs.stream().filter(l -> l.getModelName() != null)
-                    .map(RequestLog::getModelName).findFirst().orElse("");
-            trace.put("modelName", traceModelName);
-
-            long totalTime = sortedLogs.stream()
-                    .filter(l -> ("success".equals(l.getPhase()) || "fail".equals(l.getPhase()))
-                            && l.getResponseTimeMs() != null)
-                    .mapToLong(RequestLog::getResponseTimeMs).sum();
+            trace.put("modelName", traceModelName != null ? traceModelName : "");
             trace.put("totalTimeMs", totalTime);
 
             if (!sortedLogs.isEmpty()) {

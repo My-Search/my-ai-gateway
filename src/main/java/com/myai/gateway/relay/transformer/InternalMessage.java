@@ -27,6 +27,9 @@ public class InternalMessage {
     /** 名称（tool 角色） */
     private String name;
 
+    /** DeepSeek thinking mode 推理过程内容（assistant 角色），多轮对话中需原样传回 */
+    private String reasoningContent;
+
     public InternalMessage() {}
 
     public InternalMessage(String role, String content) {
@@ -51,4 +54,7 @@ public class InternalMessage {
 
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
+
+    public String getReasoningContent() { return reasoningContent; }
+    public void setReasoningContent(String reasoningContent) { this.reasoningContent = reasoningContent; }
 }

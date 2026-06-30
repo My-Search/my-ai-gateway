@@ -967,6 +967,7 @@ public class RelayService {
                 copy.setToolCalls(msg.getToolCalls());
                 copy.setToolCallId(msg.getToolCallId());
                 copy.setName(msg.getName());
+                copy.setReasoningContent(msg.getReasoningContent());
                 newMessages.add(copy);
             }
         }
@@ -1022,6 +1023,8 @@ public class RelayService {
             copy.setToolCallId(msg.getToolCallId());
             // 保留 tool_calls：tool 消息必须由包含 tool_calls 的 assistant 消息前置
             copy.setToolCalls(msg.getToolCalls());
+            // DeepSeek thinking mode：assistant 角色的 reasoning_content 必须传回
+            copy.setReasoningContent(msg.getReasoningContent());
             // 部分提供商要求 content 字段必须存在（不能为 null）
             // 注意：仅当 contentParts 也为空时才补 ""，避免覆盖多模态 content 数组
             if (copy.getContent() == null && copy.getContentParts() == null) {

@@ -238,6 +238,24 @@ const loadingMore = ref(false)
 const sseConnected = ref(false)
 const sseReconnecting = ref(false)
 
+// SSE 缓冲队列：合并短时间内的多条事件，减少重复计算和渲染次数
+const sseBuffer: RequestLog[] = []
+let sseFlushTimer: ReturnType<typeof setTimeout> | null = null
+
+function flushSseBuffer() {
+  sseFlushTimer = null
+  const batch = sseBuffer.splice(0)
+  if (batch.length === 0) return
+  for (const log of batch) {
+    upsertTraceFromSse(log)
+  }
+}
+
+function scheduleSseFlush() {
+  if (sseFlushTimer) return
+  sseFlushTimer = setTimeout(flushSseBuffer, 80)
+}
+
 // 入口模型列表（供下拉选择）
 const entryModels = ref<CustomModel[]>([])
 async function fetchEntryModels() {
@@ -626,7 +644,8 @@ function startSse() {
   stopSse()
   eventSource = subscribeLogStream({
     onLog: (log) => {
-      upsertTraceFromSse(log)
+      sseBuffer.push(log)
+      scheduleSseFlush()
     },
     onError: () => {
       sseConnected.value = false
@@ -705,6 +724,9 @@ function recalcTrace(trace: LogTrace) {
   trace.endTime = last?.createdAt
   trace.modelName = trace.logs.find(l => l.modelName)?.modelName || ''
 
+  // 仅更新当前 trace 的分组缓存，避免全量重计算
+  updateTraceGroups(trace)
+
   // 按最新时间排序
   traces.value.sort((a, b) => {
     const ta = a.endTime || a.startTime || ''
@@ -754,13 +776,19 @@ function groupDurationText(group: { logs: RequestLog[] }): string {
   return ' · ' + durations.map(d => d + 'ms').join(' / ')
 }
 
-const groupedTraceLogs = computed(() => {
-  const map = new Map<string, { key: string; logs: RequestLog[] }[]>()
+/** 每个 trace 的分组结果缓存，仅更新变更的 trace，避免全量重计算 */
+const groupedTraceLogs = reactive(new Map<string, { key: string; logs: RequestLog[] }[]>())
+
+function updateTraceGroups(trace: LogTrace) {
+  groupedTraceLogs.set(trace.traceId, groupLogs(trace.logs))
+}
+
+function rebuildAllTraceGroups() {
+  groupedTraceLogs.clear()
   for (const trace of traces.value) {
-    map.set(trace.traceId, groupLogs(trace.logs))
+    groupedTraceLogs.set(trace.traceId, groupLogs(trace.logs))
   }
-  return map
-})
+}
 
 function shortenId(id: string) {
   if (!id) return '-'
@@ -820,6 +848,8 @@ async function loadLogs() {
         expandedTraces.value.add(t.traceId)
       }
     }
+    // 重建全部分组缓存
+    rebuildAllTraceGroups()
   } catch (e: any) {
     openDialog({ title: t('error.loadFailed'), message: e.message })
   } finally {
@@ -838,6 +868,10 @@ async function loadMoreLogs() {
     const existingIds = new Set(traces.value.map(t => t.traceId))
     const uniqueNewTraces = newTraces.filter(t => !existingIds.has(t.traceId))
     traces.value.push(...uniqueNewTraces)
+    // 为新加载的 trace 建立分组缓存
+    for (const t of uniqueNewTraces) {
+      updateTraceGroups(t)
+    }
     hasMore.value = res.data.hasMore
     // offset 按 backend 返回总数递增（与后端分页语义对齐）
     offset.value += newTraces.length
@@ -919,6 +953,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (sseFlushTimer) clearTimeout(sseFlushTimer)
   stopSse()
   observer?.disconnect()
 })
@@ -1133,6 +1168,11 @@ onUnmounted(() => {
 .btn-ghost:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+
+.log-list-card .log-filter-summary {
+  flex-shrink: 0;
 }
 
 @media (max-width: 768px) {

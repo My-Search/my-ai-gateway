@@ -87,6 +87,10 @@ public class MessageTransformer {
                 if (msg.has("name")) {
                     im.setName(msg.get("name").asText());
                 }
+                // DeepSeek thinking mode：assistant 角色的 reasoning_content 必须传回
+                if ("assistant".equals(im.getRole()) && msg.has("reasoning_content")) {
+                    im.setReasoningContent(msg.get("reasoning_content").asText());
+                }
                 messages.add(im);
             }
         }
@@ -261,6 +265,10 @@ public class MessageTransformer {
             }
             if (msg.getName() != null) {
                 msgNode.put("name", msg.getName());
+            }
+            // DeepSeek thinking mode：assistant 角色的 reasoning_content 必须传回
+            if ("assistant".equals(msg.getRole()) && msg.getReasoningContent() != null) {
+                msgNode.put("reasoning_content", msg.getReasoningContent());
             }
         }
 
