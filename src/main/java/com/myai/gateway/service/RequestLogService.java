@@ -47,11 +47,11 @@ public class RequestLogService {
      * @param traceId      追踪 ID
      * @param apiKeyName   API 密钥名称
      * @param modelName    自定义模型名
-     * @param channelModelName 渠道模型名
-     * @param channelName  渠道名
+     * @param channelModelName 通道模型名
+     * @param channelName  通道名
      * @param phase        阶段: start / retry / reroute / success / fail
      * @param message      日志消息
-     * @param retryIndex   重试索引（0=首次，>0=重试次数）
+     * @param retryIndex   重试索引，0=首次请求，>0=重试次数
      */
     public void log(String traceId, String apiKeyName, String modelName,
                     String channelModelName, String channelName,
@@ -298,7 +298,7 @@ public class RequestLogService {
      * @param limit           返回的 traceId 数量
      * @param modelName       入口模型名（可选）
      * @param gatewayApiKeyId 网关 API Key 主键（可选；与 apiKeyName 互不影响，建议优先使用）
-     * @param apiKeyName      API Key 名（可选，兼容旧接口：模糊匹配 api_key_name 列，存的是渠道 Key 名）
+     * @param apiKeyName      API Key 名（可选，兼容旧接口：模糊匹配 api_key_name 列，存的是通道 Key 名）
      * @param startTime       开始时间（可选）
      * @param endTime         结束时间（可选）
      * @return 完整的日志列表（不含 requestHeaders/requestBody）
@@ -388,39 +388,102 @@ public class RequestLogService {
     }
 
     /**
-     * 清理过期的原始请求数据（request_headers / request_body）
+     * 清理过期的原始请求数据（request_headers / request_body） - 旧接口，统一 TTL
+     * <p>
+     * 使用同一个 TTL 值处理所有记录（包括重试/失败和普通记录）。
+     * 内部委托给 {@link #cleanExpiredRequestData(int, int)}。
+     * </p>
+     *
+     * @param ttlHours 原始请求数据保留时长（小时），<=0 表示永久保留不清除
+     */
+    public void cleanExpiredRequestData(int ttlHours) {
+        cleanExpiredRequestData(ttlHours, ttlHours);
+    }
+
+    /**
+     * 清理过期的原始请求数据（request_headers / request_body） - 新接口，区分重试/失败与普通记录
      * <p>
      * 根据配置的 TTL（小时）将超过时长的记录的 request_headers 和 request_body 置为 NULL，
      * 保留日志条目本身（trace 链路仍可正常展示），仅清除原始的请求头和请求体数据。
      * </p>
      * <p>
+     * 区分两种记录的清理策略：
+     * <ul>
+     *   <li><b>重试/失败记录</b>（retry_index > 0 或 phase = 'fail' 或 status = 'error'）：
+     *   使用 retryFailTtlHours，默认较长（48h），便于调试排查</li>
+     *   <li><b>普通记录</b>（首次请求且成功的记录）：
+     *   使用 ttlHours，默认较短（4h）</li>
+     * </ul>
+     * </p>
+     * <p>
      * 处理流程：
      * <ol>
-     *   <li>若 ttlHours <= 0，则跳过本次清理（永久保留原始请求数据）</li>
-     *   <li>按 created_at < cutoff 查找 request_headers 或 request_body 非空的记录</li>
-     *   <li>逐条将 request_headers 和 request_body 置为 NULL，避免一次性加载大量数据到内存</li>
+     *   <li>若两个 TTL 均 <= 0，则跳过本次清理（永久保留原始请求数据）</li>
+     *   <li>若 retryFailTtlHours > 0，清理重试/失败记录中超过该时长的原始请求数据</li>
+     *   <li>若 ttlHours > 0，清理普通记录中超过该时长的原始请求数据</li>
      * </ol>
      * </p>
      *
-     * @param ttlHours 原始请求数据保留时长（小时），<=0 表示永久保留不清理
+     * @param ttlHours         普通原始请求数据保留时长（小时），<=0 表示永久保留不清除
+     * @param retryFailTtlHours 重试/失败请求数据保留时长（小时），<=0 表示永久保留不清除
      */
-    public void cleanExpiredRequestData(int ttlHours) {
-        if (ttlHours <= 0) {
-            log.debug("原始请求数据永久保留（ttlHours={}），跳过清理", ttlHours);
-            return;
+    public void cleanExpiredRequestData(int ttlHours, int retryFailTtlHours) {
+        // 处理重试/失败记录的原始请求数据
+        if (retryFailTtlHours > 0) {
+            cleanExpiredRequestDataBatch(retryFailTtlHours, true);
+        } else {
+            log.debug("重试/失败请求数据永久保留（retryFailTtlHours={}），跳过清理", retryFailTtlHours);
         }
 
+        // 处理普通记录的原始请求数据
+        if (ttlHours > 0) {
+            cleanExpiredRequestDataBatch(ttlHours, false);
+        } else {
+            log.debug("普通请求数据永久保留（ttlHours={}），跳过清理", ttlHours);
+        }
+    }
+
+    /**
+     * 构建清理查询条件
+     * <p>
+     * 每次调用返回全新的 wrapper 实例，避免 {@link com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper#last} 重复叠加。
+     * </p>
+     *
+     * @param cutoff      截止时间
+     * @param isRetryFail true=重试/失败记录，false=普通记录
+     * @return 新的查询条件
+     */
+    private LambdaQueryWrapper<RequestLog> buildCleanupWrapper(LocalDateTime cutoff, boolean isRetryFail) {
+        LambdaQueryWrapper<RequestLog> wrapper = new LambdaQueryWrapper<RequestLog>()
+                .lt(RequestLog::getCreatedAt, cutoff)
+                .and(w -> w.isNotNull(RequestLog::getRequestHeaders)
+                        .or().isNotNull(RequestLog::getRequestBody));
+
+        if (isRetryFail) {
+            // 重试/失败记录：retry_index > 0 OR phase = 'fail' OR status = 'error'
+            wrapper.and(w -> w.gt(RequestLog::getRetryIndex, 0)
+                    .or().eq(RequestLog::getPhase, "fail")
+                    .or().eq(RequestLog::getStatus, "error"));
+        } else {
+            // 普通记录：NOT (retry_index > 0 OR phase = 'fail' OR status = 'error')
+            wrapper.and(w -> w.and(w2 -> w2.isNull(RequestLog::getRetryIndex)
+                            .or().eq(RequestLog::getRetryIndex, 0))
+                    .and(w2 -> w2.isNull(RequestLog::getPhase)
+                            .or().ne(RequestLog::getPhase, "fail"))
+                    .and(w2 -> w2.isNull(RequestLog::getStatus)
+                            .or().ne(RequestLog::getStatus, "error")));
+        }
+        return wrapper;
+    }
+
+    private void cleanExpiredRequestDataBatch(int ttlHours, boolean isRetryFail) {
         LocalDateTime cutoff = LocalDateTime.now().minusHours(ttlHours);
         int batchSize = 100;
         int totalCleaned = 0;
 
         while (true) {
             List<RequestLog> expired = requestLogMapper.selectList(
-                    new LambdaQueryWrapper<RequestLog>()
-                            .lt(RequestLog::getCreatedAt, cutoff)
-                            .and(w -> w.isNotNull(RequestLog::getRequestHeaders)
-                                    .or().isNotNull(RequestLog::getRequestBody))
-                            .last("LIMIT " + batchSize));
+                    buildCleanupWrapper(cutoff, isRetryFail).last("LIMIT " + batchSize));
 
             if (expired.isEmpty()) break;
 
@@ -430,12 +493,12 @@ public class RequestLogService {
                     .set(RequestLog::getRequestHeaders, null)
                     .set(RequestLog::getRequestBody, null));
             totalCleaned += expired.size();
-            log.debug("已清理 {} 条过期原始请求数据（TTL={}h）", totalCleaned, ttlHours);
         }
 
         if (totalCleaned > 0) {
-            log.info("原始请求数据清理完成：共清理 {} 条（TTL={}h，cutoff={}）",
-                    totalCleaned, ttlHours, cutoff);
+            String label = isRetryFail ? "重试/失败" : "普通";
+            log.info("{}原始请求数据清理完成：共清理 {} 条（TTL={}h, cutoff={}）",
+                    label, totalCleaned, ttlHours, cutoff);
         }
     }
 }

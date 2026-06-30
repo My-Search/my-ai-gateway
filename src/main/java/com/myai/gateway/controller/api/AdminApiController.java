@@ -1216,6 +1216,21 @@ public class AdminApiController {
                     return ResponseEntity.ok(result);
                 }
             }
+            if (body.containsKey(AdminConfigService.KEY_RETRY_FAIL_TTL_HOURS)) {
+                String val = body.get(AdminConfigService.KEY_RETRY_FAIL_TTL_HOURS);
+                try {
+                    int hours = Integer.parseInt(val);
+                    if (hours < 0 || hours > 8760) {
+                        result.put("success", false);
+                        result.put("error", "重试/失败请求保留时长必须在0-8760小时之间（0=永久保留）");
+                        return ResponseEntity.ok(result);
+                    }
+                } catch (NumberFormatException e) {
+                    result.put("success", false);
+                    result.put("error", "重试/失败请求保留时长必须为有效数字");
+                    return ResponseEntity.ok(result);
+                }
+            }
 
             adminConfigService.updateSystemConfig(body);
             result.put("success", true);

@@ -383,3 +383,14 @@ ALTER TABLE request_logs ADD COLUMN gateway_api_key_id INTEGER;
 
 -- 为按网关 Key 过滤的查询加索引（图表聚合 / 日志列表）
 CREATE INDEX IF NOT EXISTS idx_request_logs_gateway_api_key_id ON request_logs(gateway_api_key_id);
+
+-- ========================================
+-- VERSION:v1.22.0
+-- 系统配置：重试/失败请求数据保留时长（retry_fail_ttl_hours）
+-- 默认保留 48 小时，便于调试排查重试/失败问题
+-- 普通请求数据保留时长为 request_body_ttl_hours（默认 4 小时）
+-- 重试/失败请求数据保留时长为 retry_fail_ttl_hours（默认 48 小时）
+-- 0=永久保留
+-- ========================================
+
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('retry_fail_ttl_hours', '48', '重试/失败请求数据保留时长（小时），超过此时间的失败/重试记录的 request_headers/body 将被清理，0=永久保留');

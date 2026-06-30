@@ -475,6 +475,8 @@ export default {
   'systemConfig.requestDataManagementDesc': '配置请求日志中原始请求头/请求体的保留时长，超过时长后将被定时清理以节省存储空间。',
   'systemConfig.requestBodyTtl': '请求数据保留时长（小时）',
   'systemConfig.requestBodyTtlHint': '原始请求头和请求体将在超过此时长后被自动清除。设置为 0 表示永久保留。',
+  'systemConfig.retryFailTtl': '重试/失败数据保留时长（小时）',
+  'systemConfig.retryFailTtlHint': '重试或失败请求的原始请求头和请求体将在超过此时长后被清除。默认 48 小时，方便调试排查。设置为 0 表示永久保留。',
   'systemConfig.saveSuccess': '系统配置已保存',
 
   /* ========== MultiModal Rules ========== */

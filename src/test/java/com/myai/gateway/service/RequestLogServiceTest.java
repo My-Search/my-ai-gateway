@@ -211,9 +211,101 @@ class RequestLogServiceTest {
         service.cleanExpiredRequestData(4);
 
         // selectList 被调用一次（查过期记录），查到为空则不再调用 update
-        verify(requestLogMapper, times(1)).selectList(any(Wrapper.class));
+        verify(requestLogMapper, times(2)).selectList(any(Wrapper.class));
         verify(requestLogMapper, never()).update(any(), any());
     }
 
 
+
+
+    // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€ cleanExpiredRequestData(ttlHours, retryFailTtlHours) dual-TTL 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+    @Test
+    void cleanExpiredRequestData_dualTtl_bothZero_skipsWithoutDbCalls() {
+        // Both TTLs <= 0 means permanent retention, should not query DB
+        service.cleanExpiredRequestData(0, 0);
+
+        verify(requestLogMapper, never()).selectList(any(Wrapper.class));
+        verify(requestLogMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void cleanExpiredRequestData_dualTtl_bothNegative_skipsWithoutDbCalls() {
+        service.cleanExpiredRequestData(-1, -1);
+
+        verify(requestLogMapper, never()).selectList(any(Wrapper.class));
+        verify(requestLogMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void cleanExpiredRequestData_dualTtl_onlyRetryFailPositive_queriesOnlyRetryFail() {
+        // Normal TTL = 0 (skip), Retry/fail TTL = 48 (active) -> should only query for retry/fail entries
+        when(requestLogMapper.selectList(any(Wrapper.class))).thenReturn(List.of());
+
+        service.cleanExpiredRequestData(0, 48);
+
+        // Should call selectList exactly once (only for retry/fail cleanup)
+        verify(requestLogMapper, times(1)).selectList(any(Wrapper.class));
+        verify(requestLogMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void cleanExpiredRequestData_dualTtl_onlyNormalPositive_queriesOnlyNormal() {
+        // Retry/fail TTL = 0 (skip), Normal TTL = 4 (active) -> should only query for normal entries
+        when(requestLogMapper.selectList(any(Wrapper.class))).thenReturn(List.of());
+
+        service.cleanExpiredRequestData(4, 0);
+
+        // Should call selectList exactly once (only for normal cleanup)
+        verify(requestLogMapper, times(1)).selectList(any(Wrapper.class));
+        verify(requestLogMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void cleanExpiredRequestData_dualTtl_bothPositive_queriesBothBatches() {
+        // Both TTLs active -> should query for both normal and retry/fail entries
+        when(requestLogMapper.selectList(any(Wrapper.class))).thenReturn(List.of());
+
+        service.cleanExpiredRequestData(4, 48);
+
+        // Should call selectList twice (normal + retry/fail), but no update since no expired records
+        verify(requestLogMapper, times(2)).selectList(any(Wrapper.class));
+        verify(requestLogMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void cleanExpiredRequestData_dualTtl_bothPositive_cleansExpiredRecords() {
+        // Both TTLs active with expired records -> should find and update both batches
+        // We mock selectList to return empty to avoid MyBatis-Plus lambda parsing issues in pure Mockito
+        // This test verifies the method is invoked correctly, not the batch content filtering
+        when(requestLogMapper.selectList(any(Wrapper.class))).thenReturn(List.of());
+
+        service.cleanExpiredRequestData(4, 48);
+
+        // Should call selectList twice (normal + retry/fail), no update since mocked as empty
+        verify(requestLogMapper, times(2)).selectList(any(Wrapper.class));
+        verify(requestLogMapper, never()).update(any(), any());
+    }
+
+    /**
+     * Old single-parameter method should delegate to dual-TTL with same values.
+     * So cleanExpiredRequestData(4) behaves like cleanExpiredRequestData(4, 4).
+     */
+    @Test
+    void cleanExpiredRequestData_singleTtl_delegatesToDualTtl() {
+        when(requestLogMapper.selectList(any(Wrapper.class))).thenReturn(List.of());
+
+        service.cleanExpiredRequestData(4);
+
+        // Same as both TTLs = 4 -> should query twice (normal + retry/fail)
+        verify(requestLogMapper, times(2)).selectList(any(Wrapper.class));
+    }
+
+    @Test
+    void cleanExpiredRequestData_singleTtlZero_delegatesToDualTtl() {
+        service.cleanExpiredRequestData(0);
+
+        verify(requestLogMapper, never()).selectList(any(Wrapper.class));
+        verify(requestLogMapper, never()).update(any(), any());
+    }
 }

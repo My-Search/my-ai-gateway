@@ -291,14 +291,26 @@ public class MessageTransformer {
             ArrayNode toolsNode = root.putArray("tools");
             for (Map<String, Object> tool : req.getTools()) {
                 if ("function".equals(tool.get("type"))) {
+                    // 标准 OpenAI 格式：透传保留所有字段（如 strict 等扩展属性）
                     toolsNode.add(objectMapper.valueToTree(tool));
+                    // 兜底补齐：透传后检查 function.name 是否缺失
+                    JsonNode toolNode = toolsNode.get(toolsNode.size() - 1);
+                    JsonNode funcNode = toolNode.get("function");
+                    if (funcNode instanceof ObjectNode funcObj) {
+                        if (!funcObj.has("name") || funcObj.get("name").isNull()) {
+                            if (toolNode.has("name")) {
+                                funcObj.put("name", toolNode.get("name").asText());
+                            }
+                        }
+                    }
                 } else {
+                    // 非 function 类型（如 Anthropic 格式），手动构建为标准 OpenAI 格式
                     ObjectNode toolNode = toolsNode.addObject();
                     toolNode.put("type", "function");
-                    ObjectNode func = toolNode.putObject("function");
-                    func.put("name", (String) tool.get("name"));
-                    if (tool.containsKey("description")) func.put("description", (String) tool.get("description"));
-                    if (tool.containsKey("input_schema")) func.set("parameters", objectMapper.valueToTree(tool.get("input_schema")));
+                    ObjectNode funcNode = toolNode.putObject("function");
+                    funcNode.put("name", (String) tool.get("name"));
+                    if (tool.containsKey("description")) funcNode.put("description", (String) tool.get("description"));
+                    if (tool.containsKey("input_schema")) funcNode.set("parameters", objectMapper.valueToTree(tool.get("input_schema")));
                 }
             }
         }

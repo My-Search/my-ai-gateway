@@ -475,6 +475,8 @@ export default {
   'systemConfig.requestDataManagementDesc': 'Configure retention of raw request headers and body in request logs.',
   'systemConfig.requestBodyTtl': 'Request Data TTL (hours)',
   'systemConfig.requestBodyTtlHint': 'Raw request headers and body will be cleared after this many hours. Set to 0 to keep permanently.',
+  'systemConfig.retryFailTtl': 'Retry/Fail Data TTL (hours)',
+  'systemConfig.retryFailTtlHint': 'Raw request data for retry or failed requests will be cleared after this many hours. Default 48h for debugging. Set to 0 to keep permanently.',
   'systemConfig.saveSuccess': 'System config saved',
 
   /* ========== MultiModal Rules ========== */

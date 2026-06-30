@@ -74,6 +74,18 @@
                    :min="0" :max="8760" />
           </div>
         </div>
+
+        <div class="config-row">
+          <div class="config-row-label">
+            <div class="config-label">{{ t('systemConfig.retryFailTtl') }}</div>
+            <div class="config-hint">{{ t('systemConfig.retryFailTtlHint') }}</div>
+          </div>
+          <div class="config-row-control">
+            <input type="number" class="form-control" style="width:120px;"
+                   v-model.number="form.retry_fail_ttl_hours"
+                   :min="0" :max="8760" />
+          </div>
+        </div>
       </div>
 
       <!-- Save -->
@@ -101,7 +113,8 @@ const successMsg = ref('')
 const form = reactive({
   log_retention_days: 30,
   log_cleanup_enabled: '1',
-  request_body_ttl_hours: 4
+  request_body_ttl_hours: 4,
+  retry_fail_ttl_hours: 48
 })
 
 async function loadConfig() {
@@ -114,6 +127,7 @@ async function loadConfig() {
       form.log_retention_days = parseInt(res.data.data.log_retention_days) || 30
       form.log_cleanup_enabled = res.data.data.log_cleanup_enabled === '1' ? '1' : '0'
       form.request_body_ttl_hours = parseInt(res.data.data.request_body_ttl_hours) || 0
+      form.retry_fail_ttl_hours = parseInt(res.data.data.retry_fail_ttl_hours) || 0
     }
   } catch (e: any) {
     error.value = e.message || t('error.loadFailed')
@@ -142,7 +156,8 @@ async function handleSave() {
     const res = await systemApi.updateConfig({
       log_retention_days: String(form.log_retention_days),
       log_cleanup_enabled: form.log_cleanup_enabled,
-      request_body_ttl_hours: String(form.request_body_ttl_hours)
+      request_body_ttl_hours: String(form.request_body_ttl_hours),
+      retry_fail_ttl_hours: String(form.retry_fail_ttl_hours)
     })
     if (res.data.success) {
       successMsg.value = t('systemConfig.saveSuccess')

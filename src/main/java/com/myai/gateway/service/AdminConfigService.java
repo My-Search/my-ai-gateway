@@ -29,6 +29,8 @@ public class AdminConfigService {
 
     /** 原始请求数据保留时长（小时），0=永久保留 */
     public static final String KEY_REQUEST_BODY_TTL_HOURS = "request_body_ttl_hours";
+    /** retry/fail request data TTL (hours), 0=forever */
+    public static final String KEY_RETRY_FAIL_TTL_HOURS = "retry_fail_ttl_hours";
 
     private final AdminConfigMapper adminConfigMapper;
 
@@ -169,15 +171,18 @@ public class AdminConfigService {
     public Map<String, String> getSystemConfig() {
         String retentionDays = getValueByKey(KEY_LOG_RETENTION_DAYS);
         String cleanupEnabled = getValueByKey(KEY_LOG_CLEANUP_ENABLED);
-        String requestBodyTtlHours = getValueByKey(KEY_REQUEST_BODY_TTL_HOURS);
+       String requestBodyTtlHours = getValueByKey(KEY_REQUEST_BODY_TTL_HOURS);
+        String retryFailTtlHours = getValueByKey(KEY_RETRY_FAIL_TTL_HOURS);
         if (retentionDays == null) retentionDays = "7";
         if (cleanupEnabled == null) cleanupEnabled = "1";
         if (requestBodyTtlHours == null) requestBodyTtlHours = "4";
+        if (retryFailTtlHours == null) retryFailTtlHours = "48";
 
         Map<String, String> config = new LinkedHashMap<>();
         config.put(KEY_LOG_RETENTION_DAYS, retentionDays);
         config.put(KEY_LOG_CLEANUP_ENABLED, cleanupEnabled);
         config.put(KEY_REQUEST_BODY_TTL_HOURS, requestBodyTtlHours);
+        config.put(KEY_RETRY_FAIL_TTL_HOURS, retryFailTtlHours);
         return config;
     }
 

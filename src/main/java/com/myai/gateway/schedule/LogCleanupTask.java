@@ -19,8 +19,9 @@ import org.springframework.stereotype.Component;
  * 1. 从 admin_config 读取日志清理开关（log_cleanup_enabled）
  * 2. 若开关关闭则跳过本次执行
  * 3. 读取日志保留天数（log_retention_days），调用 cleanOldLogs() 清理过期日志
- * 4. 读取原始请求数据保留时长（request_body_ttl_hours），调用 cleanExpiredRequestData() 清理过期原始请求数据
- * 5. 记录本次清理结果
+ * 4. 读取普通原始请求数据保留时长（request_body_ttl_hours），调用 cleanExpiredRequestData() 清理普通记录
+ * 5. 读取重试/失败请求数据保留时长（retry_fail_ttl_hours），调用 cleanExpiredRequestData() 清理重试/失败记录
+ * 6. 记录本次清理结果
  * </pre>
  */
 @Component
@@ -40,8 +41,8 @@ public class LogCleanupTask {
      * 定时清理过期日志与原始请求数据
      * <p>
      * 每 30 分钟执行一次（0 分和 30 分时触发），统一处理两种数据的过期清理：
-     * 日志按天、原始请求数据按小时。<br>
-     * cron = "0 0/30 * * * ?" 对应每小时的 0 分和 30 分执行。
+     * 日志按天、原始请求数据按小时（区分普通记录与重试/失败记录）。
+     * cron = "0 0/30 * * * ?" 对应每小时的第 0 分和第 30 分执行。
      * </p>
      */
     @Scheduled(cron = "0 0/30 * * * ?")
@@ -76,7 +77,7 @@ public class LogCleanupTask {
             }
         }
 
-        // 3. 清理过期的原始请求数据
+        // 3. 读取普通原始请求数据保留时长
         String ttlStr = adminConfigService.getValueByKey(AdminConfigService.KEY_REQUEST_BODY_TTL_HOURS);
         int ttlHours;
         try {
@@ -88,10 +89,23 @@ public class LogCleanupTask {
             ttlHours = 0;
         }
 
-        if (ttlHours > 0) {
-            log.debug("开始清理超过 {} 小时的原始请求数据", ttlHours);
+        // 4. 读取重试/失败请求数据保留时长
+        String retryFailTtlStr = adminConfigService.getValueByKey(AdminConfigService.KEY_RETRY_FAIL_TTL_HOURS);
+        int retryFailTtlHours;
+        try {
+            retryFailTtlHours = Integer.parseInt(retryFailTtlStr);
+            if (retryFailTtlHours < 0) {
+                retryFailTtlHours = 0;
+            }
+        } catch (NumberFormatException e) {
+            retryFailTtlHours = 0;
+        }
+
+        // 5. 清理过期的原始请求数据（同时处理普通记录与重试/失败记录）
+        if (ttlHours > 0 || retryFailTtlHours > 0) {
+            log.debug("开始清理原始请求数据：普通TTL={}h, 重试/失败TTL={}h", ttlHours, retryFailTtlHours);
             try {
-                requestLogService.cleanExpiredRequestData(ttlHours);
+                requestLogService.cleanExpiredRequestData(ttlHours, retryFailTtlHours);
             } catch (Exception e) {
                 log.error("原始请求数据清理失败", e);
             }

@@ -4,6 +4,7 @@ export interface SystemConfig {
   log_retention_days: string
   log_cleanup_enabled: string
   request_body_ttl_hours: string
+  retry_fail_ttl_hours: string
 }
 
 export const systemApi = {
