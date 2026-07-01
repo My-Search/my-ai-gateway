@@ -488,7 +488,15 @@ function buildRequestBody() {
         }
         return { role: 'user', content }
       }
-      return { role: m.role === 'user' ? 'user' : 'assistant', content: m.content }
+      // DeepSeek thinking mode: assistant 的 reasoning_content 必须传回
+      if (m.role === 'assistant') {
+        const assistantMsg: Record<string, any> = { role: 'assistant', content: m.content }
+        if (m.reasoningContent) {
+          assistantMsg.reasoning_content = m.reasoningContent
+        }
+        return assistantMsg
+      }
+      return { role: 'user', content: m.content }
     }),
     temperature: temperature.value,
     max_tokens: maxTokens.value

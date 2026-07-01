@@ -178,8 +178,8 @@ public class ModelService {
      * 切换模型的关联模式。
      * <p>
      * 处理流程：
-     * - self_add → inherit：删除本模型自有的 rels（用户自定义的关联不再生效），设置 inheritFromModelId
-     * - inherit → self_add：把当前生效的 rels（来自源模型）复制为本模型的自有 rels，使它们可被修改
+     * - self_add → inherit：保留本模型自有的 rels（仅切换模式，切回时恢复），设置 inheritFromModelId
+     * - inherit → self_add：恢复为之前保留的自有 rels（之前自添加的 rels 切走时未被删除）
      * - 同模式切换：仅当两端都是 inherit 且源不同时才允许切换源；同源则视为无操作
      * </p>
      *
@@ -214,28 +214,12 @@ public class ModelService {
                 throw new RuntimeException("指定的源模型会形成循环继承");
             }
 
-            // self_add → inherit：丢弃自有 rels
-            if (!Model.RelMode.INHERIT.equals(currentMode)) {
-                relMapper.delete(new LambdaQueryWrapper<ModelChannelRel>()
-                        .eq(ModelChannelRel::getModelId, modelId));
-            }
+            // self_add → inherit：保留自有 rels（仅切换模式，切回时恢复）
             // inherit → inherit：仅更新源
             model.setRelMode(Model.RelMode.INHERIT);
             model.setInheritFromModelId(sourceModelId);
         } else if (Model.RelMode.SELF_ADD.equals(newMode)) {
-            // inherit → self_add：把当前生效的 rels 复制为本模型的自有 rels
-            if (Model.RelMode.INHERIT.equals(currentMode) && model.getInheritFromModelId() != null) {
-                List<ModelChannelRel> sourceRels = resolveRels(model.getInheritFromModelId(), new java.util.HashSet<>());
-                int order = 0;
-                for (ModelChannelRel sr : sourceRels) {
-                    // 复制为新 rels（id 置空使其成为新增行）
-                    ModelChannelRel copy = new ModelChannelRel(modelId, sr.getChannelModelId());
-                    copy.setSortOrder(order++);
-                    copy.setEnabled(sr.getEnabled() == null ? 1 : sr.getEnabled());
-                    copy.setWeight(sr.getWeight() == null ? 1 : sr.getWeight());
-                    relMapper.insert(copy);
-                }
-            }
+            // inherit → self_add：恢复为之前保留的自有 rels（之前自添加的 rels 未被删除）
             model.setRelMode(Model.RelMode.SELF_ADD);
             model.setInheritFromModelId(null);
         } else {

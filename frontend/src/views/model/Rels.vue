@@ -474,7 +474,7 @@ async function saveOrder() {
 
 /* ---------- 模式切换 ----------
  * 流程设计：
- * - 切到 self_add：弹模式确认框，确认后调 setRelMode('self_add') → 源 rels 复制为自有 rels
+ * - 切到 self_add：弹模式确认框，确认后调 setRelMode('self_add') → 切回时恢复之前保留的自有 rels
  * - 切到 inherit：分两种情况
  *   1) 已有继承源（model.inheritFromModelId）：弹模式确认框，确认后沿用旧源
  *   2) 没有继承源：跳过模式确认框，直接进源选择器，选源后调 setRelMode('inherit', sourceId)

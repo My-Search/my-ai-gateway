@@ -266,10 +266,8 @@ public class MessageTransformer {
             if (msg.getName() != null) {
                 msgNode.put("name", msg.getName());
             }
-            // DeepSeek thinking mode：assistant 角色的 reasoning_content 必须传回
-            if ("assistant".equals(msg.getRole()) && msg.getReasoningContent() != null) {
-                msgNode.put("reasoning_content", msg.getReasoningContent());
-            }
+            // 非 OpenAI 标准字段补丁（如 DeepSeek reasoning_content）
+            applyDeepSeekReasoningContentPatch(msgNode, msg, req);
         }
 
         if (req.getTemperature() != null) root.put("temperature", req.getTemperature());
@@ -628,6 +626,39 @@ public class MessageTransformer {
             if (block.has("type") && "tool_result".equals(block.get("type").asText())) return true;
         }
         return false;
+    }
+
+    /**
+     * 非 OpenAI 标准字段补丁
+     *
+     * <p>处理 DeepSeek 系列模型特有的 reasoning_content 字段：</p>
+     * <ol>
+     *   <li>如果 assistant 消息已携带 reasoning_content，直接透传；</li>
+     *   <li>如果目标模型为 DeepSeek（大小写不敏感）且启用了 reasoning_effort，
+     *       为历史 assistant 消息补充空字符串 {@code ""}，以通过 DeepSeek API 校验。</li>
+     * </ol>
+     *
+     * <p>此逻辑仅对 assistant 角色生效，其他角色跳过。</p>
+     *
+     * @param msgNode 当前 assistant 消息的 JSON 节点（会被原地修改）
+     * @param msg     当前内部消息对象
+     * @param req     内部请求对象，含模型名和 reasoning_effort 信息
+     */
+    private void applyDeepSeekReasoningContentPatch(ObjectNode msgNode, InternalMessage msg, InternalRequest req) {
+        if (!"assistant".equals(msg.getRole())) return;
+
+        // 消息自身携带了 reasoning_content → 直接透传
+        if (msg.getReasoningContent() != null) {
+            msgNode.put("reasoning_content", msg.getReasoningContent());
+            return;
+        }
+
+        // DeepSeek + reasoning_effort 启用 → 历史 assistant 消息补空串
+        String model = req.getModel();
+        if (model != null && model.toLowerCase(Locale.ROOT).contains("deepseek")
+                && req.getReasoningEffort() != null && !req.getReasoningEffort().isEmpty()) {
+            msgNode.put("reasoning_content", "");
+        }
     }
 
     private String escapeJson(String s) {

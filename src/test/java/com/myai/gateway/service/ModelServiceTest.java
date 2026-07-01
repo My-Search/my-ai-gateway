@@ -13,7 +13,6 @@ import com.myai.gateway.mapper.ModelMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 
 import java.util.List;
 
@@ -217,17 +216,15 @@ class ModelServiceTest {
     class SetRelMode {
 
         @Test
-        void selfAddToInherit_deletesOwnRelsAndSetsInheritSource() {
+        void selfAddToInherit_preservesOwnRelsAndSetsInheritSource() {
             Model model = newSelfAddModel(1L, "m");
             when(modelMapper.selectById(1L)).thenReturn(model);
             when(modelMapper.selectById(99L)).thenReturn(newSelfAddModel(99L, "source"));
-            // rels owned by model 1L should be deleted
-            when(relMapper.delete(any(LambdaQueryWrapper.class))).thenReturn(2);
 
             Model updated = service.setRelMode(1L, "inherit", 99L);
 
-            // 验证删除自己 rels 被调用一次
-            verify(relMapper, times(1)).delete(any(LambdaQueryWrapper.class));
+            // 验证不再删除自己 rels（保留以供切回时恢复）
+            verify(relMapper, never()).delete(any(LambdaQueryWrapper.class));
 
             // 验证更新字段
             assertThat(updated.getRelMode()).isEqualTo("inherit");
@@ -236,51 +233,17 @@ class ModelServiceTest {
         }
 
         @Test
-        void inheritToSelfAdd_copiesSourceRelsAsOwnRels() {
-            // 源模型有 2 个 rel
-            Model source = newSelfAddModel(99L, "source");
-            ModelChannelRel sr1 = newRel(9001L, 99L, 1001L, 0);
-            ModelChannelRel sr2 = newRel(9002L, 99L, 1002L, 1);
-            ChannelModel cm1 = new ChannelModel(10L, "gpt-4o", "gpt-4o");
-            cm1.setId(1001L);
-            Channel ch1 = new Channel();
-            ch1.setId(10L);
-            ch1.setName("OpenAI");
-            ch1.setEnabled(1);
-            ChannelModel cm2 = new ChannelModel(20L, "claude", "claude");
-            cm2.setId(1002L);
-            Channel ch2 = new Channel();
-            ch2.setId(20L);
-            ch2.setName("Anthropic");
-            ch2.setEnabled(1);
-
-            // 子模型当前是 inherit 模式
+        void inheritToSelfAdd_doesNotCopyRels_restoresPreservedOnes() {
+            // 子模型当前是 inherit 模式，之前自添加的 rels 已被保留在 DB 中（未删除）
             Model child = newInheritModel(1L, "child", 99L);
             when(modelMapper.selectById(1L)).thenReturn(child);
-            when(modelMapper.selectById(99L)).thenReturn(source);
-            // 解析源 rels：第二次会按 modelId=99L 查
-            when(relMapper.selectList(any(LambdaQueryWrapper.class)))
-                    .thenAnswer(inv -> List.of(sr1, sr2));
-            when(channelModelMapper.selectById(1001L)).thenReturn(cm1);
-            when(channelModelMapper.selectById(1002L)).thenReturn(cm2);
-            when(channelMapper.selectById(10L)).thenReturn(ch1);
-            when(channelMapper.selectById(20L)).thenReturn(ch2);
 
             Model updated = service.setRelMode(1L, "self_add", null);
 
-            // 验证插入了 2 个新 rels，modelId 改为子模型自己
-            ArgumentCaptor<ModelChannelRel> insertCaptor = ArgumentCaptor.forClass(ModelChannelRel.class);
-            verify(relMapper, times(2)).insert(insertCaptor.capture());
-            List<ModelChannelRel> inserted = insertCaptor.getAllValues();
-            assertThat(inserted).hasSize(2);
-            assertThat(inserted.get(0).getModelId()).isEqualTo(1L);
-            assertThat(inserted.get(0).getChannelModelId()).isEqualTo(1001L);
-            assertThat(inserted.get(0).getSortOrder()).isEqualTo(0);
-            assertThat(inserted.get(1).getModelId()).isEqualTo(1L);
-            assertThat(inserted.get(1).getChannelModelId()).isEqualTo(1002L);
-            assertThat(inserted.get(1).getSortOrder()).isEqualTo(1);
+            // 验证没有复制源模型的 rels（因为保留的自有 rels 仍在 DB 中）
+            verify(relMapper, never()).insert(any(ModelChannelRel.class));
 
-            // 验证更新
+            // 验证更新：恢复为 self_add，清除继承源
             assertThat(updated.getRelMode()).isEqualTo("self_add");
             assertThat(updated.getInheritFromModelId()).isNull();
         }
