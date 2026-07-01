@@ -1,6 +1,18 @@
-/* My AI Gateway - Global Styles (Dark/Light Theme) */
+/* My AI Gateway - Global Styles (Dark/Light Theme)
+ *
+ * Color system ported from FreeLLMAPI (oklch color space) for
+ * accurate, vibrant hues that stay consistent across themes.
+ *
+ * ── Token architecture ──
+ *   :root  → shared tokens + light-theme defaults
+ *   [data-theme="dark"] → dark-theme overrides
+ *   .theme-transitioning → smooth 0.3s transitions on theme-affected props
+ *
+ * Components reference the same variable names as before, so no
+ * existing component code needs to change.
+ */
 
-/* ── Shared tokens ── */
+/* ── Shared tokens (independent of light/dark) ── */
 :root {
   --sidebar-width: 240px;
   --header-height: 56px;
@@ -10,6 +22,36 @@
   --accent-yellow: #e5c07b;
   --accent-purple: #c678dd;
   --accent-cyan: #56b6c2;
+  --radius: 0.5rem;
+}
+
+/* ── Light theme (default) ── */
+:root {
+  --bg-primary: oklch(0.995 0 0);
+  --bg-secondary: oklch(1 0 0);
+  --bg-tertiary: oklch(0.97 0 0);
+  --bg-hover: oklch(0.93 0 0);
+  --border-color: oklch(0.92 0 0);
+  --text-primary: oklch(0.18 0 0);
+  --text-secondary: oklch(0.52 0 0);
+  --text-muted: oklch(0.65 0 0);
+
+  --foreground: oklch(0.18 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.18 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.18 0 0);
+  --primary: oklch(0.22 0 0);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.22 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.52 0 0);
+  --accent: oklch(0.96 0 0);
+  --accent-foreground: oklch(0.22 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --input: oklch(0.92 0 0);
+  --ring: oklch(0.55 0 0);
 }
 
 /* ── Dark theme (pure deep black) ── */
@@ -22,20 +64,40 @@
   --text-primary: #f5f5f5;
   --text-secondary: #a3a3a3;
   --text-muted: #6b6b6b;
+
+  --foreground: #f5f5f5;
+  --card: #0a0a0a;
+  --card-foreground: #f5f5f5;
+  --popover: #0a0a0a;
+  --popover-foreground: #f5f5f5;
+  --primary: #f5f5f5;
+  --primary-foreground: #000000;
+  --secondary: #141414;
+  --secondary-foreground: #f5f5f5;
+  --muted: #141414;
+  --muted-foreground: #a3a3a3;
+  --accent: #1e1e1e;
+  --accent-foreground: #f5f5f5;
+  --destructive: #e06c75;
+  --input: #282828;
+  --ring: #6b6b6b;
 }
 
-/* ── Light theme ── */
-[data-theme="light"] {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f2f2f7;
-  --bg-tertiary: #e5e5ea;
-  --bg-hover: #c7c7cc;
-  --border-color: #b8b8be;
-  --text-primary: #1c1c1e;
-  --text-secondary: #48484a;
-  --text-muted: #8e8e93;
+/* ── Smooth theme transitions ──
+ * Applied class by theme store only during actual toggles to avoid
+ * flash on initial page load. */
+.theme-transitioning,
+.theme-transitioning *,
+.theme-transitioning *::before,
+.theme-transitioning *::after {
+  /* !important — overrides component-level transitions during theme switch */
+  transition: background-color 0.3s ease,
+              border-color 0.25s ease,
+              color 0.3s ease,
+              box-shadow 0.3s ease !important;
 }
 
+/* ── Base reset ── */
 * {
   margin: 0;
   padding: 0;
@@ -48,6 +110,8 @@ body {
   color: var(--text-primary);
   min-height: 100vh;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 a {
@@ -55,7 +119,7 @@ a {
   color: inherit;
 }
 
-/* Layout */
+/* ── Layout ── */
 .layout {
   display: flex;
   min-height: 100vh;
@@ -75,18 +139,13 @@ a {
   padding: 24px;
 }
 
-/* Card */
+/* ── Card ── */
 .card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 10px;
   padding: 20px;
   margin-bottom: 16px;
-  transition: border-color 0.2s;
-}
-
-.card:hover {
-  border-color: var(--bg-hover);
 }
 
 .card-header {
@@ -109,7 +168,7 @@ a {
   gap: 8px;
 }
 
-/* Badge */
+/* ── Badge ── */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -139,7 +198,7 @@ a {
   color: var(--accent-yellow);
 }
 
-/* Buttons */
+/* ── Buttons ── */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -218,7 +277,7 @@ a {
   cursor: not-allowed;
 }
 
-/* Tables */
+/* ── Tables ── */
 .table-container {
   overflow-x: auto;
 }
@@ -254,7 +313,7 @@ table tr:last-child td {
   border-bottom: none;
 }
 
-/* Forms */
+/* ── Forms ── */
 .form-group {
   margin-bottom: 16px;
 }
@@ -328,7 +387,6 @@ textarea.form-control {
 }
 select.form-input {
   cursor: pointer;
-  /* 用 SVG 内联箭头，避免依赖第三方图标库；颜色随主题切换 */
   appearance: none;
   -webkit-appearance: none;
   padding-right: 28px;
@@ -366,7 +424,7 @@ select.form-input option {
   margin-top: 4px;
 }
 
-/* Alerts */
+/* ── Alerts ── */
 .alert {
   padding: 12px 16px;
   border-radius: 6px;
@@ -395,7 +453,7 @@ select.form-input option {
   color: var(--accent-blue);
 }
 
-/* Action bar */
+/* ── Action bar ── */
 .action-bar {
   display: flex;
   align-items: center;
@@ -416,7 +474,7 @@ select.form-input option {
   gap: 8px;
 }
 
-/* Status */
+/* ── Status ── */
 .status-dot {
   display: inline-block;
   width: 8px;
@@ -434,7 +492,7 @@ select.form-input option {
   background: var(--text-muted);
 }
 
-/* Model tag */
+/* ── Model tag ── */
 .model-tag {
   display: inline-block;
   padding: 2px 8px;
@@ -446,11 +504,11 @@ select.form-input option {
   margin: 2px;
 }
 
-/* Grid helpers */
+/* ── Grid helpers ── */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 
-/* Margin helpers */
+/* ── Margin helpers ── */
 .mt-1 { margin-top: 4px; }
 .mt-2 { margin-top: 8px; }
 .mt-3 { margin-top: 12px; }
@@ -459,14 +517,14 @@ select.form-input option {
 .mb-3 { margin-bottom: 12px; }
 .mb-4 { margin-bottom: 16px; }
 
-/* Empty state */
+/* ── Empty state ── */
 .empty-state {
   text-align: center;
   padding: 40px 20px;
   color: var(--text-muted);
 }
 
-/* Scrollbar */
+/* ── Scrollbar ── */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -485,7 +543,7 @@ select.form-input option {
   background: var(--text-muted);
 }
 
-/* Responsive */
+/* ── Responsive ── */
 @media (max-width: 768px) {
   .main-content {
     margin-left: 0;

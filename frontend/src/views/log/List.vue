@@ -31,10 +31,11 @@
       </div>
     </div>
 
-    <div v-if="!usageChartData || usageChartData.models.length === 0" class="usage-history-empty">
-      {{ t('log.chart.empty') }}
-    </div>
-    <div v-else class="chart-wrapper" @mouseleave="hideUsageTooltip">
+    <div class="chart-wrapper" @mouseleave="hideUsageTooltip">
+      <!-- 无数据时叠加空状态提示，图表骨架依然可见 -->
+      <div v-if="!usageChartData || usageChartData.models.length === 0" class="chart-empty-overlay">
+        {{ t('log.chart.empty') }}
+      </div>
       <svg :viewBox="`0 0 ${CHART_SVG_WIDTH} ${CHART_SVG_HEIGHT}`" class="chart-svg" preserveAspectRatio="none">
         <!-- Y 网格线 + 刻度 -->
         <g class="chart-y-axis">
@@ -74,8 +75,8 @@
         </g>
       </svg>
 
-      <!-- 图例 -->
-      <div class="chart-legend">
+      <!-- 图例（无数据时隐藏） -->
+      <div v-if="usageChartData?.models?.length" class="chart-legend">
         <div v-for="m in usageChartData.models" :key="`leg-${m}`" class="chart-legend-item">
           <span class="chart-legend-swatch" :style="{ background: modelColor(m) }"></span>
           <span class="chart-legend-name">{{ m }}</span>
@@ -378,10 +379,14 @@ function niceStep(raw: number): number {
   return nice * base
 }
 
-/** Y 轴 5 个等距刻度（0/25/50/75/100%），无数据时仅显示 0。 */
+/** Y 轴 5 个等距刻度（0/25/50/75/100%），无数据时仍显示 5 条网格线让图表骨架可见。 */
 const chartYAxis = computed<{ value: number; y: number }[]>(() => {
   if (!usageChartData.value || usageChartData.value.maxValue === 0) {
-    return [{ value: 0, y: CHART_PLOT_BOTTOM }]
+    // 无数据时显示 0-4 共 5 条网格线，让图表框架依然可见
+    return [0, 1, 2, 3, 4].map(i => ({
+      value: i,
+      y: CHART_PLOT_BOTTOM - (i / 4) * CHART_PLOT_HEIGHT,
+    }))
   }
   const max = usageChartData.value.maxValue
   const step = niceStep(max / 4)
@@ -1317,12 +1322,23 @@ onUnmounted(() => {
   max-width: 200px;
 }
 
-.usage-history-loading,
-.usage-history-empty {
+.usage-history-loading {
   text-align: center;
   padding: 60px 20px;
   color: var(--text-muted);
   font-size: 13px;
+}
+/* 图表空状态覆盖层：叠加在图表 SVG 之上，不隐藏图表骨架 */
+.chart-empty-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  pointer-events: none;
+  z-index: 5;
 }
 .usage-history-loading .loading-spinner {
   display: inline-block;
