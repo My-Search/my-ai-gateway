@@ -5,10 +5,7 @@ import com.myai.gateway.entity.RequestLog;
 import com.myai.gateway.mapper.RequestLogMapper;
 import org.springframework.stereotype.Service;
 
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.YearMonth;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -170,6 +167,108 @@ public class StatsService {
             }
             result.add(day);
         }
+        return result;
+    }
+
+    /**
+     * 获取今日每10分钟请求趋势（折线图数据）
+     * <p>
+     * 支持三种模式：
+     * <ul>
+     *   <li>all — 全部请求，拆分为成功/失败两条线</li>
+     *   <li>entry — 按入口模型分组，每个模型一条线</li>
+     *   <li>channel — 按渠道模型分组，每个渠道模型一条线</li>
+     * </ul>
+     * 返回全天 144 个时间桶（00:00, 00:10, ..., 23:50）的请求数，缺省桶补 0。
+     * </p>
+     */
+    public Map<String, Object> getTodayHourlyTrend(String mode) {
+        // 使用 Asia/Shanghai 时区计算今日范围，因为 created_at 存储为 UTC
+        // 将上海时区的今日起止转换为 UTC 用于 SQL WHERE
+        ZoneId shanghai = ZoneId.of("Asia/Shanghai");
+        LocalDate todayInShanghai = LocalDate.now(shanghai);
+        LocalDateTime todayStart = todayInShanghai.atStartOfDay().atZone(shanghai).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+        LocalDateTime tomorrowStart = todayInShanghai.plusDays(1).atStartOfDay().atZone(shanghai).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+
+        // 预填 144 个时间桶标签 ["00:00", "00:10", ..., "23:50"]
+        int bucketCount = 24 * 6; // 144
+        String[] buckets = new String[bucketCount];
+        Map<String, Integer> bucketIndex = new HashMap<>(bucketCount);
+        for (int i = 0; i < bucketCount; i++) {
+            String label = String.format("%02d:%02d", i / 6, (i % 6) * 10);
+            buckets[i] = label;
+            bucketIndex.put(label, i);
+        }
+
+        Map<String, long[]> seriesMap = new LinkedHashMap<>();
+        if ("entry".equals(mode)) {
+            List<Map<String, Object>> rows = requestLogMapper.selectTodayBucketEntryModelTrend(todayStart, tomorrowStart);
+            for (Map<String, Object> row : rows) {
+                String bucket = (String) row.get("bucket");
+                Integer idx = bucketIndex.get(bucket);
+                if (idx == null) continue;
+                String model = (String) row.get("model_name");
+                long requests = toLong(row.get("requests"));
+                if (model == null || model.isEmpty()) continue;
+                seriesMap.computeIfAbsent(model, k -> new long[bucketCount])[idx] += requests;
+            }
+        } else if ("channel".equals(mode)) {
+            List<Map<String, Object>> rows = requestLogMapper.selectTodayBucketChannelModelTrend(todayStart, tomorrowStart);
+            for (Map<String, Object> row : rows) {
+                String bucket = (String) row.get("bucket");
+                Integer idx = bucketIndex.get(bucket);
+                if (idx == null) continue;
+                String channelName = (String) row.get("channel_name");
+                String modelName = (String) row.get("name");
+                long requests = toLong(row.get("requests"));
+                String key = channelName != null ? channelName + "/" + modelName : modelName;
+                if (modelName == null || modelName.isEmpty()) continue;
+                seriesMap.computeIfAbsent(key, k -> new long[bucketCount])[idx] += requests;
+            }
+        } else {
+            // all 模式 — 拆分为成功/失败两条线
+            List<Map<String, Object>> rows = requestLogMapper.selectTodayBucketTrend(todayStart, tomorrowStart);
+            long[] total = new long[bucketCount];
+            long[] success = new long[bucketCount];
+            for (Map<String, Object> row : rows) {
+                String bucket = (String) row.get("bucket");
+                Integer idx = bucketIndex.get(bucket);
+                if (idx == null) continue;
+                total[idx] += toLong(row.get("requests"));
+                success[idx] += toLong(row.get("success"));
+            }
+            long[] fail = new long[bucketCount];
+            for (int i = 0; i < bucketCount; i++) {
+                fail[i] = Math.max(0, total[i] - success[i]);
+            }
+            seriesMap.put("success", success);
+            seriesMap.put("fail", fail);
+        }
+
+        // 按总请求量降序排列模型
+        List<String> sortedModels = seriesMap.entrySet().stream()
+                .sorted(Map.Entry.<String, long[]>comparingByValue(
+                        Comparator.comparingLong(a -> {
+                            long sum = 0;
+                            for (long v : a) sum += v;
+                            return -sum;
+                        })).reversed())
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toList());
+
+        // 构建 series 输出
+        Map<String, Object> series = new LinkedHashMap<>();
+        for (String model : sortedModels) {
+            long[] values = seriesMap.get(model);
+            List<Long> list = new ArrayList<>(bucketCount);
+            for (long v : values) list.add(v);
+            series.put(model, list);
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("buckets", Arrays.asList(buckets));
+        result.put("mode", mode != null ? mode : "all");
+        result.put("series", series);
         return result;
     }
 

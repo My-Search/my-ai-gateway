@@ -19,5 +19,6 @@ declare module 'vue' {
     SearchableSelect: typeof import('./components/common/SearchableSelect.vue')['default']
     Sidebar: typeof import('./components/layout/Sidebar.vue')['default']
     SvgIcon: typeof import('./components/common/SvgIcon.vue')['default']
+    TodayTrendChart: typeof import('./components/dashboard/TodayTrendChart.vue')['default']
   }
 }

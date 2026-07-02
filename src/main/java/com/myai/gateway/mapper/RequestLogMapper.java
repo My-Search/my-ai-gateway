@@ -13,6 +13,49 @@ import java.util.Map;
 @Mapper
 public interface RequestLogMapper extends BaseMapper<RequestLog> {
 
+    // ==================== Dashboard 今日10分钟级趋势 ====================
+
+    /**
+     * 今日全部请求每10分钟聚合（trace-level 去重）
+     * 返回 { bucket: "12:00", requests: long, success: long }
+     */
+    @Select("SELECT " +
+            "printf('%02d:%02d', CAST(STRFTIME('%H', DATETIME(created_at, '+8 hours')) AS INTEGER), (CAST(STRFTIME('%M', DATETIME(created_at, '+8 hours')) AS INTEGER) / 10) * 10) as bucket, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success " +
+            "FROM request_logs WHERE created_at >= #{since} AND created_at < #{until} " +
+            "GROUP BY bucket ORDER BY bucket ASC")
+    List<Map<String, Object>> selectTodayBucketTrend(@Param("since") LocalDateTime since,
+                                                      @Param("until") LocalDateTime until);
+
+    /**
+     * 今日按入口模型每10分钟聚合（trace-level 去重）
+     * 返回 { bucket: "12:00", model_name, requests: long }
+     */
+    @Select("SELECT " +
+            "printf('%02d:%02d', CAST(STRFTIME('%H', DATETIME(created_at, '+8 hours')) AS INTEGER), (CAST(STRFTIME('%M', DATETIME(created_at, '+8 hours')) AS INTEGER) / 10) * 10) as bucket, " +
+            "model_name, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests " +
+            "FROM request_logs WHERE created_at >= #{since} AND created_at < #{until} " +
+            "AND model_name IS NOT NULL AND model_name != '' " +
+            "GROUP BY bucket, model_name ORDER BY bucket ASC")
+    List<Map<String, Object>> selectTodayBucketEntryModelTrend(@Param("since") LocalDateTime since,
+                                                                @Param("until") LocalDateTime until);
+
+    /**
+     * 今日按渠道模型每10分钟聚合（trace-level 去重）
+     * 返回 { bucket: "12:00", channel_name, name: model_name, requests: long }
+     */
+    @Select("SELECT " +
+            "printf('%02d:%02d', CAST(STRFTIME('%H', DATETIME(created_at, '+8 hours')) AS INTEGER), (CAST(STRFTIME('%M', DATETIME(created_at, '+8 hours')) AS INTEGER) / 10) * 10) as bucket, " +
+            "channel_name, channel_model_name as name, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests " +
+            "FROM request_logs WHERE created_at >= #{since} AND created_at < #{until} " +
+            "AND channel_model_name IS NOT NULL AND channel_model_name != '' " +
+            "GROUP BY bucket, channel_name, channel_model_name ORDER BY bucket ASC")
+    List<Map<String, Object>> selectTodayBucketChannelModelTrend(@Param("since") LocalDateTime since,
+                                                                  @Param("until") LocalDateTime until);
+
     /**
      * 分页获取去重后的 traceId
      */

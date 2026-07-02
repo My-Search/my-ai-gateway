@@ -231,6 +231,17 @@ public class AdminApiController {
         return ResponseEntity.ok(stats);
     }
 
+    /**
+     * 获取今日小时级请求趋势（折线图数据）
+     *
+     * @param mode 趋势模式：all（全部，默认）/ entry（入口模型）/ channel（渠道模型）
+     */
+    @GetMapping(value = "/dashboard/today-trend", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> todayTrend(
+            @RequestParam(defaultValue = "all") String mode) {
+        return ResponseEntity.ok(statsService.getTodayHourlyTrend(mode));
+    }
+
     // ==================== Channels ====================
 
     @GetMapping(value = "/channels", produces = "application/json;charset=UTF-8")

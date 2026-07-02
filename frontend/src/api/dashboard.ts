@@ -37,8 +37,17 @@ export interface RankingPeriodParams {
   modelRankPeriod?: string
 }
 
+export interface TodayTrendData {
+  buckets: string[]          // ["00:00", "00:10", ..., "23:50"]
+  mode: 'all' | 'entry' | 'channel'
+  series: Record<string, number[]>   // { "success": [0, 0, ...], "fail": [0, 0, ...] } or { "模型名": [0, 0, ...] }
+}
+
 export const dashboardApi = {
   getStats(params?: RankingPeriodParams) {
     return http.get<DashboardStats>('/dashboard/stats', { params })
+  },
+  getTodayTrend(mode: 'all' | 'entry' | 'channel' = 'all') {
+    return http.get<TodayTrendData>('/dashboard/today-trend', { params: { mode } })
   }
 }

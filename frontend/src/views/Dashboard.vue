@@ -1,5 +1,8 @@
 <template>
   <div>
+    <!-- 今日请求趋势 -->
+    <TodayTrendChart />
+
     <div class="stats-grid">
       <div class="stat-card">
         <div class="stat-icon" style="background:rgba(88,166,255,0.1);color:var(--accent-blue);">
@@ -93,29 +96,6 @@
     <div class="grid-2" style="margin-top:20px;">
       <div class="card">
         <div class="card-header">
-          <div class="card-title"><SvgIcon name="chart" :size="18" /> {{ t('dashboard.trend7Day') }}</div>
-        </div>
-        <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
-          <span class="loading-spinner"></span> {{ t('common.loading') }}
-        </div>
-        <div class="trend-chart" v-else-if="stats.dailyTrend?.length">
-          <div class="trend-bars">
-            <div class="trend-bar-col" v-for="day in stats.dailyTrend" :key="day.label">
-              <div class="trend-bar-wrap">
-                <div class="trend-bar" :style="{ height: maxReq > 0 ? (day.requests / maxReq * 100) + '%' : '2px' }"
-                     :title="day.label + ': ' + day.requests + ' ' + t('dashboard.requests')">
-                </div>
-              </div>
-              <div class="trend-label">{{ day.label }}</div>
-              <div class="trend-count">{{ day.requests }}</div>
-            </div>
-          </div>
-        </div>
-        <div v-else style="text-align:center;padding:30px;color:var(--text-muted);">{{ t('dashboard.noData') }}</div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
           <div class="card-title"><SvgIcon name="rank" :size="18" /> {{ t('dashboard.channelRank') }}</div>
           <div class="period-switch">
             <button :class="['period-btn', channelRankPeriod === 'today' ? 'active' : '']" @click="channelRankPeriod = 'today'">{{ t('dashboard.periodToday') }}</button>
@@ -150,9 +130,7 @@
           </div>
         </div>
       </div>
-    </div>
 
-    <div class="grid-2" style="margin-top:16px;">
       <div class="card">
         <div class="card-header">
           <div class="card-title"><SvgIcon name="model" :size="18" /> {{ t('dashboard.modelRank') }}</div>
@@ -192,23 +170,23 @@
           </div>
         </div>
       </div>
+    </div>
 
-      <div class="card">
-        <div class="card-header">
-          <div class="card-title"><SvgIcon name="clock" :size="18" /> {{ t('dashboard.recentActivity') }}</div>
-          <router-link to="/admin/log/list" class="btn btn-sm btn-secondary">{{ t('dashboard.viewAll') }}</router-link>
-        </div>
-        <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
-          <span class="loading-spinner"></span> {{ t('common.loading') }}
-        </div>
-        <div v-else-if="!stats.recentLogs?.length" style="text-align:center;padding:30px;color:var(--text-muted);">{{ t('dashboard.noActivity') }}</div>
-        <div class="activity-list" v-else>
-          <div class="activity-item" v-for="log in stats.recentLogs" :key="log.id">
-            <span :class="'phase phase-' + log.phase">{{ phaseLabel(log.phase) }}</span>
-            <code class="model-tag" style="font-size:11px;">{{ log.modelName }}</code>
-            <span class="activity-channel">{{ log.channelName }}</span>
-            <span class="activity-time">{{ formatTime(log.createdAt) }}</span>
-          </div>
+    <div class="card" style="margin-top:16px;">
+      <div class="card-header">
+        <div class="card-title"><SvgIcon name="clock" :size="18" /> {{ t('dashboard.recentActivity') }}</div>
+        <router-link to="/admin/log/list" class="btn btn-sm btn-secondary">{{ t('dashboard.viewAll') }}</router-link>
+      </div>
+      <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
+        <span class="loading-spinner"></span> {{ t('common.loading') }}
+      </div>
+      <div v-else-if="!stats.recentLogs?.length" style="text-align:center;padding:30px;color:var(--text-muted);">{{ t('dashboard.noActivity') }}</div>
+      <div class="activity-list" v-else>
+        <div class="activity-item" v-for="log in stats.recentLogs" :key="log.id">
+          <span :class="'phase phase-' + log.phase">{{ phaseLabel(log.phase) }}</span>
+          <code class="model-tag" style="font-size:11px;">{{ log.modelName }}</code>
+          <span class="activity-channel">{{ log.channelName }}</span>
+          <span class="activity-time">{{ formatTime(log.createdAt) }}</span>
         </div>
       </div>
     </div>
@@ -220,6 +198,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { dashboardApi, type DashboardStats } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
 import { formatLocalTime } from '@/utils/date'
+import TodayTrendChart from '@/components/dashboard/TodayTrendChart.vue'
 
 const { t } = useI18n()
 
@@ -229,11 +208,6 @@ let dashboardRefreshTimer: ReturnType<typeof setInterval> | null = null
 const modelRankTab = ref<'entry' | 'channel'>('entry')
 const channelRankPeriod = ref('today')
 const modelRankPeriod = ref('today')
-
-const maxReq = computed(() => {
-  if (!stats.value.dailyTrend?.length) return 1
-  return Math.max(...stats.value.dailyTrend.map(d => d.requests), 1)
-})
 
 const currentModelRank = computed(() => {
   return modelRankTab.value === 'entry' ? stats.value.modelRank : stats.value.channelModelRank
@@ -315,38 +289,6 @@ onUnmounted(() => {
 .dot-sep { color: var(--text-muted); margin: 0 6px; }
 .stat-hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
 .hint-sep { color: var(--border-color); margin: 0 4px; }
-
-/* Trend chart fill card */
-.grid-2 > .card:first-child {
-  display: flex;
-  flex-direction: column;
-}
-.trend-chart {
-  flex: 1;
-  display: flex;
-  padding: 4px 0;
-  min-height: 100px;
-}
-.trend-bars {
-  flex: 1;
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 0 12px;
-  position: relative;
-  z-index: 1;
-}
-.trend-bar-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; }
-.trend-bar-wrap { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
-.trend-bar {
-  width: 70%;
-  background: linear-gradient(180deg, var(--accent-blue), rgba(88,166,255,0.7));
-  border-radius: 4px 4px 0 0;
-  min-height: 2px;
-  transition: height 0.3s;
-}
-.trend-label { font-size: 12px; color: var(--text-secondary); margin-top: 6px; font-weight: 500; }
-.trend-count { font-size: 11px; color: var(--text-primary); font-weight: 600; }
 
 /* Rank channel card scroll */
 .grid-2 > .card:last-child {
