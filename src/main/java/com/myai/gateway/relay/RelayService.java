@@ -423,19 +423,6 @@ public class RelayService {
                 .onErrorResume(err -> {
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
                     if (attempt < maxAttempts) {
-                        // 重试前检查熔断：若已被其他并发请求熔断，跳过剩余重试，直接让外层重路由
-                        if (isCandidateCircuitBroken(candidate)) {
-                            log.warn("已熔断跳过（候选内重试前检测到熔断）channel={} key={} model={} (第{}次失败后): {}",
-                                    candidate.getChannel().getName(),
-                                    candidate.getChannelApiKey().getKeyName(),
-                                    candidate.getChannelModel().getModelName(),
-                                    attempt, err.getMessage());
-                            // 保留完整错误信息：列表视图依赖 CSS 截断，详情弹框依赖 .dialog-pre 的 max-height + 滚动
-                        String retryErrDetail = err.getMessage() != null ? err.getMessage() : "";
-                        logPhase(traceId, gatewayApiKeyId, candidate, req, "retry",
-                                "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）: " + retryErrDetail, retryIndex, attemptDurationMs);
-                            return Mono.error(err);
-                        }
                         // 400 请求体格式不正确：修复请求后再重试（如剥离 tool 角色消息）
                         InternalRequest retryReq = req;
                         if (err instanceof NonRetryableProviderException nre && nre.getHttpStatus() == 400) {
@@ -697,19 +684,6 @@ public class RelayService {
                 .onErrorResume(err -> {
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
                     if (attempt < maxAttempts) {
-                        // 重试前检查熔断：若已被其他并发请求熔断，跳过剩余重试，直接让外层重路由
-                        if (isCandidateCircuitBroken(candidate)) {
-                            log.warn("已熔断跳过（流式候选内重试前检测到熔断）channel={} key={} model={} (第{}次失败后): {}",
-                                    candidate.getChannel().getName(),
-                                    candidate.getChannelApiKey().getKeyName(),
-                                    candidate.getChannelModel().getModelName(),
-                                    attempt, err.getMessage());
-                            // 保留完整错误信息：列表视图依赖 CSS 截断，详情弹框依赖 .dialog-pre 的 max-height + 滚动
-                            String streamRetryErrDetail = err.getMessage() != null ? err.getMessage() : "";
-                            logPhase(traceId, gatewayApiKeyId, candidate, req, "retry",
-                                    "第 " + attempt + " 次失败后检测到熔断（已熔断跳过）: " + streamRetryErrDetail, retryIndex, attemptDurationMs);
-                            return Flux.error(err);
-                        }
                         // 400 请求体格式不正确：修复请求后再重试（如剥离 tool 角色消息）
                         InternalRequest retryReq = req;
                         if (err instanceof NonRetryableProviderException nre && nre.getHttpStatus() == 400) {

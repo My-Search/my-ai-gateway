@@ -224,6 +224,28 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "AND NOT EXISTS (SELECT 1 FROM request_logs r2 WHERE r2.trace_id = r1.trace_id AND r2.phase = 'success')")
     long countFailedTraces(@Param("since") LocalDateTime since);
 
+    // ==================== 渠道列表用量统计 ====================
+
+    /**
+     * 所有渠道的汇总用量统计（用于渠道列表页展示）
+     * <p>
+     * 在 SQL 层面完成 GROUP BY 聚合，替代原来的全量加载 + Java 4 次流处理，
+     * 仅扫描 phase='success' 的行，按 channel_name 分组聚合。
+     * </p>
+     *
+     * @return List of { channel_name, request_count, prompt_tokens, completion_tokens, total_tokens }
+     */
+    @Select("SELECT channel_name, " +
+            "COUNT(*) as request_count, " +
+            "COALESCE(SUM(COALESCE(prompt_tokens, 0)), 0) as prompt_tokens, " +
+            "COALESCE(SUM(COALESCE(completion_tokens, 0)), 0) as completion_tokens, " +
+            "COALESCE(SUM(COALESCE(total_tokens, 0)), 0) as total_tokens " +
+            "FROM request_logs " +
+            "WHERE phase = 'success' " +
+            "AND channel_name IS NOT NULL AND channel_name != '' " +
+            "GROUP BY channel_name")
+    List<Map<String, Object>> selectChannelSummaryStats();
+
     /**
      * 获取最近 10 个独特 trace 的最新日志条目（trace-level 去重）
      * <p>

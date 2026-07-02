@@ -274,36 +274,25 @@ public class StatsService {
 
     /**
      * 获取所有渠道的汇总用量统计（用于渠道列表页展示）
-     * 按 channel_name 聚合成功请求的 token 用量和请求次数
+     * <p>
+     * 使用 SQL GROUP BY 聚合替代原来的全量加载 + 4 次流处理，
+     * 大幅减少从 request_logs 表扫描的数据量和 Java 堆内存占用。
+     * </p>
      *
      * @return Map: channelName -> { requestCount, promptTokens, completionTokens, totalTokens }
      */
     public Map<String, Map<String, Object>> getChannelSummaryStats() {
-        List<RequestLog> successLogs = requestLogMapper.selectList(
-                new LambdaQueryWrapper<RequestLog>()
-                        .eq(RequestLog::getPhase, "success")
-                        .isNotNull(RequestLog::getChannelName)
-                        .ne(RequestLog::getChannelName, ""));
+        List<Map<String, Object>> rows = requestLogMapper.selectChannelSummaryStats();
 
         Map<String, Map<String, Object>> result = new LinkedHashMap<>();
-        Map<String, Long> requestCounts = successLogs.stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelName, Collectors.counting()));
-        Map<String, Long> promptSums = successLogs.stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelName,
-                        Collectors.summingLong(l -> l.getPromptTokens() != null ? l.getPromptTokens() : 0)));
-        Map<String, Long> completionSums = successLogs.stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelName,
-                        Collectors.summingLong(l -> l.getCompletionTokens() != null ? l.getCompletionTokens() : 0)));
-        Map<String, Long> totalSums = successLogs.stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelName,
-                        Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
-
-        for (String channelName : requestCounts.keySet()) {
+        for (Map<String, Object> row : rows) {
+            String channelName = (String) row.get("channel_name");
+            if (channelName == null || channelName.isEmpty()) continue;
             Map<String, Object> stats = new LinkedHashMap<>();
-            stats.put("requestCount", requestCounts.get(channelName));
-            stats.put("promptTokens", promptSums.getOrDefault(channelName, 0L));
-            stats.put("completionTokens", completionSums.getOrDefault(channelName, 0L));
-            stats.put("totalTokens", totalSums.getOrDefault(channelName, 0L));
+            stats.put("requestCount", toLong(row.get("request_count")));
+            stats.put("promptTokens", toLong(row.get("prompt_tokens")));
+            stats.put("completionTokens", toLong(row.get("completion_tokens")));
+            stats.put("totalTokens", toLong(row.get("total_tokens")));
             result.put(channelName, stats);
         }
         return result;

@@ -259,8 +259,6 @@ public class AdminApiController {
             item.put("sortOrder", ch.getSortOrder());
             item.put("createdAt", ch.getCreatedAt());
             item.put("updatedAt", ch.getUpdatedAt());
-            item.put("apiKeys", ch.getApiKeys());
-            item.put("models", ch.getModels());
             // 附加用量统计
             Map<String, Object> usage = usageStats.get(ch.getName());
             if (usage != null) {
