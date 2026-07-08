@@ -27,6 +27,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -72,6 +73,7 @@ public class RelayService {
     private final TranslatorRegistry translatorRegistry;
     private final StreamContentManager streamContentManager;
     private final LatencyTracker latencyTracker;
+    private final PromptInjectionService promptInjectionService;
 
     /** 流式请求 token 用量累积器：traceId -> [promptTokens, completionTokens, totalTokens] */
     private final ConcurrentHashMap<String, int[]> streamUsageMap = new ConcurrentHashMap<>();
@@ -90,7 +92,8 @@ public class RelayService {
                         MessageTransformer messageTransformer,
                         TranslatorRegistry translatorRegistry,
                         StreamContentManager streamContentManager,
-                        LatencyTracker latencyTracker) {
+                        LatencyTracker latencyTracker,
+                        PromptInjectionService promptInjectionService) {
         this.channelService = channelService;
         this.channelApiKeyService = channelApiKeyService;
         this.apiKeyService = apiKeyService;
@@ -103,6 +106,7 @@ public class RelayService {
         this.translatorRegistry = translatorRegistry;
         this.streamContentManager = streamContentManager;
         this.latencyTracker = latencyTracker;
+        this.promptInjectionService = promptInjectionService;
         // 配置 HttpClient 超时：连接超时 10s、响应超时 60s
         reactor.netty.http.client.HttpClient httpClient = reactor.netty.http.client.HttpClient.create()
                 .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
@@ -121,6 +125,7 @@ public class RelayService {
         Long gatewayApiKeyId = logOriginalRequest(traceId, authHeader, buildOpenaiHeadersJson(authHeader), requestBody);
         return Mono.fromCallable(() -> {
                     InternalRequest req = parseRequest(requestBody, "openai");
+                    applyPromptInjections(req);
                     preprocessMediaInvalidation(req);
                     return req;
                 })
@@ -128,14 +133,12 @@ public class RelayService {
                 .flatMap(req -> executeRelay(traceId, authHeader, gatewayApiKeyId, req, "openai", false));
     }
 
-    /**
-     * Anthropic 兼容：非流式消息
-     */
     public Mono<String> messages(String apiKeyHeader, String requestBody, String anthropicVersion) {
         String traceId = requestLogService.startTrace();
         Long gatewayApiKeyId = logOriginalRequest(traceId, apiKeyHeader, buildAnthropicHeadersJson(apiKeyHeader, anthropicVersion), requestBody);
         return Mono.fromCallable(() -> {
                     InternalRequest req = parseRequest(requestBody, "anthropic");
+                    applyPromptInjections(req);
                     preprocessMediaInvalidation(req);
                     return req;
                 })
@@ -161,6 +164,7 @@ public class RelayService {
         });
         Mono.fromCallable(() -> {
                     InternalRequest req = parseRequest(requestBody, "openai");
+                    applyPromptInjections(req);
                     preprocessMediaInvalidation(req);
                     return req;
                 })
@@ -202,6 +206,7 @@ public class RelayService {
         });
         Mono.fromCallable(() -> {
                     InternalRequest req = parseRequest(requestBody, "anthropic");
+                    applyPromptInjections(req);
                     preprocessMediaInvalidation(req);
                     return req;
                 })
@@ -355,17 +360,15 @@ public class RelayService {
                     return Mono.just(transformed);
                 })
                 .onErrorResume(err -> {
-                    // 若最后一次失败仍是 400（修复后仍无法解决），不触发熔断，只移除候选并重路由
+                    // 400 不触发熔断，不移除消息也不修复请求体，直接重路由到下一个候选
                     if (err instanceof NonRetryableProviderException) {
-                        log.warn("候选返回400（修复后仍失败，不触发熔断，直接重路由）channel={} model={} key={}",
+                        log.warn("候选返回400，不触发熔断，直接重路由 channel={} model={} key={}",
                                 candidate.getChannel().getName(),
                                 candidate.getChannelModel().getModelName(),
                                 candidate.getChannelApiKey().getKeyName());
                         remaining.remove(candidate);
                         log.info("候选失败已移除，准备重路由 - traceId={} 剩余候选数={}", traceId, remaining.size());
-                        // 下一个候选继续使用剥离 tool 消息的请求，避免重复 400
-                        InternalRequest fixedReq = fixRequestFor400(req);
-                        return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, fixedReq, provider, retryIndex + 1, startTime, err.getMessage());
+                        return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, err.getMessage());
                     }
                     // 非 400 错误（超时、5xx、429 等）：触发熔断，重路由到下一候选
                     log.warn("候选失败（重试耗尽）channel={} key={} model={} (已重试{}次): {}",
@@ -422,22 +425,16 @@ public class RelayService {
                 })
                 .onErrorResume(err -> {
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
+                    // 400 不修复请求体，不重试同一候选，直接抛给上层重路由
+                    if (err instanceof NonRetryableProviderException nre && nre.getHttpStatus() == 400) {
+                        return Mono.error(err);
+                    }
                     if (attempt < maxAttempts) {
-                        // 400 请求体格式不正确：修复请求后再重试（如剥离 tool 角色消息）
-                        InternalRequest retryReq = req;
-                        if (err instanceof NonRetryableProviderException nre && nre.getHttpStatus() == 400) {
-                            retryReq = fixRequestFor400(req);
-                            log.warn("候选返回400，修复请求后重试 - traceId={} attempt={}/{} channel={} model={} key={}",
-                                    traceId, attempt, maxAttempts,
-                                    candidate.getChannel().getName(),
-                                    candidate.getChannelModel().getModelName(),
-                                    candidate.getChannelApiKey().getKeyName());
-                        }
                         // 保留完整错误信息：列表视图依赖 CSS 截断，详情弹框依赖 .dialog-pre 的 max-height + 滚动
                         String retryErrDetail2 = err.getMessage() != null ? err.getMessage() : "";
-                        logPhase(traceId, gatewayApiKeyId, candidate, retryReq, "retry",
+                        logPhase(traceId, gatewayApiKeyId, candidate, req, "retry",
                                 "第 " + attempt + " 次失败: " + retryErrDetail2 + "，准备第 " + (attempt + 1) + " 次重试", retryIndex, attemptDurationMs);
-                        return invokeCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, retryReq, candidate, provider,
+                        return invokeCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, req, candidate, provider,
                                 retryIndex, attempt + 1, maxAttempts);
                     }
                     return Mono.error(err);
@@ -595,18 +592,16 @@ public class RelayService {
                     return Flux.error(new RuntimeException("流式候选返回空响应"));
                 }))
                 .onErrorResume(err -> {
-                    // 若最后一次失败仍是 400（修复后仍无法解决），不触发熔断，只移除候选并重路由
+                    // 400 不触发熔断，不移除消息也不修复请求体，直接重路由到下一个候选
                     if (err instanceof NonRetryableProviderException) {
-                        log.warn("流式候选返回400（修复后仍失败，不触发熔断，直接重路由）channel={} model={} key={}",
+                        log.warn("流式候选返回400，不触发熔断，直接重路由 channel={} model={} key={}",
                                 candidate.getChannel().getName(),
                                 candidate.getChannelModel().getModelName(),
                                 candidate.getChannelApiKey().getKeyName());
                         streamContentManager.clearContent(traceId);
                         remaining.remove(candidate);
-                        // 下一个候选继续使用剥离 tool 消息的请求，避免重复 400
-                        InternalRequest fixedReq = fixRequestFor400(req);
                         return Flux.concat(
-                                tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, fixedReq, provider, retryIndex + 1, startTime, internalClient, err.getMessage()));
+                                tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, err.getMessage()));
                     }
                     // 非 400 错误（超时、5xx、429 等）：触发熔断，重路由到下一候选
                     log.warn("流式候选失败（重试耗尽）channel={} key={} model={} (已重试{}次): {}",
@@ -683,24 +678,18 @@ public class RelayService {
                 })
                 .onErrorResume(err -> {
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
+                    // 400 不修复请求体，不重试同一候选，直接抛给上层重路由
+                    if (err instanceof NonRetryableProviderException nre && nre.getHttpStatus() == 400) {
+                        return Flux.error(err);
+                    }
                     if (attempt < maxAttempts) {
-                        // 400 请求体格式不正确：修复请求后再重试（如剥离 tool 角色消息）
+                        // 获取已累积的流式内容，携带到重试请求中
                         InternalRequest retryReq = req;
-                        if (err instanceof NonRetryableProviderException nre && nre.getHttpStatus() == 400) {
-                            retryReq = fixRequestFor400(req);
-                            log.warn("流式候选返回400，修复请求后重试 - traceId={} attempt={}/{} channel={} model={} key={}",
-                                    traceId, attempt, maxAttempts,
-                                    candidate.getChannel().getName(),
-                                    candidate.getChannelModel().getModelName(),
-                                    candidate.getChannelApiKey().getKeyName());
-                        } else {
-                            // 获取已累积的流式内容，携带到重试请求中（非400的常规重试）
-                            String accumulatedContent = streamContentManager.getContent(traceId);
-                            if (accumulatedContent != null && !accumulatedContent.isEmpty()) {
-                                retryReq = buildRequestWithContext(retryReq, accumulatedContent);
-                                log.warn("同一候选重试携带已累积内容 - traceId={} attempt={}/{} 累积长度={}",
-                                        traceId, attempt, maxAttempts, accumulatedContent.length());
-                            }
+                        String accumulatedContent = streamContentManager.getContent(traceId);
+                        if (accumulatedContent != null && !accumulatedContent.isEmpty()) {
+                            retryReq = buildRequestWithContext(retryReq, accumulatedContent);
+                            log.warn("同一候选重试携带已累积内容 - traceId={} attempt={}/{} 累积长度={}",
+                                    traceId, attempt, maxAttempts, accumulatedContent.length());
                         }
                         // 保留完整错误信息：列表视图依赖 CSS 截断，详情弹框依赖 .dialog-pre 的 max-height + 滚动
                             String streamRetryErrDetail2 = err.getMessage() != null ? err.getMessage() : "";
@@ -957,63 +946,6 @@ public class RelayService {
     }
 
     /**
-     * 修复 400 请求：保留完整消息配对，仅移除 tools 定义阻止新工具调用
-     *
-     * <p>DeepSeek 等提供商严格校验 tool ↔ assistant(tool_calls) 的配对关系：
-     * 每条 role=tool 消息的前一条消息必须是包含匹配 tool_calls 的 assistant。
-     * 任何破坏此配对的修改（剥离 tool_calls、删除/转换 tool 消息）都会导致 400。</p>
-     *
-     * <p>修复策略：保持 messages 数组不变，保留完整的工具调用上下文。
-     * 仅检查并补齐个别消息的 content 字段避免序列化缺陷，
-     * tools/tool_choice 等定义保持不变。</p>
-     */
-    private InternalRequest fixRequestFor400(InternalRequest originalReq) {
-        if (originalReq.getMessages() == null || originalReq.getMessages().isEmpty()) {
-            return originalReq;
-        }
-        InternalRequest fixed = new InternalRequest();
-        fixed.setModel(originalReq.getModel());
-        fixed.setStream(originalReq.isStream());
-        fixed.setMaxTokens(originalReq.getMaxTokens());
-        fixed.setTemperature(originalReq.getTemperature());
-        fixed.setTopP(originalReq.getTopP());
-        fixed.setStop(originalReq.getStop());
-        // 保留 tools/tool_choice：400 错误仅因 messages 配对结构引起，与 tools 定义无关
-        fixed.setTools(originalReq.getTools());
-        fixed.setToolChoice(originalReq.getToolChoice());
-        fixed.setSystemPrompt(originalReq.getSystemPrompt());
-        fixed.setOriginalRequestJson(originalReq.getOriginalRequestJson());
-        fixed.setClientApiFormat(originalReq.getClientApiFormat());
-        fixed.setExtraParams(originalReq.getExtraParams());
-        fixed.setContextRetry(originalReq.isContextRetry());
-        fixed.setReasoningEffort(originalReq.getReasoningEffort());
-
-        // 保持 messages 数组完整不变，保留 tool ↔ assistant(tool_calls) 配对
-        List<InternalMessage> fixedMessages = new ArrayList<>();
-        for (InternalMessage msg : originalReq.getMessages()) {
-            InternalMessage copy = new InternalMessage(msg.getRole(), msg.getContent());
-            copy.setContentParts(msg.getContentParts());
-            copy.setName(msg.getName());
-            copy.setToolCallId(msg.getToolCallId());
-            // 保留 tool_calls：tool 消息必须由包含 tool_calls 的 assistant 消息前置
-            copy.setToolCalls(msg.getToolCalls());
-            // DeepSeek thinking mode：assistant 角色的 reasoning_content 必须传回
-            copy.setReasoningContent(msg.getReasoningContent());
-            // 部分提供商要求 content 字段必须存在（不能为 null）
-            // 注意：仅当 contentParts 也为空时才补 ""，避免覆盖多模态 content 数组
-            if (copy.getContent() == null && copy.getContentParts() == null) {
-                copy.setContent("");
-            }
-            fixedMessages.add(copy);
-        }
-
-        fixed.setMessages(fixedMessages);
-        log.info("修复400请求完成 - 原消息数={}, 修复后消息数={}, 保留完整消息配对",
-                originalReq.getMessages().size(), fixedMessages.size());
-        return fixed;
-    }
-
-    /**
      * 转换上游响应为客户端格式
      */
     private String transformResponse(String providerBody, RoutingCandidate candidate,
@@ -1049,23 +981,67 @@ public class RelayService {
 
     /**
      * SSE 字节累积器
+     * <p>
+     * 累积原始字节，仅在提取完整 SSE 事件（按 {@code \n\n} 分隔）时解码为 String。
+     * 避免因 DataBuffer 跨 chunk 分割 UTF-8 多字节字符导致乱码（如"需"的 3 字节被拆分后各自解码成 {@code \uFFFD}）。
+     * </p>
      */
     private static class ByteAccumulator {
-        private final StringBuilder builder = new StringBuilder();
+        private final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 
         public void append(byte[] bytes) {
-            builder.append(new String(bytes, StandardCharsets.UTF_8));
+            try {
+                buffer.write(bytes);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to accumulate bytes", e);
+            }
         }
 
         public List<String> extractCompleteEvents() {
-            String delimiter = "\n\n";
+            byte[] allBytes = buffer.toByteArray();
+            byte[] delimiter = "\n\n".getBytes(StandardCharsets.UTF_8);
+
             List<String> events = new ArrayList<>();
-            int idx;
-            while ((idx = builder.indexOf(delimiter)) >= 0) {
-                events.add(builder.substring(0, idx));
-                builder.delete(0, idx + delimiter.length());
+            int searchStart = 0;
+
+            while (true) {
+                int delimiterPos = indexOf(allBytes, delimiter, searchStart);
+                if (delimiterPos < 0) break;
+
+                // 解码完整事件字节（从 searchStart 到 delimiterPos）为 String
+                int eventLength = delimiterPos - searchStart;
+                if (eventLength > 0) {
+                    String event = new String(allBytes, searchStart, eventLength, StandardCharsets.UTF_8);
+                    events.add(event);
+                }
+
+                searchStart = delimiterPos + delimiter.length;
             }
+
+            // 保留剩余字节（不完整事件数据）到 buffer 中，等待后续数据到达
+            buffer.reset();
+            if (searchStart < allBytes.length) {
+                buffer.write(allBytes, searchStart, allBytes.length - searchStart);
+            }
+
             return events;
+        }
+
+        /**
+         * 在字节数组中查找子串的起始位置
+         */
+        private static int indexOf(byte[] data, byte[] pattern, int start) {
+            for (int i = start; i <= data.length - pattern.length; i++) {
+                boolean found = true;
+                for (int j = 0; j < pattern.length; j++) {
+                    if (data[i + j] != pattern[j]) {
+                        found = false;
+                        break;
+                    }
+                }
+                if (found) return i;
+            }
+            return -1;
         }
     }
 
@@ -1374,6 +1350,94 @@ public class RelayService {
         }
         // 其他错误：保留完整信息，列表视图靠 CSS 截断，详情弹框靠滚动
         return errorMsg;
+    }
+
+    /**
+     * 预处理请求：根据入口模型的 Prompt 注入规则，在消息列表前/后注入自定义消息。
+     * <p>
+     * 注入顺序：
+     * <ol>
+     *   <li>按 {@code injectPosition} 确定注入位置：prepend（消息前）、append（消息后）、replace_system（替换系统消息）</li>
+     *   <li>按 {@code injectRole} 确定角色：system / user / assistant</li>
+     *   <li>按 {@code priority} 排序，priority 越小越先执行</li>
+     * </ol>
+     * 多个注入规则按优先级依次执行，同一个位置的注入按执行顺序排列。
+     * </p>
+     *
+     * @param req 内部请求（会直接修改 messages 列表）
+     */
+    private void applyPromptInjections(InternalRequest req) {
+        Long customModelId = resolveModelId(req.getModel());
+        if (customModelId == null) return;
+
+        List<PromptInjection> rules = promptInjectionService.listEnabledByModelId(customModelId);
+        if (rules == null || rules.isEmpty()) return;
+
+        // 确保 messages 列表存在
+        if (req.getMessages() == null) {
+            req.setMessages(new ArrayList<>());
+        }
+        List<InternalMessage> messages = req.getMessages();
+
+        // 先收集所有 prepend 和 append 规则（需要知道最终顺序）
+        List<InternalMessage> prependMessages = new ArrayList<>();
+        List<InternalMessage> appendMessages = new ArrayList<>();
+        // 处理 replace_system：Service 层已保证每个模型只有一条，直接用单一变量
+        InternalMessage replaceSystemMsg = null;
+
+        for (PromptInjection rule : rules) {
+            InternalMessage injectMsg = new InternalMessage(rule.getInjectRole(), rule.getContent());
+            log.info("应用 Prompt 注入规则: modelId={}, ruleName={}, role={}, position={}",
+                    customModelId, rule.getName(), rule.getInjectRole(), rule.getInjectPosition());
+
+            switch (rule.getInjectPosition()) {
+                case "prepend":
+                    prependMessages.add(injectMsg);
+                    break;
+                case "append":
+                    appendMessages.add(injectMsg);
+                    break;
+                case "replace_system":
+                    // Service 层已保证每个模型只有一条 replace_system 规则
+                    replaceSystemMsg = injectMsg;
+                    break;
+                default:
+                    log.warn("未知的注入位置: {}", rule.getInjectPosition());
+            }
+        }
+
+        // 执行替换系统消息
+        if (replaceSystemMsg != null) {
+            boolean foundSystem = false;
+            for (int i = 0; i < messages.size(); i++) {
+                if ("system".equals(messages.get(i).getRole())) {
+                    messages.set(i, replaceSystemMsg);
+                    foundSystem = true;
+                    log.info("已替换系统消息 - 新角色={}, 内容长度={}",
+                            replaceSystemMsg.getRole(), replaceSystemMsg.getContent().length());
+                    break;
+                }
+            }
+            if (!foundSystem) {
+                // 没有 system 消息时，将 replace_system 规则作为 prepend 注入
+                prependMessages.add(replaceSystemMsg);
+                log.info("未找到系统消息，将 replace_system 规则作为 prepend 注入");
+            }
+        }
+
+        // 按顺序构建新的消息列表：prepend + 原消息 + append
+        List<InternalMessage> newMessages = new ArrayList<>();
+        newMessages.addAll(prependMessages);
+        newMessages.addAll(messages);
+        newMessages.addAll(appendMessages);
+
+        req.setMessages(newMessages);
+
+        if (!prependMessages.isEmpty() || !appendMessages.isEmpty()) {
+            log.info("Prompt 注入完成 - prependCount={}, appendCount={}, 原始消息数={}, 最终消息数={}",
+                    prependMessages.size(), appendMessages.size(),
+                    messages.size(), newMessages.size());
+        }
     }
 
     /**

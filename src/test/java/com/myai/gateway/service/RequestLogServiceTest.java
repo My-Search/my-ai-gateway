@@ -1,8 +1,11 @@
 package com.myai.gateway.service;
 
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.myai.gateway.entity.RequestLog;
 import com.myai.gateway.mapper.RequestLogMapper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -27,6 +30,14 @@ class RequestLogServiceTest {
 
     @BeforeEach
     void setUp() {
+        // 初始化 MyBatis-Plus TableInfoHelper，否则 LambdaQueryWrapper.select(Class, Predicate)
+        // 内部调用 TableInfoHelper.getTableInfo(RequestLog.class) 会返回 null 导致 NPE
+        if (TableInfoHelper.getTableInfo(RequestLog.class) == null) {
+            MapperBuilderAssistant assistant = new MapperBuilderAssistant(
+                    new Configuration(), RequestLog.class.getName());
+            assistant.setCurrentNamespace(RequestLog.class.getName());
+            TableInfoHelper.initTableInfo(assistant, RequestLog.class);
+        }
         requestLogMapper = mock(RequestLogMapper.class);
         asyncLogWriter = mock(AsyncLogWriter.class);
         service = new RequestLogService(requestLogMapper, asyncLogWriter);

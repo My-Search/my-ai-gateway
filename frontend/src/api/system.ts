@@ -5,6 +5,8 @@ export interface SystemConfig {
   log_cleanup_enabled: string
   request_body_ttl_hours: string
   retry_fail_ttl_hours: string
+  timeout_min_seconds: string
+  timeout_max_seconds: string
 }
 
 export const systemApi = {

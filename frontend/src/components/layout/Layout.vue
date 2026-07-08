@@ -108,6 +108,8 @@ async function handleLogout() {
   margin-left: var(--sidebar-width);
   flex: 1;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Sidebar overlay (mobile) */
@@ -214,7 +216,10 @@ async function handleLogout() {
 }
 
 .content-area {
+  flex: 1;
   padding: 24px;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Mobile header */

@@ -32,6 +32,10 @@ public class AdminConfigService {
     /** retry/fail request data TTL (hours), 0=forever */
     public static final String KEY_RETRY_FAIL_TTL_HOURS = "retry_fail_ttl_hours";
 
+    /** 渠道模型请求超时最小/最大时间（秒） */
+    public static final String KEY_TIMEOUT_MIN_SECONDS = "timeout_min_seconds";
+    public static final String KEY_TIMEOUT_MAX_SECONDS = "timeout_max_seconds";
+
     private final AdminConfigMapper adminConfigMapper;
 
     public AdminConfigService(AdminConfigMapper adminConfigMapper) {
@@ -162,8 +166,7 @@ public class AdminConfigService {
     /**
      * 获取系统配置项（批量）
      * <p>
-     * 返回所有系统运行相关的配置，如日志管理、通知等。
-     * 当前包含：日志保留天数、定时清理开关、原始请求数据保留时长。
+     * 返回所有系统运行相关的配置，如日志管理、通知、超时配置等。
      * </p>
      *
      * @return 系统配置项的 key-value 映射
@@ -171,18 +174,24 @@ public class AdminConfigService {
     public Map<String, String> getSystemConfig() {
         String retentionDays = getValueByKey(KEY_LOG_RETENTION_DAYS);
         String cleanupEnabled = getValueByKey(KEY_LOG_CLEANUP_ENABLED);
-       String requestBodyTtlHours = getValueByKey(KEY_REQUEST_BODY_TTL_HOURS);
+        String requestBodyTtlHours = getValueByKey(KEY_REQUEST_BODY_TTL_HOURS);
         String retryFailTtlHours = getValueByKey(KEY_RETRY_FAIL_TTL_HOURS);
+        String timeoutMinSeconds = getValueByKey(KEY_TIMEOUT_MIN_SECONDS);
+        String timeoutMaxSeconds = getValueByKey(KEY_TIMEOUT_MAX_SECONDS);
         if (retentionDays == null) retentionDays = "7";
         if (cleanupEnabled == null) cleanupEnabled = "1";
         if (requestBodyTtlHours == null) requestBodyTtlHours = "4";
         if (retryFailTtlHours == null) retryFailTtlHours = "48";
+        if (timeoutMinSeconds == null) timeoutMinSeconds = "20";
+        if (timeoutMaxSeconds == null) timeoutMaxSeconds = "60";
 
         Map<String, String> config = new LinkedHashMap<>();
         config.put(KEY_LOG_RETENTION_DAYS, retentionDays);
         config.put(KEY_LOG_CLEANUP_ENABLED, cleanupEnabled);
         config.put(KEY_REQUEST_BODY_TTL_HOURS, requestBodyTtlHours);
         config.put(KEY_RETRY_FAIL_TTL_HOURS, retryFailTtlHours);
+        config.put(KEY_TIMEOUT_MIN_SECONDS, timeoutMinSeconds);
+        config.put(KEY_TIMEOUT_MAX_SECONDS, timeoutMaxSeconds);
         return config;
     }
 

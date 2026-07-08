@@ -78,6 +78,7 @@ public class AdminApiController {
     private final LatencyTracker latencyTracker;
     private final RequestLogMapper requestLogMapper;
     private final MultiModalRuleService multiModalRuleService;
+    private final PromptInjectionService promptInjectionService;
 
     public AdminApiController(StatsService statsService, ChannelService channelService,
                               ChannelApiKeyService channelApiKeyService, ModelService modelService,
@@ -87,7 +88,8 @@ public class AdminApiController {
                               JwtTokenProvider jwtTokenProvider,
                               LatencyTracker latencyTracker,
                               RequestLogMapper requestLogMapper,
-                              MultiModalRuleService multiModalRuleService) {
+                              MultiModalRuleService multiModalRuleService,
+                              PromptInjectionService promptInjectionService) {
         this.statsService = statsService;
         this.channelService = channelService;
         this.channelApiKeyService = channelApiKeyService;
@@ -102,6 +104,7 @@ public class AdminApiController {
         this.latencyTracker = latencyTracker;
         this.requestLogMapper = requestLogMapper;
         this.multiModalRuleService = multiModalRuleService;
+        this.promptInjectionService = promptInjectionService;
     }
 
     @PreDestroy
@@ -392,7 +395,7 @@ public class AdminApiController {
     }
 
     /**
-     * 获取指定渠道的模型用量统计
+     * 获取指定渠道的模型用量��计
      * 返回该渠道下每个模型的 token 用量、请求次数、最近30次平均响应时间
      * 以及渠道整体最近30次平均响应时间
      */
@@ -1261,6 +1264,47 @@ public class AdminApiController {
                     return ResponseEntity.ok(result);
                 }
             }
+            if (body.containsKey(AdminConfigService.KEY_TIMEOUT_MIN_SECONDS)) {
+                String val = body.get(AdminConfigService.KEY_TIMEOUT_MIN_SECONDS);
+                try {
+                    int sec = Integer.parseInt(val);
+                    if (sec < 1 || sec > 600) {
+                        result.put("success", false);
+                        result.put("error", "最小超时时间必须在 1-600 秒之间");
+                        return ResponseEntity.ok(result);
+                    }
+                } catch (NumberFormatException e) {
+                    result.put("success", false);
+                    result.put("error", "最小超时时间必须为有效数字");
+                    return ResponseEntity.ok(result);
+                }
+            }
+            if (body.containsKey(AdminConfigService.KEY_TIMEOUT_MAX_SECONDS)) {
+                String val = body.get(AdminConfigService.KEY_TIMEOUT_MAX_SECONDS);
+                try {
+                    int sec = Integer.parseInt(val);
+                    if (sec < 1 || sec > 600) {
+                        result.put("success", false);
+                        result.put("error", "最大超时时间必须在 1-600 秒之间");
+                        return ResponseEntity.ok(result);
+                    }
+                } catch (NumberFormatException e) {
+                    result.put("success", false);
+                    result.put("error", "最大超时时间必须为有效数字");
+                    return ResponseEntity.ok(result);
+                }
+            }
+            // 当同时更新 min 和 max 时，校验 min ≤ max
+            if (body.containsKey(AdminConfigService.KEY_TIMEOUT_MIN_SECONDS)
+                    && body.containsKey(AdminConfigService.KEY_TIMEOUT_MAX_SECONDS)) {
+                int minVal = Integer.parseInt(body.get(AdminConfigService.KEY_TIMEOUT_MIN_SECONDS));
+                int maxVal = Integer.parseInt(body.get(AdminConfigService.KEY_TIMEOUT_MAX_SECONDS));
+                if (minVal > maxVal) {
+                    result.put("success", false);
+                    result.put("error", "最小超时时间不能大于最大超时时间");
+                    return ResponseEntity.ok(result);
+                }
+            }
 
             adminConfigService.updateSystemConfig(body);
             result.put("success", true);
@@ -1454,6 +1498,85 @@ public class AdminApiController {
             List<Map<String, Object>> matches = multiModalRuleService.testPattern(pattern, testData);
             result.put("success", true);
             result.put("data", matches);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    // ==================== Prompt Injections ====================
+
+    /**
+     * 获取指定模型的所有 Prompt 注入规则
+     * GET /admin/api/models/{modelId}/prompt-injections
+     */
+    @GetMapping(value = "/models/{modelId}/prompt-injections", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<List<PromptInjection>> listPromptInjections(@PathVariable Long modelId) {
+        return ResponseEntity.ok(promptInjectionService.listByModelId(modelId));
+    }
+
+    /**
+     * 获取单条 Prompt 注入规则
+     * GET /admin/api/prompt-injections/{id}
+     */
+    @GetMapping(value = "/prompt-injections/{id}", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<?> getPromptInjection(@PathVariable Long id) {
+        PromptInjection rule = promptInjectionService.getById(id);
+        if (rule == null) return ResponseEntity.status(404).body(Map.of("error", "规则不存在"));
+        return ResponseEntity.ok(rule);
+    }
+
+    /**
+     * 创建 Prompt 注入规则
+     * POST /admin/api/models/{modelId}/prompt-injections
+     */
+    @PostMapping(value = "/models/{modelId}/prompt-injections", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> createPromptInjection(@PathVariable Long modelId,
+                                                                      @RequestBody PromptInjection rule) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            rule.setModelId(modelId);
+            PromptInjection created = promptInjectionService.create(rule);
+            result.put("success", true);
+            result.put("data", created);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 更新 Prompt 注入规则
+     * PUT /admin/api/prompt-injections/{id}
+     */
+    @PutMapping(value = "/prompt-injections/{id}", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> updatePromptInjection(@PathVariable Long id,
+                                                                      @RequestBody PromptInjection rule) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            rule.setId(id);
+            PromptInjection updated = promptInjectionService.update(rule);
+            result.put("success", true);
+            result.put("data", updated);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 删除 Prompt 注入规则
+     * DELETE /admin/api/prompt-injections/{id}
+     */
+    @DeleteMapping(value = "/prompt-injections/{id}", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> deletePromptInjection(@PathVariable Long id) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            promptInjectionService.delete(id);
+            result.put("success", true);
         } catch (Exception e) {
             result.put("success", false);
             result.put("error", e.getMessage());

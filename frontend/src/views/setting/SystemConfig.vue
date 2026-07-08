@@ -88,6 +88,39 @@
         </div>
       </div>
 
+      <!-- Timeout Configuration -->
+      <div class="section">
+        <div class="section-header">
+          <SvgIcon name="settings" :size="18" />
+          <span>{{ t('systemConfig.timeoutManagement') }}</span>
+        </div>
+        <div class="section-desc">{{ t('systemConfig.timeoutManagementDesc') }}</div>
+
+        <div class="config-row">
+          <div class="config-row-label">
+            <div class="config-label">{{ t('systemConfig.timeoutMin') }}</div>
+            <div class="config-hint">{{ t('systemConfig.timeoutMinHint') }}</div>
+          </div>
+          <div class="config-row-control">
+            <input type="number" class="form-control" style="width:120px;"
+                   v-model.number="form.timeout_min_seconds"
+                   :min="1" :max="600" />
+          </div>
+        </div>
+
+        <div class="config-row">
+          <div class="config-row-label">
+            <div class="config-label">{{ t('systemConfig.timeoutMax') }}</div>
+            <div class="config-hint">{{ t('systemConfig.timeoutMaxHint') }}</div>
+          </div>
+          <div class="config-row-control">
+            <input type="number" class="form-control" style="width:120px;"
+                   v-model.number="form.timeout_max_seconds"
+                   :min="1" :max="600" />
+          </div>
+        </div>
+      </div>
+
       <!-- Save -->
       <div class="section-footer">
         <button class="btn btn-primary" @click="handleSave" :disabled="saving">
@@ -114,7 +147,9 @@ const form = reactive({
   log_retention_days: 30,
   log_cleanup_enabled: '1',
   request_body_ttl_hours: 4,
-  retry_fail_ttl_hours: 48
+  retry_fail_ttl_hours: 48,
+  timeout_min_seconds: 20,
+  timeout_max_seconds: 60
 })
 
 async function loadConfig() {
@@ -128,6 +163,8 @@ async function loadConfig() {
       form.log_cleanup_enabled = res.data.data.log_cleanup_enabled === '1' ? '1' : '0'
       form.request_body_ttl_hours = parseInt(res.data.data.request_body_ttl_hours) || 0
       form.retry_fail_ttl_hours = parseInt(res.data.data.retry_fail_ttl_hours) || 0
+      form.timeout_min_seconds = parseInt(res.data.data.timeout_min_seconds) || 20
+      form.timeout_max_seconds = parseInt(res.data.data.timeout_max_seconds) || 60
     }
   } catch (e: any) {
     error.value = e.message || t('error.loadFailed')
@@ -149,6 +186,11 @@ async function handleSave() {
     }
   }
 
+  if (form.timeout_min_seconds > form.timeout_max_seconds) {
+    error.value = t('systemConfig.timeoutInvalid')
+    return
+  }
+
   saving.value = true
   error.value = ''
   successMsg.value = ''
@@ -157,7 +199,9 @@ async function handleSave() {
       log_retention_days: String(form.log_retention_days),
       log_cleanup_enabled: form.log_cleanup_enabled,
       request_body_ttl_hours: String(form.request_body_ttl_hours),
-      retry_fail_ttl_hours: String(form.retry_fail_ttl_hours)
+      retry_fail_ttl_hours: String(form.retry_fail_ttl_hours),
+      timeout_min_seconds: String(form.timeout_min_seconds),
+      timeout_max_seconds: String(form.timeout_max_seconds)
     })
     if (res.data.success) {
       successMsg.value = t('systemConfig.saveSuccess')

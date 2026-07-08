@@ -1,5 +1,6 @@
 package com.myai.gateway.relay;
 
+import com.myai.gateway.service.AdminConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -15,8 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>超时计算：</p>
  * <ul>
  *   <li>样本数 ≤ {@link #SAMPLE_THRESHOLD} 时：返回默认 {@value #DEFAULT_TIMEOUT_MS}ms 超时</li>
- *   <li>样本数 > {@link #SAMPLE_THRESHOLD} 时：{@code timeout = clamp(ema × 3, MIN_TIMEOUT, MAX_TIMEOUT)}</li>
- *   <li>最终超时限制在 {@link #MIN_TIMEOUT_MS} ~ {@link #MAX_TIMEOUT_MS} 之间</li>
+ *   <li>样本数 > {@link #SAMPLE_THRESHOLD} 时：{@code timeout = clamp(ema × 3, minTimeout, maxTimeout)}</li>
+ *   <li>最终超时限制在配置的最小～最大超时之间（通过系统配置项 {@code timeout_min_seconds} / {@code timeout_max_seconds} 设置，默认 20s ~ 60s）</li>
  * </ul>
  *
  * <p>更新规则：</p>
@@ -41,16 +42,22 @@ public class LatencyTracker {
     /** 最小延迟（2.5 秒），避免 ema 过低 */
     static final long MIN_LATENCY_MS = 2_500L;
 
-    /** 最小超时时间（20 秒） */
-    static final long MIN_TIMEOUT_MS = 20_000L;
+    /** 最小超时默认值（20 秒），当系统配置未设置时使用 */
+    static final long DEFAULT_MIN_TIMEOUT_MS = 20_000L;
 
-    /** 最大超时时间（60 秒） */
-    static final long MAX_TIMEOUT_MS = 60_000L;
+    /** 最大超时默认值（60 秒），当系统配置未设置时使用 */
+    static final long DEFAULT_MAX_TIMEOUT_MS = 60_000L;
 
     /** 样本数阈值：样本数超过此值才启用自适应超时，否则返回默认超时 */
     static final int SAMPLE_THRESHOLD = 5;
 
     private final ConcurrentHashMap<Key, Entry> map = new ConcurrentHashMap<>();
+
+    private final AdminConfigService adminConfigService;
+
+    public LatencyTracker(AdminConfigService adminConfigService) {
+        this.adminConfigService = adminConfigService;
+    }
 
     /**
      * (channelId, channelModelId) 复合键，避免 32-bit 溢出
@@ -115,10 +122,10 @@ public class LatencyTracker {
      * <p>样本数不超过 {@link #SAMPLE_THRESHOLD} 时返回默认超时 {@value #DEFAULT_TIMEOUT_MS}ms（60 秒），
      * 避免数据稀疏时产生激进的超时窗口。</p>
      *
-     * <p>样本数超过阈值后：{@code timeout = clamp(ema × 3, MIN_TIMEOUT, MAX_TIMEOUT)}，
-     * 即基于 EMA 平均延迟的 3 倍计算，最终限制在 20 秒 ~ 60 秒之间。</p>
+     * <p>样本数超过阈值后：{@code timeout = clamp(ema × 3, minTimeout, maxTimeout)}，
+     * 即基于 EMA 平均延迟的 3 倍计算，最终限制在系统配置的范围内（默认 20 秒 ~ 60 秒）。</p>
      *
-     * @return 超时时间（毫秒），介于 {@link #MIN_TIMEOUT_MS} ~ {@link #MAX_TIMEOUT_MS} 之间
+     * @return 超时时间（毫秒），介于 {@link #getMinTimeoutMs()} ~ {@link #getMaxTimeoutMs()} 之间
      */
     public long getTimeout(Long channelId, Long channelModelId) {
         long[] stats = getStats(channelId, channelModelId);
@@ -128,8 +135,48 @@ public class LatencyTracker {
         if (sampleCount <= SAMPLE_THRESHOLD) {
             return DEFAULT_TIMEOUT_MS;
         }
-        long timeout = Math.min(latency * 3, MAX_TIMEOUT_MS);
-        return Math.max(timeout, MIN_TIMEOUT_MS);
+        long maxTimeout = getMaxTimeoutMs();
+        long minTimeout = getMinTimeoutMs();
+        long timeout = Math.min(latency * 3, maxTimeout);
+        return Math.max(timeout, minTimeout);
+    }
+
+    /**
+     * 获取配置的最小超时时间（毫秒）
+     * <p>从系统配置 {@code timeout_min_seconds} 读取，未配置时返回默认值 {@value #DEFAULT_MIN_TIMEOUT_MS}ms。</p>
+     */
+    long getMinTimeoutMs() {
+        if (adminConfigService == null) {
+            return DEFAULT_MIN_TIMEOUT_MS;
+        }
+        String val = adminConfigService.getValueByKey(AdminConfigService.KEY_TIMEOUT_MIN_SECONDS);
+        if (val == null) {
+            return DEFAULT_MIN_TIMEOUT_MS;
+        }
+        try {
+            return Long.parseLong(val) * 1000L;
+        } catch (NumberFormatException e) {
+            return DEFAULT_MIN_TIMEOUT_MS;
+        }
+    }
+
+    /**
+     * 获取配置的最大超时时间（毫秒）
+     * <p>从系统配置 {@code timeout_max_seconds} 读取，未配置时返回默认值 {@value #DEFAULT_MAX_TIMEOUT_MS}ms。</p>
+     */
+    long getMaxTimeoutMs() {
+        if (adminConfigService == null) {
+            return DEFAULT_MAX_TIMEOUT_MS;
+        }
+        String val = adminConfigService.getValueByKey(AdminConfigService.KEY_TIMEOUT_MAX_SECONDS);
+        if (val == null) {
+            return DEFAULT_MAX_TIMEOUT_MS;
+        }
+        try {
+            return Long.parseLong(val) * 1000L;
+        } catch (NumberFormatException e) {
+            return DEFAULT_MAX_TIMEOUT_MS;
+        }
     }
 
     /**

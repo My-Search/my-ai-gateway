@@ -112,6 +112,12 @@ const router = createRouter({
           meta: { title: '高级配置' }
         },
         {
+          path: 'model/prompt-injections/:id',
+          name: 'model-prompt-injections',
+          component: () => import('@/views/model/PromptInjections.vue'),
+          meta: { title: 'Prompt 注入' }
+        },
+        {
           path: 'apikey/list',
           name: 'apikey-list',
           component: () => import('@/views/apikey/List.vue'),

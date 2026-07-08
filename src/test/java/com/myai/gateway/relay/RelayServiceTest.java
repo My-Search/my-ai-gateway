@@ -41,6 +41,7 @@ class RelayServiceTest {
     private TranslatorRegistry translatorRegistry;
     private StreamContentManager streamContentManager;
     private LatencyTracker latencyTracker;
+    private PromptInjectionService promptInjectionService;
 
     private RelayService relayService;
 
@@ -58,11 +59,13 @@ class RelayServiceTest {
         translatorRegistry = mock(TranslatorRegistry.class);
         streamContentManager = new StreamContentManager();
         latencyTracker = mock(LatencyTracker.class);
+        promptInjectionService = mock(PromptInjectionService.class);
         when(latencyTracker.getTimeout(any(), any())).thenReturn(60_000L);
 
         relayService = new RelayService(channelService, channelApiKeyService, apiKeyService,
                 modelService, circuitBreakerService, requestLogService, loadBalancerFactory,
-                objectMapper, messageTransformer, translatorRegistry, streamContentManager, latencyTracker);
+                objectMapper, messageTransformer, translatorRegistry, streamContentManager, latencyTracker,
+                promptInjectionService);
 
         when(loadBalancerFactory.getBalancer(anyString())).thenReturn(new FailoverBalancer());
         when(requestLogService.startTrace()).thenReturn("trace-1");

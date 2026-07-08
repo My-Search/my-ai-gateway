@@ -67,6 +67,14 @@
         </div>
       </div>
 
+      <div class="form-section">
+        <div class="section-title">{{ t('model.advanced.promptInjection') }}</div>
+        <div class="section-desc">{{ t('model.advanced.promptInjectionHint') }}</div>
+        <router-link :to="`/admin/model/prompt-injections/${route.params.id}`" class="btn btn-secondary">
+          <SvgIcon name="code" :size="14" /> {{ t('model.advanced.managePromptInjection') }}
+        </router-link>
+      </div>
+
       <div style="display:flex;gap:8px;margin-top:24px;">
         <button type="submit" class="btn btn-primary" :disabled="saving"><SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('model.advanced.save') }}</button>
         <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="x" :size="14" /> {{ t('model.advanced.cancel') }}</router-link>

@@ -404,3 +404,35 @@ INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUE
 
 ALTER TABLE models ADD COLUMN hidden INTEGER DEFAULT 0;
 UPDATE models SET hidden = 0 WHERE hidden IS NULL;
+  
+  
+-- ========================================  
+-- VERSION:v1.24.0  
+-- Prompt ע������  
+-- ֧�ְ����ģ�������Զ�ע�� system/user/assistant ��Ϣ  
+-- ========================================  
+  
+CREATE TABLE IF NOT EXISTS prompt_injections (  
+    id INTEGER PRIMARY KEY AUTOINCREMENT,  
+    model_id INTEGER NOT NULL,  
+    name TEXT NOT NULL DEFAULT '',  
+    inject_role TEXT NOT NULL DEFAULT 'system',  
+    inject_position TEXT NOT NULL DEFAULT 'prepend',  
+    content TEXT NOT NULL DEFAULT '',  
+    enabled INTEGER DEFAULT 1,  
+    priority INTEGER DEFAULT 0,  
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  
+    FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE  
+);  
+  
+CREATE INDEX IF NOT EXISTS idx_prompt_injections_model_id ON prompt_injections(model_id);
+
+-- ========================================
+-- VERSION:v1.25.0
+-- 系统配置：渠道模型请求超时上下限（可配置）
+-- 默认最小 20 秒，最大 60 秒，替代 LatencyTracker 中的硬编码常量
+-- ========================================
+
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('timeout_min_seconds', '20', '渠道模型请求最小超时时间（秒），自适应超时的下限，默认 20 秒');
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('timeout_max_seconds', '60', '渠道模型请求最大超时时间（秒），自适应超时的上限，默认 60 秒'); 

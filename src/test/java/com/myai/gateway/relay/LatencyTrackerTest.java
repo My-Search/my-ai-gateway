@@ -15,7 +15,7 @@ class LatencyTrackerTest {
 
     @BeforeEach
     void setUp() {
-        tracker = new LatencyTracker();
+        tracker = new LatencyTracker(null); // null AdminConfigService → 使用硬编码默认值
     }
 
     @Test
@@ -164,6 +164,33 @@ class LatencyTrackerTest {
         tracker.reset();
         assertThat(tracker.size()).isEqualTo(0);
         assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(60_000L);
+    }
+
+    // ==================== 可配置超时上下限 ====================
+
+    @Test
+    void getMinTimeoutMs_returnsDefaultWhenServiceIsNull() {
+        assertThat(tracker.getMinTimeoutMs()).isEqualTo(20_000L);
+    }
+
+    @Test
+    void getMaxTimeoutMs_returnsDefaultWhenServiceIsNull() {
+        assertThat(tracker.getMaxTimeoutMs()).isEqualTo(60_000L);
+    }
+
+    @Test
+    void getTimeout_usesDefaultBounds() {
+        // 6 个低延迟样本 → ema≈5000 → timeout=clamp(5000*3=15000, 20000, 60000)=20000
+        for (int i = 0; i < 6; i++) {
+            tracker.record(1L, 100L, 5_000L);
+        }
+        assertThat(tracker.getTimeout(1L, 100L)).isEqualTo(20_000L);
+
+        // 6 个高延迟样本 → ema≈30000 → timeout=clamp(30000*3=90000, 20000, 60000)=60000
+        for (int i = 0; i < 6; i++) {
+            tracker.record(2L, 200L, 30_000L);
+        }
+        assertThat(tracker.getTimeout(2L, 200L)).isEqualTo(60_000L);
     }
 
     @Test
