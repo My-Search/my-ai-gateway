@@ -86,6 +86,20 @@
                    :min="0" :max="8760" />
           </div>
         </div>
+
+        <div class="config-row">
+          <div class="config-row-label">
+            <div class="config-label">{{ t('systemConfig.requestDataSaveLevel') }}</div>
+            <div class="config-hint">{{ t('systemConfig.requestDataSaveLevelHint') }}</div>
+          </div>
+          <div class="config-row-control">
+            <select class="form-control" style="width:140px;" v-model="form.request_data_save_level">
+              <option value="info">{{ t('systemConfig.saveLevelInfo') }}</option>
+              <option value="warn">{{ t('systemConfig.saveLevelWarn') }}</option>
+              <option value="error">{{ t('systemConfig.saveLevelError') }}</option>
+            </select>
+          </div>
+        </div>
       </div>
 
       <!-- Timeout Configuration -->
@@ -132,7 +146,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed, onBeforeUnmount } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { systemApi } from '@/api/system'
 import { useI18n } from '@/composables/useI18n'
 
@@ -142,15 +157,36 @@ const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
 const successMsg = ref('')
+/** 用于检测表单是否变更的初始快照（JSON 字符串） */
+const originalForm = ref('')
 
 const form = reactive({
   log_retention_days: 30,
   log_cleanup_enabled: '1',
   request_body_ttl_hours: 4,
   retry_fail_ttl_hours: 48,
+  request_data_save_level: 'info',
   timeout_min_seconds: 20,
   timeout_max_seconds: 60
 })
+
+/** 表单是否已被修改但未保存 */
+const hasChanges = computed(() => {
+  return JSON.stringify({ ...form }) !== originalForm.value
+})
+
+/** 将 form 当前值保存为初始快照，供变更检测使用 */
+function snapshotForm() {
+  originalForm.value = JSON.stringify({ ...form })
+}
+
+/** 浏览器关闭/刷新前的确认 */
+function onBeforeUnload(e: BeforeUnloadEvent) {
+  if (hasChanges.value) {
+    e.preventDefault()
+    e.returnValue = ''
+  }
+}
 
 async function loadConfig() {
   loading.value = true
@@ -163,8 +199,11 @@ async function loadConfig() {
       form.log_cleanup_enabled = res.data.data.log_cleanup_enabled === '1' ? '1' : '0'
       form.request_body_ttl_hours = parseInt(res.data.data.request_body_ttl_hours) || 0
       form.retry_fail_ttl_hours = parseInt(res.data.data.retry_fail_ttl_hours) || 0
+      form.request_data_save_level = res.data.data.request_data_save_level || 'info'
       form.timeout_min_seconds = parseInt(res.data.data.timeout_min_seconds) || 20
       form.timeout_max_seconds = parseInt(res.data.data.timeout_max_seconds) || 60
+      // 加载完成后记录初始快照
+      snapshotForm()
     }
   } catch (e: any) {
     error.value = e.message || t('error.loadFailed')
@@ -200,11 +239,14 @@ async function handleSave() {
       log_cleanup_enabled: form.log_cleanup_enabled,
       request_body_ttl_hours: String(form.request_body_ttl_hours),
       retry_fail_ttl_hours: String(form.retry_fail_ttl_hours),
+      request_data_save_level: form.request_data_save_level,
       timeout_min_seconds: String(form.timeout_min_seconds),
       timeout_max_seconds: String(form.timeout_max_seconds)
     })
     if (res.data.success) {
       successMsg.value = t('systemConfig.saveSuccess')
+      // 保存成功后更新快照，清除"未保存"状态
+      snapshotForm()
     } else {
       error.value = res.data.error || t('error.saveFailed')
     }
@@ -215,8 +257,23 @@ async function handleSave() {
   }
 }
 
+/**
+ * 路由离开守卫：当表单未保存时弹出确认
+ * 使用同步的 window.confirm 避免异步竞态
+ */
+onBeforeRouteLeave((_to, _from) => {
+  if (hasChanges.value) {
+    return window.confirm(t('systemConfig.unsavedConfirm'))
+  }
+})
+
 onMounted(() => {
   loadConfig()
+  window.addEventListener('beforeunload', onBeforeUnload)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', onBeforeUnload)
 })
 </script>
 

@@ -435,4 +435,12 @@ CREATE INDEX IF NOT EXISTS idx_prompt_injections_model_id ON prompt_injections(m
 -- ========================================
 
 INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('timeout_min_seconds', '20', '渠道模型请求最小超时时间（秒），自适应超时的下限，默认 20 秒');
-INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('timeout_max_seconds', '60', '渠道模型请求最大超时时间（秒），自适应超时的上限，默认 60 秒'); 
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('timeout_max_seconds', '60', '渠道模型请求最大超时时间（秒），自适应超时的上限，默认 60 秒');
+
+-- ========================================
+-- VERSION:v1.26.0
+-- 系统配置：原始请求数据保存级别
+-- info=全部保存, warn=仅重试/错误时保存, error=仅失败时保存
+-- ========================================
+
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('request_data_save_level', 'info', '原始请求数据保存级别：info=全部保存，warn=重试/错误时保存，error=仅失败时保存'); 

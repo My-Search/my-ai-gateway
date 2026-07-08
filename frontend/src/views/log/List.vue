@@ -502,10 +502,10 @@ const requestBodyText = ref('')
 const requestDataExpired = ref(false)
 const requestDataLoading = ref(false)
 
-/** 判断 trace 是否包含原始请求数据（仅检查 phase='start' 的日志，request data 通过 API 按需加载） */
+/** 判断 trace 是否包含原始请求数据（由后端根据 save level 决定，request data 通过 API 按需加载） */
 function hasRequestData(traceId: string): boolean {
   const trace = traces.value.find(t => t.traceId === traceId)
-  return trace?.logs?.some(l => l.phase === 'start') ?? false
+  return trace?.hasRequestData ?? false
 }
 
 /** 打开原始请求查看对话框（通过 API 按需加载原始请求数据） */
@@ -701,6 +701,7 @@ function upsertTraceFromSse(log: RequestLog) {
       failCount: 0,
       modelName: log.modelName || '',
       totalTimeMs: 0,
+      hasRequestData: !!(log.requestHeaders || log.requestBody),
     }
     recalcTrace(trace)
     traces.value.unshift(trace)
@@ -725,6 +726,12 @@ function recalcTrace(trace: LogTrace) {
   trace.startTime = first?.createdAt
   trace.endTime = last?.createdAt
   trace.modelName = trace.logs.find(l => l.modelName)?.modelName || ''
+
+  // 如果 trace 已完成（有终态），且成功无重试，检查是否需要清除 hasRequestData
+  // 后端 save level=warn/error 会清理成功无重试的请求数据
+  if (!isTraceInProgress(trace) && trace.successCount > 0 && trace.retryCount === 0 && trace.failCount === 0) {
+    trace.hasRequestData = false
+  }
 
   // 仅更新当前 trace 的分组缓存，避免全量重计算
   updateTraceGroups(trace)

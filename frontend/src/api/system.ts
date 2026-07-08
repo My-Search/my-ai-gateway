@@ -5,6 +5,7 @@ export interface SystemConfig {
   log_cleanup_enabled: string
   request_body_ttl_hours: string
   retry_fail_ttl_hours: string
+  request_data_save_level: string
   timeout_min_seconds: string
   timeout_max_seconds: string
 }

@@ -523,7 +523,13 @@ export default {
   'systemConfig.requestBodyTtlHint': 'Raw request headers and body will be cleared after this many hours. Set to 0 to keep permanently.',
   'systemConfig.retryFailTtl': 'Retry/Fail Data TTL (hours)',
   'systemConfig.retryFailTtlHint': 'Raw request data for retry or failed requests will be cleared after this many hours. Default 48h for debugging. Set to 0 to keep permanently.',
+  'systemConfig.requestDataSaveLevel': 'Request Data Save Level',
+  'systemConfig.requestDataSaveLevelHint': 'Controls when raw request headers/body are saved. INFO=save all, WARN=save only on retry/error, ERROR=save only on final failure.',
+  'systemConfig.saveLevelInfo': 'INFO',
+  'systemConfig.saveLevelWarn': 'WARN',
+  'systemConfig.saveLevelError': 'ERROR',
   'systemConfig.saveSuccess': 'System config saved',
+'systemConfig.unsavedConfirm': 'You have unsaved changes. Are you sure you want to leave?',
 
   'systemConfig.timeoutManagement': 'Timeout Configuration',
   'systemConfig.timeoutManagementDesc': 'Configure adaptive timeout bounds for channel model requests. Adaptive timeout = avg latency × 3, clamped within the range set below.',

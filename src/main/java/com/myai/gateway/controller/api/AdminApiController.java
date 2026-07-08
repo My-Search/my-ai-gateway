@@ -1018,6 +1018,26 @@ public class AdminApiController {
             return timeB.compareTo(timeA);
         });
 
+        // 查询哪些 trace 的 start 日志包含有效的原始请求数据（未被 save level 清除）
+        if (!treeData.isEmpty()) {
+            List<String> allTraceIds = treeData.stream()
+                    .map(t -> (String) t.get("traceId"))
+                    .collect(Collectors.toList());
+            List<RequestLog> startLogsWithData = requestLogMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<RequestLog>()
+                            .select(RequestLog::getTraceId)
+                            .in(RequestLog::getTraceId, allTraceIds)
+                            .eq(RequestLog::getPhase, "start")
+                            .and(w -> w.isNotNull(RequestLog::getRequestHeaders)
+                                    .or().isNotNull(RequestLog::getRequestBody)));
+            java.util.Set<String> traceIdsWithData = startLogsWithData.stream()
+                    .map(RequestLog::getTraceId)
+                    .collect(Collectors.toSet());
+            for (Map<String, Object> trace : treeData) {
+                trace.put("hasRequestData", traceIdsWithData.contains(trace.get("traceId")));
+            }
+        }
+
         // 返回分页数据
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("data", treeData);
@@ -1261,6 +1281,14 @@ public class AdminApiController {
                 } catch (NumberFormatException e) {
                     result.put("success", false);
                     result.put("error", "重试/失败请求保留时长必须为有效数字");
+                    return ResponseEntity.ok(result);
+                }
+            }
+            if (body.containsKey(AdminConfigService.KEY_REQUEST_DATA_SAVE_LEVEL)) {
+                String val = body.get(AdminConfigService.KEY_REQUEST_DATA_SAVE_LEVEL);
+                if (val == null || (!"info".equals(val) && !"warn".equals(val) && !"error".equals(val))) {
+                    result.put("success", false);
+                    result.put("error", "原始请求数据保存级别无效，必须为 info / warn / error");
                     return ResponseEntity.ok(result);
                 }
             }

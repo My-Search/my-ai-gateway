@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -26,10 +27,16 @@ public class RequestLogService {
 
     private final RequestLogMapper requestLogMapper;
     private final AsyncLogWriter asyncLogWriter;
+    private final AdminConfigService adminConfigService;
 
-    public RequestLogService(RequestLogMapper requestLogMapper, AsyncLogWriter asyncLogWriter) {
+    /** 等待写入的原始请求数据：traceId -> [requestHeaders, requestBody] */
+    private final ConcurrentHashMap<String, String[]> pendingRequestData = new ConcurrentHashMap<>();
+
+    public RequestLogService(RequestLogMapper requestLogMapper, AsyncLogWriter asyncLogWriter,
+                             AdminConfigService adminConfigService) {
         this.requestLogMapper = requestLogMapper;
         this.asyncLogWriter = asyncLogWriter;
+        this.adminConfigService = adminConfigService;
     }
 
     /**
@@ -112,12 +119,20 @@ public class RequestLogService {
     }
 
     /**
-     * 记录请求开始阶段（带网关 API Key id）
+     * 记录请求开始阶段
+     * <p>
+     * start 日志异步写入（不含原始请求头/体）。原始请求数据暂存到内存中，
+     * 待请求完成 {@link #logComplete} 时根据 save level 决定是否写入数据库。
+     * </p>
      */
     public void logStart(String traceId, String apiKeyName, Long gatewayApiKeyId, String modelName,
                          String channelModelName, String channelName,
                          String message, int retryIndex,
                          String requestHeaders, String requestBody) {
+        // 暂存原始请求数据，待请求完成后根据 save level 决定是否写入 DB
+        if (requestHeaders != null || requestBody != null) {
+            pendingRequestData.put(traceId, new String[]{requestHeaders, requestBody});
+        }
         RequestLog record = new RequestLog();
         record.setTraceId(traceId);
         record.setApiKeyName(apiKeyName);
@@ -129,8 +144,8 @@ public class RequestLogService {
         record.setStatus("pending");
         record.setMessage(message);
         record.setRetryIndex(retryIndex);
-        record.setRequestHeaders(requestHeaders);
-        record.setRequestBody(requestBody);
+        record.setRequestHeaders(null);
+        record.setRequestBody(null);
         record.setCreatedAt(LocalDateTime.now());
         asyncLogWriter.enqueue(record);
     }
@@ -217,6 +232,12 @@ public class RequestLogService {
             log.warn(logMsg, traceId, indent, phase, modelName, channelModelName, channelName, message, responseTimeMs, totalTokens);
         } else {
             log.info(logMsg, traceId, indent, phase, modelName, channelModelName, channelName, message, responseTimeMs, totalTokens);
+        }
+
+        // 请求完成后根据 save level 决定是否持久化原始请求数据
+        // 仅在 success/fail 终态时检查，避免中间状态被误处理
+        if ("success".equals(phase) || "fail".equals(phase)) {
+            saveRequestDataIfNeeded(traceId, phase, retryIndex);
         }
     }
 
@@ -398,6 +419,63 @@ public class RequestLogService {
      */
     public void cleanExpiredRequestData(int ttlHours) {
         cleanExpiredRequestData(ttlHours, ttlHours);
+    }
+
+    /**
+     * 根据 save level 检查是否需要持久化原始请求数据。
+     * <p>
+     * 请求完成后调用，从内存中取出暂存的原始请求数据，
+     * 根据配置的保存级别决定是否写入数据库中的 start 记录：
+     * <ul>
+     *   <li>info：始终写入</li>
+     *   <li>warn：仅在出现重试（retryIndex > 0）或请求失败时写入</li>
+     *   <li>error：仅在请求最终失败时写入</li>
+     * </ul>
+     * </p>
+     *
+     * @param traceId      追踪 ID
+     * @param finalPhase   最终阶段（success / fail）
+     * @param retryIndex   最终重试索引
+     */
+    private void saveRequestDataIfNeeded(String traceId, String finalPhase, int retryIndex) {
+        String[] data = pendingRequestData.remove(traceId);
+        if (data == null) {
+            return;
+        }
+
+        String level = adminConfigService.getValueByKey(AdminConfigService.KEY_REQUEST_DATA_SAVE_LEVEL);
+        if (level == null || level.isEmpty()) {
+            level = "info";
+        }
+
+        boolean shouldKeep;
+        switch (level) {
+            case "error":
+                // 仅整体请求失败才保留
+                shouldKeep = "fail".equals(finalPhase);
+                break;
+            case "warn":
+                // 有重试或请求失败才保留
+                shouldKeep = "fail".equals(finalPhase) || retryIndex > 0;
+                break;
+            default: // "info"
+                shouldKeep = true;
+                break;
+        }
+
+        if (shouldKeep) {
+            // 将原始请求数据写入 start 记录
+            requestLogMapper.update(null, new LambdaUpdateWrapper<RequestLog>()
+                    .eq(RequestLog::getTraceId, traceId)
+                    .eq(RequestLog::getPhase, "start")
+                    .set(RequestLog::getRequestHeaders, data[0])
+                    .set(RequestLog::getRequestBody, data[1]));
+            log.debug("原始请求数据已持久化（saveLevel={}, phase={}, retryIndex={}） - traceId={}",
+                    level, finalPhase, retryIndex, traceId);
+        } else {
+            log.debug("原始请求数据已丢弃（saveLevel={}, phase={}, retryIndex={}） - traceId={}",
+                    level, finalPhase, retryIndex, traceId);
+        }
     }
 
     /**

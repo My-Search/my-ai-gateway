@@ -27,6 +27,7 @@ export interface LogTrace {
   totalTimeMs: number
   startTime?: string
   endTime?: string
+  hasRequestData?: boolean
 }
 
 export interface LogFilters {

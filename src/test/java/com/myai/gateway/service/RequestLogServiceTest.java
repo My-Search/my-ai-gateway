@@ -26,6 +26,7 @@ class RequestLogServiceTest {
 
     private RequestLogMapper requestLogMapper;
     private AsyncLogWriter asyncLogWriter;
+    private AdminConfigService adminConfigService;
     private RequestLogService service;
 
     @BeforeEach
@@ -40,7 +41,8 @@ class RequestLogServiceTest {
         }
         requestLogMapper = mock(RequestLogMapper.class);
         asyncLogWriter = mock(AsyncLogWriter.class);
-        service = new RequestLogService(requestLogMapper, asyncLogWriter);
+        adminConfigService = mock(AdminConfigService.class);
+        service = new RequestLogService(requestLogMapper, asyncLogWriter, adminConfigService);
     }
 
     @Test

@@ -32,6 +32,9 @@ public class AdminConfigService {
     /** retry/fail request data TTL (hours), 0=forever */
     public static final String KEY_RETRY_FAIL_TTL_HOURS = "retry_fail_ttl_hours";
 
+    /** 原始请求数据保存级别：info=全部保存, warn=仅重试/错误时保存, error=仅失败时保存 */
+    public static final String KEY_REQUEST_DATA_SAVE_LEVEL = "request_data_save_level";
+
     /** 渠道模型请求超时最小/最大时间（秒） */
     public static final String KEY_TIMEOUT_MIN_SECONDS = "timeout_min_seconds";
     public static final String KEY_TIMEOUT_MAX_SECONDS = "timeout_max_seconds";
@@ -178,12 +181,14 @@ public class AdminConfigService {
         String retryFailTtlHours = getValueByKey(KEY_RETRY_FAIL_TTL_HOURS);
         String timeoutMinSeconds = getValueByKey(KEY_TIMEOUT_MIN_SECONDS);
         String timeoutMaxSeconds = getValueByKey(KEY_TIMEOUT_MAX_SECONDS);
+        String requestDataSaveLevel = getValueByKey(KEY_REQUEST_DATA_SAVE_LEVEL);
         if (retentionDays == null) retentionDays = "7";
         if (cleanupEnabled == null) cleanupEnabled = "1";
         if (requestBodyTtlHours == null) requestBodyTtlHours = "4";
         if (retryFailTtlHours == null) retryFailTtlHours = "48";
         if (timeoutMinSeconds == null) timeoutMinSeconds = "20";
         if (timeoutMaxSeconds == null) timeoutMaxSeconds = "60";
+        if (requestDataSaveLevel == null) requestDataSaveLevel = "info";
 
         Map<String, String> config = new LinkedHashMap<>();
         config.put(KEY_LOG_RETENTION_DAYS, retentionDays);
@@ -192,6 +197,7 @@ public class AdminConfigService {
         config.put(KEY_RETRY_FAIL_TTL_HOURS, retryFailTtlHours);
         config.put(KEY_TIMEOUT_MIN_SECONDS, timeoutMinSeconds);
         config.put(KEY_TIMEOUT_MAX_SECONDS, timeoutMaxSeconds);
+        config.put(KEY_REQUEST_DATA_SAVE_LEVEL, requestDataSaveLevel);
         return config;
     }
 
