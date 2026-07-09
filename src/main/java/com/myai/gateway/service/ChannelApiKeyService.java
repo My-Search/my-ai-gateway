@@ -51,6 +51,10 @@ public class ChannelApiKeyService {
      */
     @Transactional
     public ChannelApiKey create(ChannelApiKey apiKey) {
+        // trim 防止粘贴时引入的尾部空白/换行符
+        if (apiKey.getApiKey() != null) {
+            apiKey.setApiKey(apiKey.getApiKey().trim());
+        }
         channelApiKeyMapper.insert(apiKey);
         if (apiKey.getId() == null) {
             // SQLite 自增 ID 兼容处理
@@ -77,6 +81,10 @@ public class ChannelApiKeyService {
      */
     @Transactional
     public ChannelApiKey update(ChannelApiKey apiKey) {
+        // trim 防止粘贴时引入的尾部空白/换行符
+        if (apiKey.getApiKey() != null) {
+            apiKey.setApiKey(apiKey.getApiKey().trim());
+        }
         channelApiKeyMapper.updateById(apiKey);
         return apiKey;
     }
@@ -210,7 +218,9 @@ public class ChannelApiKeyService {
                     // 已存在：更新
                     for (ChannelApiKey existing : existingKeys) {
                         if (existing.getKeyName().equals(submitted.getKeyName())) {
-                            existing.setApiKey(submitted.getApiKey());
+                            // trim 防止粘贴时引入的尾部空白/换行符
+                            String newKey = submitted.getApiKey() != null ? submitted.getApiKey().trim() : submitted.getApiKey();
+                            existing.setApiKey(newKey);
                             existing.setEnabled(submitted.getEnabled() != null ? submitted.getEnabled() : 1);
                             existing.setSortOrder(submitted.getSortOrder() != null ? submitted.getSortOrder() : 0);
                             channelApiKeyMapper.updateById(existing);

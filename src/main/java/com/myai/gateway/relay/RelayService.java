@@ -769,6 +769,9 @@ public class RelayService {
         String apiKey = candidate.getChannelApiKey().getApiKey();
         Map<String, String> headers = buildProviderHeaders(provider, apiKey, authHeader);
         String providerReqBody = buildProviderRequestBody(req, candidate, provider);
+        log.debug("非流式调用上游: endpoint={}, provider={}, channel={}, keyId={}, apiKeyMasked={}",
+                endpoint, provider, candidate.getChannel().getName(),
+                candidate.getChannelApiKey().getId(), maskBearerToken(apiKey));
 
         return webClient.post()
                 .uri(endpoint)
@@ -817,6 +820,9 @@ public class RelayService {
         String apiKey = candidate.getChannelApiKey().getApiKey();
         Map<String, String> headers = buildProviderHeaders(provider, apiKey, authHeader);
         String providerReqBody = buildProviderRequestBody(req, candidate, provider);
+        log.debug("流式调用上游: endpoint={}, provider={}, channel={}, keyId={}, apiKeyMasked={}",
+                endpoint, provider, candidate.getChannel().getName(),
+                candidate.getChannelApiKey().getId(), maskBearerToken(apiKey));
 
         return webClient.post()
                 .uri(endpoint)
@@ -1319,15 +1325,17 @@ public class RelayService {
      */
     private Map<String, String> buildProviderHeaders(String provider, String apiKey, String authHeader) {
         Map<String, String> headers = new HashMap<>();
+        // trim 防止 DB 中存储的 Key 带有尾部空白/换行符，导致上游 401
+        String key = apiKey != null ? apiKey.trim() : "";
         if ("azure".equals(provider)) {
             // Azure OpenAI 使用 api-key 请求头而非 Authorization Bearer
-            headers.put("api-key", apiKey);
+            headers.put("api-key", key);
         } else if ("anthropic".equals(provider)) {
-            headers.put("x-api-key", apiKey);
+            headers.put("x-api-key", key);
             headers.put("anthropic-version", "2023-06-01");
         } else {
             // openai 及其他默认走 Bearer
-            headers.put("Authorization", "Bearer " + apiKey);
+            headers.put("Authorization", "Bearer " + key);
         }
         headers.put("Content-Type", "application/json");
         return headers;
