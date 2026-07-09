@@ -1637,7 +1637,7 @@ public class AdminApiController {
         // 设置极小的响应缓冲区（1KB），确保每次 flush 立即将数据推送到 TCP 栈
         response.setBufferSize(1024);
 
-        SseEmitter emitter = new SseEmitter(300_000L); // 5分钟超时
+        SseEmitter emitter = new SseEmitter(0L); // 禁用墙钟超时，由 idle timeout 管控死连接
 
         try {
             JsonNode json = objectMapper.readTree(requestBody);

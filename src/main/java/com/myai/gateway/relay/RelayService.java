@@ -24,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -169,7 +170,10 @@ public class RelayService {
      * @param internalClient 是否为内部客户端（Playground），true 时发送 _routing_progress/_gateway_meta 等自定义事件
      */
     public SseEmitter chatCompletionsStream(String authHeader, String requestBody, boolean internalClient) {
-        SseEmitter emitter = new SseEmitter(300_000L);
+        // 0L = 禁用 SseEmitter 墙钟硬超时，改由 STREAM_IDLE_TIMEOUT_MS（120s 空闲超时）管控死连接。
+        // 原先 300_000L (5min) 会强制完成 emitter，但推理模型/长文本生成可能超过 5 分钟，
+        // 导致上游仍在吐数据时 emitter 已完成，send() 抛 IllegalStateException。
+        SseEmitter emitter = new SseEmitter(0L);
         String traceId = requestLogService.startTrace();
         Long gatewayApiKeyId = logOriginalRequest(traceId, authHeader, buildOpenaiHeadersJson(authHeader), requestBody);
         // 鉴权校验：无效/缺失网关 API Key 时直接拒绝，不转发到上游（避免未授权白嫖付费 API）
@@ -179,14 +183,21 @@ public class RelayService {
             sendSseError(emitter, "无效或缺失的 API Key");
             return emitter;
         }
+        // 保存订阅句柄，用于在超时/完成时取消上游 Flux，防止资源泄漏与对已完成 emitter 的写入
+        Disposable[] disposableRef = new Disposable[1];
         // 注册资源清理回调：无论正常完成、超时还是客户端断开，都清理 StreamContentManager 和 streamUsageMap
-        emitter.onCompletion(() -> cleanupStreamResources(traceId));
+        emitter.onCompletion(() -> {
+            cleanupStreamResources(traceId);
+            if (disposableRef[0] != null && !disposableRef[0].isDisposed()) {
+                disposableRef[0].dispose();
+            }
+        });
         emitter.onTimeout(() -> {
             log.warn("SSE stream timeout, cleaning up resources - traceId={}", traceId);
-            cleanupStreamResources(traceId);
+            // 由 onCompletion 统一处理 cleanupStreamResources + Disposable.dispose()
             emitter.complete();
         });
-        Mono.fromCallable(() -> {
+        disposableRef[0] = Mono.fromCallable(() -> {
                     InternalRequest req = parseRequest(requestBody, "openai");
                     applyPromptInjections(req);
                     preprocessMediaInvalidation(req);
@@ -214,7 +225,8 @@ public class RelayService {
      * @param internalClient 是否为内部客户端（Playground），true 时发送 _routing_progress/_gateway_meta 等自定义事件
      */
     public SseEmitter messagesStream(String apiKeyHeader, String requestBody, String anthropicVersion, boolean internalClient) {
-        SseEmitter emitter = new SseEmitter(300_000L);
+        // 0L = 禁用 SseEmitter 墙钟硬超时，改由 STREAM_IDLE_TIMEOUT_MS（120s 空闲超时）管控死连接
+        SseEmitter emitter = new SseEmitter(0L);
         String traceId = requestLogService.startTrace();
         Long gatewayApiKeyId = logOriginalRequest(traceId, apiKeyHeader, buildAnthropicHeadersJson(apiKeyHeader, anthropicVersion), requestBody);
         // 鉴权校验：无效/缺失网关 API Key 时直接拒绝，不转发到上游（避免未授权白嫖付费 API）
@@ -224,14 +236,21 @@ public class RelayService {
             sendSseError(emitter, "无效或缺失的 API Key");
             return emitter;
         }
+        // 保存订阅句柄，用于在超时/完成时取消上游 Flux，防止资源泄漏与对已完成 emitter 的写入
+        Disposable[] disposableRef = new Disposable[1];
         // 注册资源清理回调：无论正常完成、超时还是客户端断开，都清理 StreamContentManager 和 streamUsageMap
-        emitter.onCompletion(() -> cleanupStreamResources(traceId));
+        emitter.onCompletion(() -> {
+            cleanupStreamResources(traceId);
+            if (disposableRef[0] != null && !disposableRef[0].isDisposed()) {
+                disposableRef[0].dispose();
+            }
+        });
         emitter.onTimeout(() -> {
             log.warn("SSE stream timeout, cleaning up resources - traceId={}", traceId);
-            cleanupStreamResources(traceId);
+            // 由 onCompletion 统一处理 cleanupStreamResources + Disposable.dispose()
             emitter.complete();
         });
-        Mono.fromCallable(() -> {
+        disposableRef[0] = Mono.fromCallable(() -> {
                     InternalRequest req = parseRequest(requestBody, "anthropic");
                     applyPromptInjections(req);
                     preprocessMediaInvalidation(req);
@@ -2010,9 +2029,10 @@ public class RelayService {
             } else {
                 emitter.send(SseEmitter.event().data(event.data()));
             }
-        } catch (IOException e) {
-            // 客户端已断开 / SseEmitter 已超时，抛出 RuntimeException 触发 subscriber onError
-            // → 上游 Flux 被取消（停止 Provider 计费）→ doOnComplete 不执行 → 日志不记 "success"
+        } catch (IOException | IllegalStateException e) {
+            // 客户端已断开 / SseEmitter 已超时/已完成，抛出 RuntimeException 触发 subscriber onError
+            // -> 上游 Flux 被取消（停止 Provider 计费）-> doOnComplete 不执行 -> 日志不记 "success"
+            // IllegalStateException: emitter 已 complete() 后 send() 抛出，非 IOException，需一并捕获
             throw new RuntimeException("Client disconnected from SSE stream", e);
         }
     }

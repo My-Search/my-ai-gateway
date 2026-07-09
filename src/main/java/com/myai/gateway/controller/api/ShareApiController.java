@@ -170,7 +170,7 @@ public class ShareApiController {
         response.setContentType("text/event-stream;charset=UTF-8");
         response.setCharacterEncoding("UTF-8");
 
-        SseEmitter emitter = new SseEmitter(300_000L);
+        SseEmitter emitter = new SseEmitter(0L); // 禁用墙钟超时，由 idle timeout 管控死连接
 
         try {
             // 验证 API Key

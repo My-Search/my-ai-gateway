@@ -6,8 +6,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myai.gateway.entity.Channel;
 import com.myai.gateway.entity.ChannelModel;
+import com.myai.gateway.entity.CircuitBreakerState;
+import com.myai.gateway.entity.ModelChannelRel;
 import com.myai.gateway.mapper.ChannelMapper;
 import com.myai.gateway.mapper.ChannelModelMapper;
+import com.myai.gateway.mapper.CircuitBreakerStateMapper;
+import com.myai.gateway.mapper.ModelChannelRelMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -40,16 +44,23 @@ public class ChannelService {
     private final ChannelMapper channelMapper;
     private final ChannelModelMapper channelModelMapper;
     private final ChannelApiKeyService channelApiKeyService;
+    private final ModelChannelRelMapper modelChannelRelMapper;
+    private final CircuitBreakerStateMapper circuitBreakerStateMapper;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
     private final MultiModalRuleService multiModalRuleService;
 
     public ChannelService(ChannelMapper channelMapper, ChannelModelMapper channelModelMapper, 
-                          ChannelApiKeyService channelApiKeyService, ObjectMapper objectMapper,
+                          ChannelApiKeyService channelApiKeyService,
+                          ModelChannelRelMapper modelChannelRelMapper,
+                          CircuitBreakerStateMapper circuitBreakerStateMapper,
+                          ObjectMapper objectMapper,
                           MultiModalRuleService multiModalRuleService) {
         this.channelMapper = channelMapper;
         this.channelModelMapper = channelModelMapper;
         this.channelApiKeyService = channelApiKeyService;
+        this.modelChannelRelMapper = modelChannelRelMapper;
+        this.circuitBreakerStateMapper = circuitBreakerStateMapper;
         this.objectMapper = objectMapper;
         this.multiModalRuleService = multiModalRuleService;
         this.httpClient = HttpClient.newBuilder()
@@ -224,16 +235,60 @@ public class ChannelService {
 
     @Transactional
     public void delete(Long id) {
-        // Explicitly delete associated ChannelModel entries before deleting the channel
-        // This ensures the model association list is cleared when a channel is removed
-        try {
-            channelModelMapper.delete(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.myai.gateway.entity.ChannelModel>()
-                .eq(com.myai.gateway.entity.ChannelModel::getChannelId, id));
-        } catch (Exception e) {
-            log.warn("Failed to delete associated ChannelModel entries for channel {}: {}", id, e.getMessage());
+        // 1. 获取该渠道下所有渠道模型 ID，用于清理入口模型的关联引用
+        List<ChannelModel> channelModels = channelModelMapper.selectList(
+                new LambdaQueryWrapper<ChannelModel>().eq(ChannelModel::getChannelId, id));
+        List<Long> channelModelIds = channelModels.stream()
+                .map(ChannelModel::getId)
+                .collect(Collectors.toList());
+
+        // 2. 删除入口模型关联表 (model_channel_rels) 中引用这些渠道模型的记录
+        if (!channelModelIds.isEmpty()) {
+            try {
+                int deletedRels = modelChannelRelMapper.delete(
+                        new LambdaQueryWrapper<ModelChannelRel>()
+                                .in(ModelChannelRel::getChannelModelId, channelModelIds));
+                if (deletedRels > 0) {
+                    log.info("清理了 {} 条入口模型关联记录 (渠道模型 IDs: {})", deletedRels, channelModelIds);
+                }
+            } catch (Exception e) {
+                log.warn("清理入口模型关联记录失败 (渠道 {}): {}", id, e.getMessage());
+            }
         }
-        // Delete the channel itself
+
+        // 3. 删除该渠道下的所有渠道模型
+        try {
+            channelModelMapper.delete(new LambdaQueryWrapper<ChannelModel>()
+                    .eq(ChannelModel::getChannelId, id));
+        } catch (Exception e) {
+            log.warn("删除渠道模型失败 (渠道 {}): {}", id, e.getMessage());
+        }
+
+        // 4. 删除该渠道下的所有 API Key
+        try {
+            int deletedKeys = channelApiKeyService.deleteAllByChannelId(id);
+            if (deletedKeys > 0) {
+                log.info("清理了 {} 条渠道 API Key 记录 (渠道 {})", deletedKeys, id);
+            }
+        } catch (Exception e) {
+            log.warn("删除渠道 API Key 失败 (渠道 {}): {}", id, e.getMessage());
+        }
+
+        // 5. 删除该渠道相关的熔断状态
+        try {
+            int deletedStates = circuitBreakerStateMapper.delete(
+                    new LambdaQueryWrapper<CircuitBreakerState>()
+                            .eq(CircuitBreakerState::getChannelId, id));
+            if (deletedStates > 0) {
+                log.info("清理了 {} 条熔断状态记录 (渠道 {})", deletedStates, id);
+            }
+        } catch (Exception e) {
+            log.warn("删除熔断状态失败 (渠道 {}): {}", id, e.getMessage());
+        }
+
+        // 6. 删除渠道本身
         channelMapper.deleteById(id);
+        log.info("渠道 {} 已删除，相关关联数据已清理", id);
     }
 
     /**
