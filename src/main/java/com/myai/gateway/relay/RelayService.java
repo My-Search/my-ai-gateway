@@ -379,7 +379,9 @@ public class RelayService {
         log.info("开始调用候选 - traceId={} maxAttempts={} (retryCount={})",
                 traceId, maxAttempts, ctx.retryCount());
 
-        return invokeCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, req, candidate, provider, retryIndex, 1, maxAttempts)
+        // provider 由渠道类型决定，而非入口 API 格式：Anthropic 客户端可路由到 OpenAI 兼容渠道
+        String actualProvider = resolveProvider(candidate, provider);
+        return invokeCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, req, candidate, actualProvider, retryIndex, 1, maxAttempts)
                 .flatMap(body -> {
                     balancer.markSuccess(candidate);
                     // 更新渠道模型最后使用时间（用于轮询 LRU 排序）
@@ -389,7 +391,7 @@ public class RelayService {
                     // 非流式：响应时间 ≈ TTFT，记录到自适应超时统计
                     latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(),
                             System.currentTimeMillis() - startTime);
-                    String transformed = transformResponse(body, candidate, req, provider, false);
+                    String transformed = transformResponse(body, candidate, req, actualProvider, false);
                     int[] usage = extractUsageFromProviderResponse(body);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(), gatewayApiKeyId,
                             req.getModel(), candidate.getChannelModel().getModelName(),
@@ -579,12 +581,14 @@ public class RelayService {
                 "流式路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
 
         int maxAttempts = ctx.maxAttempts();
+        // provider 由渠道类型决定，而非入口 API 格式：Anthropic 客户端可路由到 OpenAI 兼容渠道
+        String actualProvider = resolveProvider(candidate, provider);
         // 仅内部客户端发送路由进度事件
         Flux<SseEvent> routingStart = internalClient
                 ? Flux.just(new SseEvent(null, buildRoutingProgressJson("trying", candidate, retryIndex, null)))
                 : Flux.empty();
         return Flux.concat(routingStart,
-                invokeStreamCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, req, candidate, provider, retryIndex, 1, maxAttempts, internalClient))
+                invokeStreamCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, req, candidate, actualProvider, retryIndex, 1, maxAttempts, internalClient))
                 .doOnNext(event -> {
                     int[] usage = extractUsageFromSseData(event.data());
                     if (usage != null) {
@@ -783,8 +787,11 @@ public class RelayService {
                         return resp.bodyToMono(String.class).flatMap(Mono::just);
                     }
                     return resp.bodyToMono(String.class).flatMap(body -> {
-                        log.warn("Provider returned error status {} for channel={} keyId={}",
-                                resp.statusCode(), candidate.getChannel().getId(), candidate.getChannelApiKey().getId());
+                        log.warn("Provider returned error status {} for channel={} keyId={} keyMasked={} keyLen={}",
+                                resp.statusCode(), candidate.getChannel().getId(),
+                                candidate.getChannelApiKey().getId(),
+                                maskBearerToken(apiKey),
+                                apiKey == null ? 0 : apiKey.trim().length());
                         // 400 请求体格式不正确：修复请求后再重试
                         int status = resp.statusCode().value();
                         if (status == 400) {
@@ -833,8 +840,11 @@ public class RelayService {
                     if (!resp.statusCode().is2xxSuccessful()) {
                         return resp.bodyToMono(String.class)
                                 .flatMapMany(body -> {
-                                    log.warn("Provider stream error status {} for channel={} keyId={}",
-                                            resp.statusCode(), candidate.getChannel().getId(), candidate.getChannelApiKey().getId());
+                                    log.warn("Provider stream error status {} for channel={} keyId={} keyMasked={} keyLen={}",
+                                            resp.statusCode(), candidate.getChannel().getId(),
+                                            candidate.getChannelApiKey().getId(),
+                                            maskBearerToken(apiKey),
+                                            apiKey == null ? 0 : apiKey.trim().length());
                                     // 400 请求体格式不正确：修复请求后再重试
                                     if (resp.statusCode().value() == 400) {
                                         return Flux.error(new NonRetryableProviderException(400, body));
@@ -1312,6 +1322,26 @@ public class RelayService {
         } catch (Exception e) {
             log.warn("更新网关 API Key lastUsedAt 失败: {}", e.getMessage());
         }
+    }
+
+    /**
+     * 根据渠道类型决定上游调用方式（认证头、端点、请求体格式）。
+     * <p>
+     * provider 不应由入口 API 格式（/v1/messages vs /v1/chat/completions）硬编码，
+     * 而应由渠道的 channelType 决定。这样 Anthropic 客户端可以路由到 OpenAI 兼容渠道，
+     * 网关会自动完成协议转换（Anthropic ↔ OpenAI）。
+     * </p>
+     *
+     * @param candidate       路由候选
+     * @param defaultProvider 回退值（渠道类型为空时使用）
+     * @return 实际用于调用上游的 provider
+     */
+    private String resolveProvider(RoutingCandidate candidate, String defaultProvider) {
+        String channelType = candidate.getChannel().getChannelType();
+        if (channelType != null && !channelType.isBlank()) {
+            return channelType;
+        }
+        return defaultProvider;
     }
 
     /**
