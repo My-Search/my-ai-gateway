@@ -37,6 +37,15 @@ export default {
   'login.passwordsNotMatch': '两次输入的密码不一致',
   'login.passwordTooShort': '密码长度至少6位',
   'login.setupFailed': '设置失败',
+  'login.signIn': '登录',
+  'login.setupTitle': '初始化设置',
+  'login.brandTitle': '统一管理你的 AI 服务',
+  'login.brandDesc': '多渠道聚合、智能路由、负载均衡与熔断保护，一站式管理你的 AI 网关。',
+  'login.featureChannels': '多渠道聚合管理',
+  'login.featureRouting': '智能负载均衡路由',
+  'login.featureCircuit': '自动熔断与恢复',
+  'login.featureLogging': '全链路请求追踪',
+  'login.serviceOnline': '服务运行中',
 
   /* ========== Common ========== */
   'common.loading': '加载中...',

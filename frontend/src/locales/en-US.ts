@@ -37,6 +37,15 @@ export default {
   'login.passwordsNotMatch': 'Passwords do not match',
   'login.passwordTooShort': 'Password must be at least 6 characters',
   'login.setupFailed': 'Setup failed',
+  'login.signIn': 'Sign In',
+  'login.setupTitle': 'Initial Setup',
+  'login.brandTitle': 'Unify Your AI Services',
+  'login.brandDesc': 'Multi-channel aggregation, intelligent routing, load balancing and circuit protection. Manage your AI gateway in one place.',
+  'login.featureChannels': 'Multi-channel aggregation',
+  'login.featureRouting': 'Intelligent load balancing',
+  'login.featureCircuit': 'Auto circuit breaking & recovery',
+  'login.featureLogging': 'Full-chain request tracing',
+  'login.serviceOnline': 'Service Online',
 
   /* ========== Common ========== */
   'common.loading': 'Loading...',
