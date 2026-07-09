@@ -382,7 +382,8 @@ function onDialogConfirm() {
 }
 .mmr-rule-item {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 10px; background: var(--bg-tertiary);
+  padding: 8px 10px; background: transparent;
+  border: 1px solid var(--border-color);
   border-radius: 6px; font-size: 13px;
 }
 .mmr-rule-info {
@@ -406,7 +407,7 @@ function onDialogConfirm() {
 .mmr-icon-btn--danger:hover { color: var(--accent-red); }
 
 .mmr-form-section {
-  background: var(--bg-tertiary); border-radius: 8px; padding: 16px;
+  background: transparent; border: 1px solid var(--border-color); border-radius: 8px; padding: 16px;
   margin-top: 8px;
 }
 .mmr-test-input-wrap {

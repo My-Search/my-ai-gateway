@@ -421,6 +421,14 @@ export default {
   'apikey.form.createSuccess': '密钥创建成功',
   'apikey.form.saveFailed': '保存失败',
 
+  /* ========== Log Phase Labels ========== */
+  'log.phase.start': '请求开始',
+  'log.phase.retry': '重试',
+  'log.phase.reroute': '重路由',
+  'log.phase.success': '成功',
+  'log.phase.fail': '失败',
+  'log.phase.skip': '跳过',
+
   /* ========== Log List ========== */
   'log.list.title': '请求日志',
   'log.list.realtime': '实时',

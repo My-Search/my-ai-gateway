@@ -54,8 +54,9 @@ logging:
 # App config (管理员账号从数据库读取)
 app:
   jwt:
-    # JWT 签名密钥，生产环境请修改为更复杂的密钥
-    secret: my-ai-gateway-jwt-secret-key-2024-change-in-production
+    # JWT 签名密钥：通过环境变量 APP_JWT_SECRET 覆盖，未设置时使用内置默认值（仅适合开发，生产环境必须修改）
+    # 启动时若仍为默认值或长度不足会打印 WARN 日志（见 JwtTokenProvider#validateSecret）
+    secret: ${APP_JWT_SECRET:my-ai-gateway-jwt-secret-key-2024-change-in-production}
     # Token 过期时间（毫秒），365 天，实现持久登录
     expiration: 31536000000
   relay:

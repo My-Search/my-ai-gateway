@@ -78,6 +78,9 @@ public class RelayService {
     /** 流式请求 token 用量累积器：traceId -> [promptTokens, completionTokens, totalTokens] */
     private final ConcurrentHashMap<String, int[]> streamUsageMap = new ConcurrentHashMap<>();
 
+    /** 流式空闲超时下限（毫秒）：自适应超时低于此值时仍按此值计，确保长流有足够空闲容忍 */
+    private static final long STREAM_IDLE_TIMEOUT_MS = 120_000L;
+
     /** 流式请求跨 chunk 翻译状态：traceId -> StreamTranslateState */
     private final ConcurrentHashMap<String, StreamTranslateState> streamTranslateStates = new ConcurrentHashMap<>();
 
@@ -123,6 +126,13 @@ public class RelayService {
     public Mono<String> chatCompletions(String authHeader, String requestBody) {
         String traceId = requestLogService.startTrace();
         Long gatewayApiKeyId = logOriginalRequest(traceId, authHeader, buildOpenaiHeadersJson(authHeader), requestBody);
+        // 鉴权校验：无效/缺失网关 API Key 时直接拒绝，不转发到上游（避免未授权白嫖付费 API）
+        if (gatewayApiKeyId == null) {
+            requestLogService.logComplete(traceId, null, null, null, null, null,
+                    "fail", "auth", "无效或缺失的 API Key", 0, 0);
+            return Mono.just(messageTransformer.buildErrorResponse(
+                    "openai", "无效或缺失的 API Key", "authentication_error", 401));
+        }
         return Mono.fromCallable(() -> {
                     InternalRequest req = parseRequest(requestBody, "openai");
                     applyPromptInjections(req);
@@ -136,6 +146,13 @@ public class RelayService {
     public Mono<String> messages(String apiKeyHeader, String requestBody, String anthropicVersion) {
         String traceId = requestLogService.startTrace();
         Long gatewayApiKeyId = logOriginalRequest(traceId, apiKeyHeader, buildAnthropicHeadersJson(apiKeyHeader, anthropicVersion), requestBody);
+        // 鉴权校验：无效/缺失网关 API Key 时直接拒绝，不转发到上游（避免未授权白嫖付费 API）
+        if (gatewayApiKeyId == null) {
+            requestLogService.logComplete(traceId, null, null, null, null, null,
+                    "fail", "auth", "无效或缺失的 API Key", 0, 0);
+            return Mono.just(messageTransformer.buildErrorResponse(
+                    "anthropic", "无效或缺失的 API Key", "authentication_error", 401));
+        }
         return Mono.fromCallable(() -> {
                     InternalRequest req = parseRequest(requestBody, "anthropic");
                     applyPromptInjections(req);
@@ -155,6 +172,13 @@ public class RelayService {
         SseEmitter emitter = new SseEmitter(300_000L);
         String traceId = requestLogService.startTrace();
         Long gatewayApiKeyId = logOriginalRequest(traceId, authHeader, buildOpenaiHeadersJson(authHeader), requestBody);
+        // 鉴权校验：无效/缺失网关 API Key 时直接拒绝，不转发到上游（避免未授权白嫖付费 API）
+        if (gatewayApiKeyId == null) {
+            requestLogService.logComplete(traceId, null, null, null, null, null,
+                    "fail", "auth", "无效或缺失的 API Key", 0, 0);
+            sendSseError(emitter, "无效或缺失的 API Key");
+            return emitter;
+        }
         // 注册资源清理回调：无论正常完成、超时还是客户端断开，都清理 StreamContentManager 和 streamUsageMap
         emitter.onCompletion(() -> cleanupStreamResources(traceId));
         emitter.onTimeout(() -> {
@@ -175,11 +199,7 @@ public class RelayService {
                 .publishOn(reactor.core.scheduler.Schedulers.boundedElastic(), 1)
                 .subscribe(
                         event -> sendSseEvent(emitter, event),
-                        err -> {
-                            log.error("Stream relay failed - traceId={}", traceId, err);
-                            cleanupStreamResources(traceId);
-                            sendSseError(emitter, err.getMessage());
-                        },
+                        err -> handleStreamSubscribeError(traceId, gatewayApiKeyId, emitter, err),
                         () -> {
                             cleanupStreamResources(traceId);
                             emitter.complete();
@@ -197,6 +217,13 @@ public class RelayService {
         SseEmitter emitter = new SseEmitter(300_000L);
         String traceId = requestLogService.startTrace();
         Long gatewayApiKeyId = logOriginalRequest(traceId, apiKeyHeader, buildAnthropicHeadersJson(apiKeyHeader, anthropicVersion), requestBody);
+        // 鉴权校验：无效/缺失网关 API Key 时直接拒绝，不转发到上游（避免未授权白嫖付费 API）
+        if (gatewayApiKeyId == null) {
+            requestLogService.logComplete(traceId, null, null, null, null, null,
+                    "fail", "auth", "无效或缺失的 API Key", 0, 0);
+            sendSseError(emitter, "无效或缺失的 API Key");
+            return emitter;
+        }
         // 注册资源清理回调：无论正常完成、超时还是客户端断开，都清理 StreamContentManager 和 streamUsageMap
         emitter.onCompletion(() -> cleanupStreamResources(traceId));
         emitter.onTimeout(() -> {
@@ -216,11 +243,7 @@ public class RelayService {
                 .publishOn(reactor.core.scheduler.Schedulers.boundedElastic(), 1)
                 .subscribe(
                         event -> sendSseEvent(emitter, event),
-                        err -> {
-                            log.error("Stream relay failed - traceId={}", traceId, err);
-                            cleanupStreamResources(traceId);
-                            sendSseError(emitter, err.getMessage());
-                        },
+                        err -> handleStreamSubscribeError(traceId, gatewayApiKeyId, emitter, err),
                         () -> {
                             cleanupStreamResources(traceId);
                             emitter.complete();
@@ -251,8 +274,10 @@ public class RelayService {
                                      InternalRequest req, String provider, boolean retry) {
         long startTime = System.currentTimeMillis();
         String originalModel = req.getModel();
-        logSkippedCandidates(traceId, gatewayApiKeyId, req);
+        // 一次性解析模型路由配置，避免 tryCandidates 每次递归重复查 DB
+        RoutingContext ctx = resolveModelRouting(originalModel);
         List<RoutingCandidate> candidates = getAvailableCandidates(req);
+        logSkippedCandidatesFromResult(traceId, gatewayApiKeyId, req, candidates, ctx);
         if (candidates.isEmpty()) {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, originalModel, null, null,
                     "fail", "error", "没有可用的路由候选", System.currentTimeMillis() - startTime, 0);
@@ -260,27 +285,30 @@ public class RelayService {
                     "没有可用的路由候选（渠道/API Key/模型都被熔断或不可用）", "api_error", 503));
         }
 
-        return tryCandidates(traceId, new ArrayList<>(candidates), authHeader, gatewayApiKeyId, req, provider, 0, startTime);
+        return tryCandidates(traceId, new ArrayList<>(candidates), authHeader, gatewayApiKeyId, req, provider, 0, startTime, ctx, null);
     }
 
     /**
      * 顺序尝试候选，失败后按配置进行候选内重试；重试耗尽后触发熔断并移除候选，继续下一个
      * （包级可见，便于单元测试）
+     * <p>测试兼容入口：内部解析路由上下文后委托给带 ctx 的重载。</p>
      */
     Mono<String> tryCandidates(String traceId, List<RoutingCandidate> remaining,
                                         String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                         String provider, int retryIndex, long startTime) {
-        return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex, startTime, null);
+        RoutingContext ctx = resolveModelRouting(req.getModel());
+        return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex, startTime, ctx, null);
     }
 
     /**
      * 顺序尝试候选，失败后按配置进行候选内重试；重试耗尽后触发熔断并移除候选，继续下一个。
      * 携带 lastErrorMsg 用于在全部候选失败时展示具体的失败原因。
+     * 复用传入的 RoutingContext，避免每次递归重复查 DB。
      */
     private Mono<String> tryCandidates(String traceId, List<RoutingCandidate> remaining,
                                         String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                         String provider, int retryIndex, long startTime,
-                                        String lastErrorMsg) {
+                                        RoutingContext ctx, String lastErrorMsg) {
         if (remaining.isEmpty()) {
             String failMsg = buildFailMessage(lastErrorMsg);
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, req.getModel(), null, null,
@@ -290,12 +318,9 @@ public class RelayService {
                     failMsg, "api_error", 503));
         }
 
-        // 根据模型的选择策略获取负载均衡器（不传 provider，传模型定义的 strategy）
-        String modelStrategy = resolveModelStrategy(req.getModel());
-        LoadBalancer balancer = loadBalancerFactory.getBalancer(modelStrategy);
-        // 使用自定义模型 ID 作为负载均衡维度
-        Long modelId = resolveModelId(req.getModel());
-        RoutingCandidate candidate = balancer.select(remaining, modelId);
+        // 使用缓存的模型路由配置，避免每次递归查 DB
+        LoadBalancer balancer = loadBalancerFactory.getBalancer(ctx.strategy());
+        RoutingCandidate candidate = balancer.select(remaining, ctx.modelId());
         if (candidate == null) {
             log.warn("负载均衡器返回null候选 - traceId={}", traceId);
             return Mono.just(messageTransformer.buildErrorResponse(req.getClientApiFormat(),
@@ -312,13 +337,13 @@ public class RelayService {
             logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
                     "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
-            return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, lastErrorMsg);
+            return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, ctx, lastErrorMsg);
         }
 
-        // 请求含媒体类型但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
+        // 请求含媒体类型但候选不支持 -> 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
         if (skipIfMediaTypeUnsupported(traceId, gatewayApiKeyId, candidate, req, retryIndex)) {
             remaining.remove(candidate);
-            return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, lastErrorMsg);
+            return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, ctx, lastErrorMsg);
         }
 
         log.info("路由决策 - traceId={} retryIndex={} 选中候选: channel={} model={} key={} (剩余{}个候选)",
@@ -331,9 +356,9 @@ public class RelayService {
         logPhase(traceId, gatewayApiKeyId, candidate, req, "start",
                 "路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
 
-        int maxAttempts = getMaxAttempts(req.getModel());
+        int maxAttempts = ctx.maxAttempts();
         log.info("开始调用候选 - traceId={} maxAttempts={} (retryCount={})",
-                traceId, maxAttempts, getRetryCount(req.getModel()));
+                traceId, maxAttempts, ctx.retryCount());
 
         return invokeCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, req, candidate, provider, retryIndex, 1, maxAttempts)
                 .flatMap(body -> {
@@ -368,7 +393,7 @@ public class RelayService {
                                 candidate.getChannelApiKey().getKeyName());
                         remaining.remove(candidate);
                         log.info("候选失败已移除，准备重路由 - traceId={} 剩余候选数={}", traceId, remaining.size());
-                        return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, err.getMessage());
+                        return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, ctx, err.getMessage());
                     }
                     // 非 400 错误（超时、5xx、429 等）：触发熔断，重路由到下一候选
                     log.warn("候选失败（重试耗尽）channel={} key={} model={} (已重试{}次): {}",
@@ -386,7 +411,7 @@ public class RelayService {
                         log.info("  剩余候选[{}]: channel={} model={} key={}", i,
                                 c.getChannel().getName(), c.getChannelModel().getModelName(), c.getChannelApiKey().getKeyName());
                     }
-                    return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, err.getMessage());
+                    return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, ctx, err.getMessage());
                 });
     }
 
@@ -449,15 +474,17 @@ public class RelayService {
     private Flux<SseEvent> executeStreamRelay(String traceId, String authHeader, Long gatewayApiKeyId,
                                             InternalRequest req, String provider, boolean internalClient) {
         long startTime = System.currentTimeMillis();
-        logSkippedCandidates(traceId, gatewayApiKeyId, req);
+        // 一次性解析模型路由配置，避免 tryStreamCandidates 每次递归重复查 DB
+        RoutingContext ctx = resolveModelRouting(req.getModel());
         List<RoutingCandidate> candidates = getAvailableCandidates(req);
+        logSkippedCandidatesFromResult(traceId, gatewayApiKeyId, req, candidates, ctx);
         if (candidates.isEmpty()) {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, req.getModel(), null, null,
                     "fail", "error", "没有可用的路由候选", System.currentTimeMillis() - startTime, 0);
             return Flux.error(new RuntimeException("没有可用的路由候选"));
         }
 
-        return tryStreamCandidates(traceId, new ArrayList<>(candidates), authHeader, gatewayApiKeyId, req, provider, 0, startTime, internalClient);
+        return tryStreamCandidates(traceId, new ArrayList<>(candidates), authHeader, gatewayApiKeyId, req, provider, 0, startTime, internalClient, ctx, null);
     }
 
     /**
@@ -470,17 +497,19 @@ public class RelayService {
                                                 String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                                 String provider, int retryIndex, long startTime,
                                                 boolean internalClient) {
-        return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex, startTime, internalClient, null);
+        RoutingContext ctx = resolveModelRouting(req.getModel());
+        return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex, startTime, internalClient, ctx, null);
     }
 
     /**
      * 顺序尝试流式候选，失败后按配置进行候选内重试；重试耗尽后触发熔断并移除候选，继续下一个。
      * 携带 lastErrorMsg 用于在全部候选失败时展示具体的失败原因。
+     * 复用传入的 RoutingContext，避免每次递归重复查 DB。
      */
     private Flux<SseEvent> tryStreamCandidates(String traceId, List<RoutingCandidate> remaining,
                                                 String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                                 String provider, int retryIndex, long startTime,
-                                                boolean internalClient, String lastErrorMsg) {
+                                                boolean internalClient, RoutingContext ctx, String lastErrorMsg) {
         if (remaining.isEmpty()) {
             // 清理流式内容累积
             streamContentManager.clearContent(traceId);
@@ -492,11 +521,9 @@ public class RelayService {
             return Flux.error(new RuntimeException(failMsg));
         }
 
-        // 根据模型的选择策略获取负载均衡器（不传 provider，传模型定义的 strategy）
-        String modelStrategy = resolveModelStrategy(req.getModel());
-        LoadBalancer balancer = loadBalancerFactory.getBalancer(modelStrategy);
-        Long modelId = resolveModelId(req.getModel());
-        RoutingCandidate candidate = balancer.select(remaining, modelId);
+        // 使用缓存的模型路由配置，避免每次递归查 DB
+        LoadBalancer balancer = loadBalancerFactory.getBalancer(ctx.strategy());
+        RoutingCandidate candidate = balancer.select(remaining, ctx.modelId());
         if (candidate == null) {
             log.warn("流式负载均衡器返回null候选 - traceId={}", traceId);
             return Flux.error(new RuntimeException("没有可用的路由候选"));
@@ -512,13 +539,13 @@ public class RelayService {
             logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
                     "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
-            return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
+            return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, ctx, lastErrorMsg);
         }
 
-        // 请求含媒体类型但候选不支持 → 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
+        // 请求含媒体类型但候选不支持 -> 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
         if (skipIfMediaTypeUnsupported(traceId, gatewayApiKeyId, candidate, req, retryIndex)) {
             remaining.remove(candidate);
-            return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, lastErrorMsg);
+            return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, ctx, lastErrorMsg);
         }
 
         log.info("流式路由决策 - traceId={} retryIndex={} 选中候选: channel={} model={} key={} (剩余{}个候选){}",
@@ -532,7 +559,7 @@ public class RelayService {
         logPhase(traceId, gatewayApiKeyId, candidate, req, "start",
                 "流式路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
 
-        int maxAttempts = getMaxAttempts(req.getModel());
+        int maxAttempts = ctx.maxAttempts();
         // 仅内部客户端发送路由进度事件
         Flux<SseEvent> routingStart = internalClient
                 ? Flux.just(new SseEvent(null, buildRoutingProgressJson("trying", candidate, retryIndex, null)))
@@ -601,7 +628,7 @@ public class RelayService {
                         streamContentManager.clearContent(traceId);
                         remaining.remove(candidate);
                         return Flux.concat(
-                                tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, err.getMessage()));
+                                tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, ctx, err.getMessage()));
                     }
                     // 非 400 错误（超时、5xx、429 等）：触发熔断，重路由到下一候选
                     log.warn("流式候选失败（重试耗尽）channel={} key={} model={} (已重试{}次): {}",
@@ -642,7 +669,7 @@ public class RelayService {
                                 "switching", candidate, retryIndex + 1, failReason)));
                     }
                     return Flux.concat(routingSwitch,
-                            tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, contextReq, provider, retryIndex + 1, startTime, internalClient, err.getMessage()));
+                            tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, contextReq, provider, retryIndex + 1, startTime, internalClient, ctx, err.getMessage()));
                 });
     }
 
@@ -664,7 +691,11 @@ public class RelayService {
                 candidate.getChannelApiKey().getKeyName(),
                 timeoutMs);
         return callProviderStream(authHeader, req, candidate, provider, internalClient, traceId)
-                .timeout(Duration.ofMillis(timeoutMs))
+                // 流式使用「空闲超时」而非全局超时：每收到一个 chunk 计时器重置，
+                // 只有持续无输出的卡死连接才会触发，避免误杀持续出 chunk 的长响应（如长文生成、推理模型）。
+                // idleTimeout 取 Math.max(自适应超时, 120s)，保证长流至少有 2 分钟空闲容忍。
+                .timeout(Duration.ofMillis(Math.max(timeoutMs, STREAM_IDLE_TIMEOUT_MS)),
+                        Flux.error(new RuntimeException("Stream idle timeout")))
                 .doOnError(err -> {
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
                     latencyTracker.recordTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId(), timeoutMs);
@@ -813,22 +844,33 @@ public class RelayService {
      */
     public String testChannelModel(Channel channel, ChannelModel channelModel, ChannelApiKey apiKey, String message) {
         String provider = channel.getChannelType();
-        // 构建端点（复用 buildEndpoint 的逻辑，但直接使用原始参数）
+        // 构建端点（与 buildEndpoint 规则一致：azure 用完整 deployment 路径，不追加 path）
         String baseUrl = channel.getBaseUrl();
         if (baseUrl == null || baseUrl.isBlank()) {
             baseUrl = "anthropic".equals(provider) ? "https://api.anthropic.com/v1" : "https://api.openai.com/v1";
         }
         baseUrl = baseUrl.replaceAll("/$", "");
-        String path = "anthropic".equals(provider) ? "/messages" : "/chat/completions";
-        String endpoint = baseUrl + path;
+        String endpoint = "azure".equals(provider)
+                ? baseUrl
+                : baseUrl + ("anthropic".equals(provider) ? "/messages" : "/chat/completions");
 
         // 构建请求头（复用 buildProviderHeaders，已含 Content-Type）
         Map<String, String> headers = buildProviderHeaders(provider, apiKey.getApiKey(), null);
 
-        // 构建请求体
-        String requestBody = "anthropic".equals(provider)
-                ? "{\"model\":\"" + channelModel.getModelName() + "\",\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"" + message + "\"}]}"
-                : "{\"model\":\"" + channelModel.getModelName() + "\",\"max_tokens\":100,\"messages\":[{\"role\":\"user\",\"content\":\"" + message + "\"}]}";
+        // 构建请求体：使用 ObjectMapper 构造 JSON，避免字符串拼接在 message 含特殊字符（引号、反斜杠、换行）时破坏 JSON 格式
+        String requestBody;
+        try {
+            com.fasterxml.jackson.databind.node.ObjectNode reqNode = objectMapper.createObjectNode();
+            reqNode.put("model", channelModel.getModelName());
+            reqNode.put("max_tokens", 100);
+            com.fasterxml.jackson.databind.node.ArrayNode messages = reqNode.putArray("messages");
+            com.fasterxml.jackson.databind.node.ObjectNode userMsg = messages.addObject();
+            userMsg.put("role", "user");
+            userMsg.put("content", message);
+            requestBody = objectMapper.writeValueAsString(reqNode);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new RuntimeException("构建测试请求体失败", e);
+        }
 
         log.info("渠道模型测试: channel={}, model={}, key={}, endpoint={}",
                 channel.getName(), channelModel.getModelName(), apiKey.getKeyName(), endpoint);
@@ -1212,13 +1254,12 @@ public class RelayService {
                 if (choices != null && choices.isArray() && choices.size() > 0) {
                     JsonNode delta = choices.get(0).get("delta");
                     if (delta != null) {
-                        // 提取 content（常规文本）
+                        // 仅提取 content（常规文本），用于流式上下文累积。
+                        // 注意：reasoning_content（思考/推理过程）不在此提取——它是模型的内部推理，
+                        // 不应作为 assistant 已输出的正文参与候选切换时的上下文续写，
+                        // 否则下一个候选会基于推理过程续写，导致语义错乱。
                         if (delta.has("content")) {
                             return delta.get("content").asText();
-                        }
-                        // 提取 reasoning_content（思考/推理过程），确保上下文重试时不丢失推理内容
-                        if (delta.has("reasoning_content")) {
-                            return delta.get("reasoning_content").asText();
                         }
                     }
                 }
@@ -1250,14 +1291,24 @@ public class RelayService {
 
     /**
      * 构建上游请求头
+     * <p>各渠道鉴权方式：</p>
+     * <ul>
+     *   <li>openai / 默认：Authorization: Bearer {apiKey}</li>
+     *   <li>azure：api-key: {apiKey}（Azure OpenAI 使用独立的 api-key 请求头）</li>
+     *   <li>anthropic：x-api-key + anthropic-version</li>
+     * </ul>
      */
     private Map<String, String> buildProviderHeaders(String provider, String apiKey, String authHeader) {
         Map<String, String> headers = new HashMap<>();
-        if ("openai".equals(provider) || "azure".equals(provider)) {
-            headers.put("Authorization", "Bearer " + apiKey);
+        if ("azure".equals(provider)) {
+            // Azure OpenAI 使用 api-key 请求头而非 Authorization Bearer
+            headers.put("api-key", apiKey);
         } else if ("anthropic".equals(provider)) {
             headers.put("x-api-key", apiKey);
             headers.put("anthropic-version", "2023-06-01");
+        } else {
+            // openai 及其他默认走 Bearer
+            headers.put("Authorization", "Bearer " + apiKey);
         }
         headers.put("Content-Type", "application/json");
         return headers;
@@ -1265,6 +1316,14 @@ public class RelayService {
 
     /**
      * 构建上游端点
+     * <p>各渠道端点规则：</p>
+     * <ul>
+     *   <li>azure：用户需在 baseUrl 配置完整的 deployment 路径
+     *       （如 {@code https://{resource}.openai.azure.com/openai/deployments/{deployment}/chat/completions?api-version=2024-02-15-preview}），
+     *       本方法不追加 path，仅去除尾部斜杠</li>
+     *   <li>anthropic：baseUrl + /messages</li>
+     *   <li>openai/其他：baseUrl + /chat/completions</li>
+     * </ul>
      */
     private String buildEndpoint(RoutingCandidate candidate, String provider) {
         Channel channel = candidate.getChannel();
@@ -1277,6 +1336,10 @@ public class RelayService {
             }
         }
         baseUrl = baseUrl.replaceAll("/$", "");
+        // Azure 端点由用户在 baseUrl 中配置完整 deployment 路径（含 query string），不追加固定 path
+        if ("azure".equals(provider)) {
+            return baseUrl;
+        }
         String path = "anthropic".equals(provider) ? "/messages" : "/chat/completions";
         return baseUrl + path;
     }
@@ -1783,6 +1846,41 @@ public class RelayService {
     }
 
     /**
+     * 模型路由上下文：缓存单次请求中不变的路由配置，避免在 tryCandidates/tryStreamCandidates
+     * 每次递归时重复查询数据库解析 modelId / strategy / retryCount。
+     *
+     * <p>在 executeRelay / executeStreamRelay 入口处解析一次，通过参数传递给各重试方法。</p>
+     */
+    record RoutingContext(Long modelId, String strategy, int maxAttempts, int retryCount) {
+        /** 模型不存在时的默认上下文：failover 策略、不重试 */
+        static RoutingContext defaultEmpty() {
+            return new RoutingContext(null, "failover", 1, 0);
+        }
+    }
+
+    /**
+     * 一次性解析模型的路由配置（modelId / strategy / maxAttempts / retryCount）。
+     * <p>替代 tryCandidates 内每次递归分别调用 resolveModelId/resolveModelStrategy/getMaxAttempts，
+     * 将 3~4 次 DB 查询合并为 1~2 次（getByModelName + getCircuitBreakerConfig）。</p>
+     */
+    private RoutingContext resolveModelRouting(String modelName) {
+        Model model = modelService.getByModelName(modelName);
+        if (model == null) {
+            return RoutingContext.defaultEmpty();
+        }
+        String strategy = (model.getStrategy() == null || model.getStrategy().isBlank())
+                ? "failover" : model.getStrategy();
+        int retryCount = 0;
+        CircuitBreakerConfig config = modelService.getCircuitBreakerConfig(model.getId());
+        if (config != null && config.getRetryCount() != null
+                && config.getEnabled() != null && config.getEnabled() == 1) {
+            retryCount = Math.max(0, config.getRetryCount());
+        }
+        int maxAttempts = Math.max(1, retryCount + 1);
+        return new RoutingContext(model.getId(), strategy, maxAttempts, retryCount);
+    }
+
+    /**
      * 检查候选是否已被熔断（含渠道级和模型级）
      * <p>用于在发起请求前或重试前实时检测，若被其他并发请求熔断则快速跳过。</p>
      */
@@ -1939,6 +2037,40 @@ public class RelayService {
     }
 
     /**
+     * 处理流式 subscribe 的 onError 回调。
+     * <p>区分两种错误来源：</p>
+     * <ul>
+     *   <li><b>客户端断开</b>（{@code sendSseEvent} 抛 "Client disconnected"）：
+     *       上游 doOnComplete 不会执行（onError 路径），请求日志会停留在"请求开始"无终态。
+     *       此处补记一条 {@code fail/interrupted} 终态日志，保证统计准确性。</li>
+     *   <li><b>上游错误</b>（所有候选失败等）：已被 {@code tryStreamCandidates} 的 onErrorResume
+     *       记录了 {@code fail}，此处不重复记录，仅发送 SSE 错误事件并清理。</li>
+     * </ul>
+     */
+    private void handleStreamSubscribeError(String traceId, Long gatewayApiKeyId, SseEmitter emitter, Throwable err) {
+        log.error("Stream relay failed - traceId={}", traceId, err);
+        cleanupStreamResources(traceId);
+        // 客户端断开时补记终态日志（上游错误已由 tryStreamCandidates 记录，不重复）
+        String msg = err.getMessage() != null ? err.getMessage() : "";
+        if (msg.contains("Client disconnected")) {
+            requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
+                    "fail", "interrupted", "客户端断开连接", 0, 0);
+            // 客户端已断开，sendSseError 大概率失败，但仍尝试（内部已处理异常）
+            try {
+                emitter.completeWithError(err);
+            } catch (Exception ignored) {
+            }
+        } else {
+            // 非客户端断开的错误（如 parseRequest 阶段异常、executeStreamRelay 前的错误）：
+            // tryStreamCandidates 的 onErrorResume 已记录终态，但 parseRequest 阶段抛出的错误
+            // 不经过 onErrorResume，请求日志会停留在"请求开始"状态，此处补记终态
+            requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
+                    "fail", "error", msg.isEmpty() ? "流式请求失败" : msg, 0, 0);
+            sendSseError(emitter, msg);
+        }
+    }
+
+    /**
      * 清理 SSE 流资源：清除 StreamContentManager 中的累积内容和 streamUsageMap 记录
      */
     private void cleanupStreamResources(String traceId) {
@@ -1973,11 +2105,17 @@ public class RelayService {
 
     /**
      * 记录被跳过的路由候选到请求日志（熔断、图片能力不匹配等），
-     * 让用户在 UI 中能看到完整的路由链路
+     * 让用户在 UI 中能看到完整的路由链路。
+     *
+     * <p>使用已解析的 {@link RoutingContext#modelId()} 避免重复调用 resolveModelId 查 DB。
+     * 注意：本方法仍需遍历 rels/channelModels/apiKeys 检查熔断状态以记录跳过原因，
+     * 与 getAvailableCandidates 存在部分查询重叠（均为日志展示用途，不影响路由决策）。</p>
+     *
+     * @param ctx 已解析的模型路由上下文（modelId 为 null 时直接返回）
      */
-    private void logSkippedCandidates(String traceId, Long gatewayApiKeyId, InternalRequest req) {
-        String modelName = req.getModel();
-        Long customModelId = resolveModelId(modelName);
+    private void logSkippedCandidatesFromResult(String traceId, Long gatewayApiKeyId, InternalRequest req,
+                                                List<RoutingCandidate> candidates, RoutingContext ctx) {
+        Long customModelId = ctx.modelId();
         if (customModelId == null) return;
 
         List<ModelChannelRel> rels = modelService.getChannelRels(customModelId);

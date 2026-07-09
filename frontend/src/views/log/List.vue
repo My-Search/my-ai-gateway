@@ -7,10 +7,10 @@
         <div class="card-subtitle">{{ t('log.chart.subtitle') }}</div>
       </div>
       <div class="usage-history-controls">
-        <div class="tab-switch chart-model-type-switch">
-          <button :class="['tab-btn', chartModelType === 'entry' ? 'active' : '']" @click="chartModelType = 'entry'">{{ t('dashboard.entryModel') }}</button>
-          <button :class="['tab-btn', chartModelType === 'channel' ? 'active' : '']" @click="chartModelType = 'channel'">{{ t('dashboard.channelModel') }}</button>
-        </div>
+        <TabSwitch v-model="chartModelType" :tabs="[
+          { value: 'entry', label: t('dashboard.entryModel') },
+          { value: 'channel', label: t('dashboard.channelModel') },
+        ]" class="chart-model-type-switch" />
         <div class="month-nav">
           <button class="month-nav-btn" :disabled="chartLoading" @click="prevChartMonth" :title="t('log.chart.prevMonth')">
             <SvgIcon name="arrow-left" :size="14" />
@@ -142,9 +142,7 @@
       </div>
       <div v-if="expandedTraces.has(trace.traceId)" class="trace-detail">
         <div v-for="(group, gIdx) in groupedTraceLogs.get(trace.traceId) || []" :key="group.key + '-' + gIdx" class="log-entry" :class="{ 'log-entry-clickable': group.logs.some(l => l.message) }" :style="{ paddingLeft: `calc(var(--indent-base, 12px) + ${gIdx} * var(--indent-step, 16px))` }" @click.stop="openLogDetail(group)">
-          <span class="phase" :class="'phase-' + group.logs[0].phase">
-            {{ group.logs[0].phase }}<span v-if="group.logs.length > 1" class="retry-count">(x{{ group.logs.length }})</span>
-          </span>
+          <PhaseBadge :phase="group.logs[0].phase" :count="group.logs.length > 1 ? group.logs.length : undefined" />
           <span class="log-info">
             <template v-if="group.logs[0].channelName">{{ group.logs[0].channelName }}/</template>
             <template v-if="group.logs[0].apiKeyName">{{ group.logs[0].apiKeyName }}/</template>
@@ -170,14 +168,13 @@
   </div>
 
   <Dialog
-    v-model="dialogVisible"
-    :title="dialogTitle"
-    :type="dialogType"
-    :confirm-class="dialogConfirmClass"
-    :width="dialogWidth"
-    @confirm="onDialogConfirm"
+    v-model="visible"
+    :title="title"
+    :type="type"
+    :confirm-class="confirmClass"
+    @confirm="onConfirm"
   >
-    <pre class="dialog-pre">{{ dialogMessage }}</pre>
+    <pre class="dialog-pre">{{ message }}</pre>
   </Dialog>
 
   <Dialog
@@ -189,7 +186,7 @@
   >
     <div class="request-viewer">
       <div v-if="requestDataLoading" class="request-loading">
-        <span class="loading-spinner"></span> {{ t('common.loading') }}
+        <LoadingSpinner :text="t('common.loading')" />
       </div>
       <template v-else>
         <div v-if="requestHeadersText" class="request-section">
@@ -224,7 +221,10 @@ import { modelApi, type CustomModel } from '@/api/model'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import Dialog from '@/components/common/Dialog.vue'
 import JsonTreeViewer from '@/components/common/JsonTreeViewer.vue'
+import TabSwitch from '@/components/common/TabSwitch.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { useI18n } from '@/composables/useI18n'
+import { useDialog } from '@/composables/useDialog'
 import { formatLocalDateTime, formatLocalFullTime } from '@/utils/date'
 
 const { t } = useI18n()
@@ -485,13 +485,7 @@ const total = ref(0)
 const loadMoreTrigger = ref<HTMLElement | null>(null)
 let observer: IntersectionObserver | null = null
 
-const dialogVisible = ref(false)
-const dialogTitle = ref(t('dialog.title'))
-const dialogMessage = ref('')
-const dialogType = ref<'alert' | 'confirm'>('alert')
-const dialogConfirmClass = ref('btn-primary')
-const dialogWidth = ref('420px')
-let dialogOnConfirm: (() => void) | null = null
+const { visible, title, message, type, confirmClass, open, onConfirm } = useDialog()
 
 /* ========== 原始请求查看对话框（按需加载） ========== */
 const requestDialogVisible = ref(false)
@@ -572,25 +566,6 @@ function downloadRequestBody() {
   }
 }
 
-/* ================================== */
-
-function openDialog(opts: {
-  title?: string
-  message: string
-  type?: 'alert' | 'confirm'
-  confirmClass?: string
-  onConfirm?: () => void
-  width?: string
-}) {
-  dialogTitle.value = opts.title ?? t('dialog.title')
-  dialogMessage.value = opts.message
-  dialogType.value = opts.type ?? 'alert'
-  dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
-  dialogWidth.value = opts.width ?? '420px'
-  dialogOnConfirm = opts.onConfirm ?? null
-  dialogVisible.value = true
-}
-
 /** 打开日志详情弹框，完整展示日志消息内容 */
 function openLogDetail(group: { key: string; logs: RequestLog[] }) {
   if (!group.logs.some(l => l.message)) return
@@ -625,20 +600,13 @@ function openLogDetail(group: { key: string; logs: RequestLog[] }) {
     parts.push(`\n耗时: ${durations.map(d => d + 'ms').join(' / ')}`)
   }
 
-  openDialog({
+  open({
     title: `请求详情 [${first.phase}]`,
     message: parts.join('\n'),
     type: 'alert',
     confirmClass: 'btn-primary',
-    width: '640px',
   })
 }
-
-function onDialogConfirm() {
-  dialogOnConfirm?.()
-  dialogOnConfirm = null
-}
-/* ------------------------------ */
 
 let eventSource: LogSseSubscription | null = null
 
@@ -860,7 +828,7 @@ async function loadLogs() {
     // 重建全部分组缓存
     rebuildAllTraceGroups()
   } catch (e: any) {
-    openDialog({ title: t('error.loadFailed'), message: e.message })
+    open({ title: t('error.loadFailed'), message: e.message })
   } finally {
     loading.value = false
   }
@@ -892,7 +860,7 @@ async function loadMoreLogs() {
 }
 
 function cleanLogs() {
-  openDialog({
+  open({
     title: t('common.confirm'),
     message: t('log.list.cleanConfirm'),
     type: 'confirm',
@@ -900,10 +868,10 @@ function cleanLogs() {
     onConfirm: async () => {
       try {
         const res = await logApi.clean()
-        openDialog({ message: res.data.message || t('log.list.cleanSuccess') })
+        open({ message: res.data.message || t('log.list.cleanSuccess') })
         await loadLogs()
       } catch (e: any) {
-        openDialog({ title: t('common.fail'), message: e.message })
+        open({ title: t('common.fail'), message: e.message })
       }
     }
   })
@@ -1022,7 +990,6 @@ onUnmounted(() => {
 .dialog-pre {
   margin: 0;
   padding: 12px;
-  background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   font-size: 12px;
@@ -1053,9 +1020,8 @@ onUnmounted(() => {
   font-weight: 600;
   color: var(--text-secondary);
   padding: 4px 8px;
-  background: var(--bg-secondary);
-  border-radius: 4px;
   border: 1px solid var(--border-color);
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1081,7 +1047,6 @@ onUnmounted(() => {
   margin: 0;
   overflow: auto;
   padding: 8px;
-  background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
   border-radius: 6px;
 }
@@ -1096,31 +1061,13 @@ onUnmounted(() => {
 }
 
 .request-loading {
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 40px 20px;
   color: var(--text-muted);
   font-size: 13px;
 }
-.request-loading .loading-spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-blue);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  vertical-align: middle;
-  margin-right: 6px;
-}
-
-.phase { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; white-space: nowrap; }
-.phase-start { background: color-mix(in srgb, var(--accent-blue) 20%, transparent); color: var(--accent-blue); }
-.phase-retry { background: color-mix(in srgb, var(--accent-yellow) 20%, transparent); color: var(--accent-yellow); }
-.phase-reroute { background: color-mix(in srgb, var(--accent-purple) 20%, transparent); color: var(--accent-purple); }
-.phase-success { background: color-mix(in srgb, var(--accent-green) 20%, transparent); color: var(--accent-green); }
-.phase-fail { background: color-mix(in srgb, var(--accent-red) 20%, transparent); color: var(--accent-red); }
-.phase-skip { background: color-mix(in srgb, var(--text-muted) 20%, transparent); color: var(--text-muted); }
-.retry-count { font-weight: 400; opacity: 0.85; margin-left: 2px; }
 
 .badge-sse {
   background: color-mix(in srgb, var(--accent-green) 20%, transparent);
@@ -1158,7 +1105,7 @@ onUnmounted(() => {
   color: var(--text-muted);
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
   padding: 2px 8px;
-  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
   border-radius: 3px;
   white-space: nowrap;
   overflow: hidden;
@@ -1252,34 +1199,6 @@ onUnmounted(() => {
 .chart-model-type-switch {
   flex-shrink: 0;
 }
-.tab-switch {
-  display: flex;
-  gap: 4px;
-  background: var(--bg-primary);
-  border-radius: 6px;
-  padding: 2px;
-}
-.tab-btn {
-  padding: 4px 10px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.15s;
-  white-space: nowrap;
-}
-.tab-btn:hover {
-  color: var(--text-primary);
-}
-.tab-btn.active {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-}
-
 .usage-history-controls {
   display: flex;
   align-items: center;
@@ -1293,7 +1212,6 @@ onUnmounted(() => {
   border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 2px 4px;
-  background: var(--bg-tertiary);
 }
 .month-nav-btn {
   background: transparent;
@@ -1347,21 +1265,6 @@ onUnmounted(() => {
   pointer-events: none;
   z-index: 5;
 }
-.usage-history-loading .loading-spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-blue);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  vertical-align: middle;
-  margin-right: 6px;
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 .chart-wrapper {
   position: relative;
   margin-top: 8px;

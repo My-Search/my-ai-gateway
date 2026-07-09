@@ -116,17 +116,18 @@ function onCancel() {
 .dialog-box {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: var(--radius-md, 12px);
   width: 100%;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-xl, 0 8px 32px rgba(0,0,0,0.5));
   overflow: hidden;
+  backdrop-filter: blur(4px);
 }
 
 .dialog-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: 18px 24px;
   border-bottom: 1px solid var(--border-color);
 }
 
@@ -142,7 +143,7 @@ function onCancel() {
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: var(--radius, 6px);
   border: none;
   background: transparent;
   color: var(--text-muted);
@@ -156,7 +157,7 @@ function onCancel() {
 }
 
 .dialog-body {
-  padding: 20px;
+  padding: 20px 24px;
   font-size: 14px;
   line-height: 1.6;
   color: var(--text-secondary);
@@ -166,7 +167,7 @@ function onCancel() {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  padding: 12px 20px 16px;
+  padding: 12px 24px 20px;
 }
 
 /* Transition */
@@ -188,6 +189,6 @@ function onCancel() {
 .dialog-enter-from .dialog-box,
 .dialog-leave-to .dialog-box {
   opacity: 0;
-  transform: scale(0.96) translateY(-8px);
+  transform: scale(0.95) translateY(-12px);
 }
 </style>

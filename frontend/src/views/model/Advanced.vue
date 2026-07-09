@@ -14,11 +14,12 @@
           <div class="form-group flex-grow">
             <label>{{ t('model.advanced.image') }}</label>
             <div class="switch-group">
-              <label class="switch">
-                <input type="checkbox" v-model="imageEnabled" @change="onImageToggle" />
-                <span class="switch-slider"></span>
-              </label>
-              <span class="switch-label">{{ imageEnabled ? t('common.on') : t('common.off') }}</span>
+              <ToggleSwitch
+                v-model="imageEnabled"
+                :active-label="t('common.on')"
+                :inactive-label="t('common.off')"
+                @update:model-value="onImageToggle"
+              />
             </div>
           </div>
           <div class="form-group" style="width:140px;flex-shrink:0;">
@@ -33,11 +34,12 @@
           <div class="form-group flex-grow">
             <label>{{ t('model.advanced.video') }}</label>
             <div class="switch-group">
-              <label class="switch">
-                <input type="checkbox" v-model="videoEnabled" @change="onVideoToggle" />
-                <span class="switch-slider"></span>
-              </label>
-              <span class="switch-label">{{ videoEnabled ? t('common.on') : t('common.off') }}</span>
+              <ToggleSwitch
+                v-model="videoEnabled"
+                :active-label="t('common.on')"
+                :inactive-label="t('common.off')"
+                @update:model-value="onVideoToggle"
+              />
             </div>
           </div>
           <div class="form-group" style="width:140px;flex-shrink:0;">
@@ -52,11 +54,12 @@
           <div class="form-group flex-grow">
             <label>{{ t('model.advanced.audio') }}</label>
             <div class="switch-group">
-              <label class="switch">
-                <input type="checkbox" v-model="audioEnabled" @change="onAudioToggle" />
-                <span class="switch-slider"></span>
-              </label>
-              <span class="switch-label">{{ audioEnabled ? t('common.on') : t('common.off') }}</span>
+              <ToggleSwitch
+                v-model="audioEnabled"
+                :active-label="t('common.on')"
+                :inactive-label="t('common.off')"
+                @update:model-value="onAudioToggle"
+              />
             </div>
           </div>
           <div class="form-group" style="width:140px;flex-shrink:0;">
@@ -87,6 +90,7 @@
     v-model="dialogVisible"
     :title="dialogTitle"
     :type="dialogType"
+    :confirm-class="dialogConfirmClass"
     @confirm="onDialogConfirm"
   >
     {{ dialogMessage }}
@@ -97,12 +101,15 @@
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
+import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel } from '@/api/model'
 import Dialog from '@/components/common/Dialog.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const { visible: dialogVisible, title: dialogTitle, message: dialogMessage, type: dialogType, confirmClass: dialogConfirmClass, onConfirm: onDialogConfirm, open: openDialog } = useDialog()
 const model = ref<CustomModel | null>(null)
 const saving = ref(false)
 const form = ref({
@@ -113,32 +120,6 @@ const form = ref({
 const imageEnabled = ref(false)
 const videoEnabled = ref(false)
 const audioEnabled = ref(false)
-
-/* ---------- Dialog state ---------- */
-const dialogVisible = ref(false)
-const dialogTitle = ref(t('common.prompt'))
-const dialogMessage = ref('')
-const dialogType = ref<'alert' | 'confirm'>('alert')
-let dialogOnConfirm: (() => void) | null = null
-
-function openDialog(opts: {
-  title?: string
-  message: string
-  type?: 'alert' | 'confirm'
-  onConfirm?: () => void
-}) {
-  dialogTitle.value = opts.title ?? t('common.prompt')
-  dialogMessage.value = opts.message
-  dialogType.value = opts.type ?? 'alert'
-  dialogOnConfirm = opts.onConfirm ?? null
-  dialogVisible.value = true
-}
-
-function onDialogConfirm() {
-  dialogOnConfirm?.()
-  dialogOnConfirm = null
-}
-/* ------------------------------ */
 
 function onImageToggle() {
   if (!imageEnabled.value) {
@@ -200,7 +181,6 @@ async function handleSave() {
 
 <style scoped>
 .form-section {
-  background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 20px;
@@ -236,61 +216,11 @@ async function handleSave() {
   flex: 1;
 }
 
-/* Toggle switch */
+/* Toggle switch group */
 .switch-group {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-top: 6px;
-}
-
-.switch {
-  position: relative;
-  display: inline-block;
-  width: 40px;
-  height: 22px;
-}
-
-.switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.switch-slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--border-color, #444);
-  transition: 0.3s;
-  border-radius: 22px;
-}
-
-.switch-slider::before {
-  position: absolute;
-  content: "";
-  height: 16px;
-  width: 16px;
-  left: 3px;
-  bottom: 3px;
-  background-color: var(--bg-primary, #fff);
-  transition: 0.3s;
-  border-radius: 50%;
-}
-
-.switch input:checked + .switch-slider {
-  background-color: var(--accent-blue, #58a6ff);
-}
-
-.switch input:checked + .switch-slider::before {
-  transform: translateX(18px);
-}
-
-.switch-label {
-  font-size: 13px;
-  color: var(--text-secondary);
 }
 </style>

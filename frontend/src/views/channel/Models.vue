@@ -2,9 +2,14 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">{{ t('channel.models.title').replace('{name}', channel?.name || '') }}</div>
-      <router-link to="/admin/channel/list" class="btn btn-secondary">{{ t('common.back') }}</router-link>
+      <router-link to="/admin/channel/list" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
     </div>
 
+    <div v-if="loading" class="page-loading">
+      <LoadingSpinner :size="18" :text="t('common.loading')" />
+    </div>
+
+    <template v-else>
     <!-- Summary stats -->
     <div v-if="modelStats.length" class="usage-summary">
       <div class="stat-item">
@@ -116,16 +121,18 @@
         </div>
       </div>
     </div>
+    </template>
   </div>
 
   <!-- Common Dialog -->
   <Dialog
-    v-model="dialogVisible"
-    :title="dialogTitle"
-    :type="dialogType"
-    @confirm="onDialogConfirm"
+    v-model="visible"
+    :title="title"
+    :type="type"
+    :confirm-class="confirmClass"
+    @confirm="onConfirm"
   >
-    {{ dialogMessage }}
+    {{ message }}
   </Dialog>
 </template>
 
@@ -133,42 +140,20 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
+import { useDialog } from '@/composables/useDialog'
 import { channelApi, type Channel, type ChannelModel, type ModelUsageStat } from '@/api/channel'
 import Dialog from '@/components/common/Dialog.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 const channel = ref<Channel | null>(null)
 const models = ref<ChannelModel[]>([])
 const modelStats = ref<ModelUsageStat[]>([])
 const channelAvgResponseTimeRecent30 = ref<number>(0)
-
-/* ---------- Dialog state ---------- */
-const dialogVisible = ref(false)
-const dialogTitle = ref(t('common.prompt'))
-const dialogMessage = ref('')
-const dialogType = ref<'alert' | 'confirm'>('alert')
-let dialogOnConfirm: (() => void) | null = null
-
-function openDialog(opts: {
-  title?: string
-  message: string
-  type?: 'alert' | 'confirm'
-  onConfirm?: () => void
-}) {
-  dialogTitle.value = opts.title ?? t('common.prompt')
-  dialogMessage.value = opts.message
-  dialogType.value = opts.type ?? 'alert'
-  dialogOnConfirm = opts.onConfirm ?? null
-  dialogVisible.value = true
-}
-
-function onDialogConfirm() {
-  dialogOnConfirm?.()
-  dialogOnConfirm = null
-}
-/* ------------------------------ */
+const loading = ref(false)
 
 /** Find usage stats by model name */
 function getModelStat(modelName: string): ModelUsageStat | undefined {
@@ -215,6 +200,7 @@ function formatResponseTime(ms: number | undefined): string {
 
 onMounted(async () => {
   const id = Number(route.params.id)
+  loading.value = true
   try {
     const [modelsRes, statsRes] = await Promise.all([
       channelApi.getModels(id),
@@ -225,8 +211,10 @@ onMounted(async () => {
     modelStats.value = statsRes.data.modelStats
     channelAvgResponseTimeRecent30.value = statsRes.data.channelAvgResponseTimeRecent30 ?? 0
   } catch (e: any) {
-    openDialog({ title: t('error.loadFailed'), message: e.message })
+    open({ title: t('error.loadFailed'), message: e.message })
     router.push('/admin/channel/list')
+  } finally {
+    loading.value = false
   }
 })
 </script>
@@ -335,6 +323,16 @@ onMounted(async () => {
   .usage-summary {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+
+/* Page loading state */
+.page-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 /* Input type tags */

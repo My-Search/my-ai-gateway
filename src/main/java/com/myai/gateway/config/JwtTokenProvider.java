@@ -2,6 +2,7 @@ package com.myai.gateway.config;
 
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,6 +27,36 @@ public class JwtTokenProvider {
 
     @Value("${app.jwt.expiration:28800000}") // 默认 8 小时 = 8 * 60 * 60 * 1000
     private long jwtExpiration;
+
+    /** 内置默认密钥，用于启动时检测是否仍为默认值 */
+    private static final String DEFAULT_SECRET = "my-ai-gateway-jwt-secret-key-2024-change-in-production";
+
+    /** HS256 所需的最小密钥长度（字节），低于此长度 JJWT 会抛 WeakKeyException */
+    private static final int MIN_SECRET_BYTES = 32;
+
+    /**
+     * 启动时校验 JWT 密钥强度。
+     * <p>不强制 fail-fast 以避免破坏现有部署，但对以下情况打印 WARN 日志强烈提示：</p>
+     * <ul>
+     *   <li>密钥仍为内置默认值（生产环境可被伪造 Token 接管后台）</li>
+     *   <li>密钥长度不足 32 字节（无法满足 HS256 安全强度要求）</li>
+     * </ul>
+     */
+    @PostConstruct
+    public void validateSecret() {
+        if (jwtSecret == null || jwtSecret.isBlank()) {
+            log.warn("⚠️ app.jwt.secret 为空！JWT 签名将失败，请通过环境变量 APP_JWT_SECRET 配置密钥");
+            return;
+        }
+        if (DEFAULT_SECRET.equals(jwtSecret)) {
+            log.warn("⚠️ 检测到 JWT 密钥仍为内置默认值！生产环境存在被伪造管理后台 Token 的风险，"
+                    + "请通过环境变量 APP_JWT_SECRET 设置一个高熵随机密钥（建议 ≥ 64 字节）");
+        }
+        if (jwtSecret.getBytes(StandardCharsets.UTF_8).length < MIN_SECRET_BYTES) {
+            log.warn("⚠️ app.jwt.secret 长度不足 {} 字节，无法满足 HS256 安全强度要求，"
+                    + "请设置更长的密钥", MIN_SECRET_BYTES);
+        }
+    }
 
     /**
      * 生成 JWT Token

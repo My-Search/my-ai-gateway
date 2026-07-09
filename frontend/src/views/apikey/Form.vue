@@ -30,55 +30,31 @@
 
   <!-- Common Dialog -->
   <Dialog
-    v-model="dialogVisible"
-    :title="dialogTitle"
-    :type="dialogType"
-    @confirm="onDialogConfirm"
+    v-model="visible"
+    :title="title"
+    :type="type"
+    :confirm-class="confirmClass"
+    @confirm="onConfirm"
   >
-    {{ dialogMessage }}
+    {{ message }}
   </Dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from '@/composables/useI18n'
+import { useDialog } from '@/composables/useDialog'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import Dialog from '@/components/common/Dialog.vue'
-import { useI18n } from '@/composables/useI18n'
 
 const { t } = useI18n()
-
 const route = useRoute()
 const router = useRouter()
+const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 const isEdit = computed(() => !!route.params.id)
 const saving = ref(false)
 const form = ref<Partial<ApiKey>>({ keyName: '', keyValue: '', enabled: 1 })
-
-/* ---------- Dialog state ---------- */
-const dialogVisible = ref(false)
-const dialogTitle = ref(t('common.prompt'))
-const dialogMessage = ref('')
-const dialogType = ref<'alert' | 'confirm'>('alert')
-let dialogOnConfirm: (() => void) | null = null
-
-function openDialog(opts: {
-  title?: string
-  message: string
-  type?: 'alert' | 'confirm'
-  onConfirm?: () => void
-}) {
-  dialogTitle.value = opts.title ?? t('common.prompt')
-  dialogMessage.value = opts.message
-  dialogType.value = opts.type ?? 'alert'
-  dialogOnConfirm = opts.onConfirm ?? null
-  dialogVisible.value = true
-}
-
-function onDialogConfirm() {
-  dialogOnConfirm?.()
-  dialogOnConfirm = null
-}
-/* ------------------------------ */
 
 onMounted(async () => {
   if (isEdit.value) {
@@ -86,7 +62,7 @@ onMounted(async () => {
       const res = await apikeyApi.get(Number(route.params.id))
       form.value = { ...res.data }
     } catch (e: any) {
-      openDialog({ title: t('error.loadFailed'), message: e.message })
+      open({ title: t('error.loadFailed'), message: e.message })
       router.push('/admin/apikey/list')
     }
   }
@@ -102,13 +78,13 @@ async function handleSave() {
     }
     if (isEdit.value) {
       await apikeyApi.update(Number(route.params.id), payload)
-      openDialog({ title: t('common.success'), message: t('apikey.form.updateSuccess'), onConfirm: () => router.push('/admin/apikey/list') })
+      open({ title: t('common.success'), message: t('apikey.form.updateSuccess'), onConfirm: () => router.push('/admin/apikey/list') })
     } else {
       await apikeyApi.create(payload)
-      openDialog({ title: t('common.success'), message: t('apikey.form.createSuccess'), onConfirm: () => router.push('/admin/apikey/list') })
+      open({ title: t('common.success'), message: t('apikey.form.createSuccess'), onConfirm: () => router.push('/admin/apikey/list') })
     }
   } catch (e: any) {
-    openDialog({ title: t('apikey.form.saveFailed'), message: e.message })
+    open({ title: t('apikey.form.saveFailed'), message: e.message })
   } finally {
     saving.value = false
   }

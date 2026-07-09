@@ -192,6 +192,7 @@
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
+import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel, type ModelChannelRel, type RelMode } from '@/api/model'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
 import Dialog from '@/components/common/Dialog.vue'
@@ -200,6 +201,7 @@ import Sortable from 'sortablejs'
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const { visible: dialogVisible, title: dialogTitle, message: dialogMessage, type: dialogType, confirmClass: dialogConfirmClass, onConfirm: onDialogConfirm, open: openDialog } = useDialog()
 const model = ref<CustomModel | null>(null)
 const rels = ref<ModelChannelRel[]>([])
 const availableModels = ref<any[]>([])
@@ -226,34 +228,6 @@ function formatRespTime(ms: number): string {
 
 function effortLabel(value: string): string {
   return value // 直接显示原始值 low/medium/high/xhigh/max
-}
-
-/* ---------- Dialog state (common) ---------- */
-const dialogVisible = ref(false)
-const dialogTitle = ref(t('common.prompt'))
-const dialogMessage = ref('')
-const dialogType = ref<'alert' | 'confirm'>('alert')
-const dialogConfirmClass = ref('btn-primary')
-let dialogOnConfirm: (() => void) | null = null
-
-function openDialog(opts: {
-  title?: string
-  message: string
-  type?: 'alert' | 'confirm'
-  confirmClass?: string
-  onConfirm?: () => void
-}) {
-  dialogTitle.value = opts.title ?? t('common.prompt')
-  dialogMessage.value = opts.message
-  dialogType.value = opts.type ?? 'alert'
-  dialogConfirmClass.value = opts.confirmClass ?? 'btn-primary'
-  dialogOnConfirm = opts.onConfirm ?? null
-  dialogVisible.value = true
-}
-
-function onDialogConfirm() {
-  dialogOnConfirm?.()
-  dialogOnConfirm = null
 }
 
 /* ---------- Switch-mode confirm dialog ---------- */
@@ -615,7 +589,6 @@ table td {
 .mode-tabs {
   display: inline-flex;
   align-items: center;
-  background: var(--bg-tertiary);
   border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 2px;

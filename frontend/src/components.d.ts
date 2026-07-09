@@ -8,17 +8,22 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     ChatPlayground: typeof import('./components/chat/ChatPlayground.vue')['default']
+    CopyButton: typeof import('./components/common/CopyButton.vue')['default']
     Dialog: typeof import('./components/common/Dialog.vue')['default']
     JsonNode: typeof import('./components/common/JsonNode.vue')['default']
     JsonTreeViewer: typeof import('./components/common/JsonTreeViewer.vue')['default']
     Layout: typeof import('./components/layout/Layout.vue')['default']
     LoadingModal: typeof import('./components/common/LoadingModal.vue')['default']
+    LoadingSpinner: typeof import('./components/common/LoadingSpinner.vue')['default']
     MultiModalRuleDialog: typeof import('./components/channel/MultiModalRuleDialog.vue')['default']
+    PhaseBadge: typeof import('./components/common/PhaseBadge.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     SearchableSelect: typeof import('./components/common/SearchableSelect.vue')['default']
     Sidebar: typeof import('./components/layout/Sidebar.vue')['default']
     SvgIcon: typeof import('./components/common/SvgIcon.vue')['default']
+    TabSwitch: typeof import('./components/common/TabSwitch.vue')['default']
     TodayTrendChart: typeof import('./components/dashboard/TodayTrendChart.vue')['default']
+    ToggleSwitch: typeof import('./components/common/ToggleSwitch.vue')['default']
   }
 }

@@ -1016,6 +1016,29 @@ class RelayServiceTest {
         assertThat(content).isNull();
     }
 
+    /**
+     * #4 修复验证：reasoning_content（思考/推理过程）不应被提取为流式上下文内容。
+     * <p>原因：reasoning_content 是模型内部推理，不应作为 assistant 已输出正文参与候选切换时的上下文续写，
+     * 否则下一个候选会基于推理过程续写，导致语义错乱。</p>
+     */
+    @Test
+    void extractTextContentFromRawData_openaiReasoningContent_returnsNull() {
+        // delta 仅含 reasoning_content，不含 content -> 应返回 null（不累积推理过程）
+        String rawData = "{\"id\":\"chatcmpl-123\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"正在思考...\"},\"finish_reason\":null}]}";
+        String content = relayService.extractTextContentFromRawData(rawData, "openai");
+        assertThat(content).isNull();
+    }
+
+    /**
+     * #4 修复验证：当 delta 同时含 content 和 reasoning_content 时，只提取 content。
+     */
+    @Test
+    void extractTextContentFromRawData_openaiContentAndReasoning_returnsOnlyContent() {
+        String rawData = "{\"id\":\"chatcmpl-123\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"正文\",\"reasoning_content\":\"推理\"},\"finish_reason\":null}]}";
+        String content = relayService.extractTextContentFromRawData(rawData, "openai");
+        assertThat(content).isEqualTo("正文");
+    }
+
     @Test
     void streamContentManager_isInjectedAndUsable() {
         // 验证 StreamContentManager 注入正常
@@ -1023,6 +1046,76 @@ class RelayServiceTest {
         streamContentManager.appendContent("test-trace", "Hello");
         assertThat(streamContentManager.getContent("test-trace")).isEqualTo("Hello");
         streamContentManager.clearContent("test-trace");
+    }
+
+    /**
+     * #1 修复验证：网关 API Key 无效（resolveIdFromAuthHeader 返回 null）时，
+     * chatCompletions 应直接返回 401 错误响应，不转发到上游。
+     */
+    @Test
+    void chatCompletions_invalidApiKey_returns401AndDoesNotRelay() {
+        // 无效 key：resolveIdFromAuthHeader 返回 null
+        when(apiKeyService.resolveIdFromAuthHeader("Bearer invalid-key")).thenReturn(null);
+        // mock buildErrorResponse 返回可识别的错误响应
+        String errorResp = "{\"error\":{\"message\":\"无效或缺失的 API Key\",\"type\":\"authentication_error\",\"code\":401}}";
+        when(messageTransformer.buildErrorResponse("openai", "无效或缺失的 API Key", "authentication_error", 401))
+                .thenReturn(errorResp);
+
+        String result = relayService.chatCompletions("Bearer invalid-key", "{\"model\":\"x\",\"messages\":[]}")
+                .block(Duration.ofSeconds(5));
+
+        // 应返回 401 错误响应
+        assertThat(result).isEqualTo(errorResp);
+        // 不应解析请求 / 不应调用模型服务查询候选（未进入 executeRelay）
+        verify(modelService, never()).getByModelName(anyString());
+        verify(modelService, never()).getChannelRels(anyLong());
+    }
+
+    /**
+     * #1 修复验证：Anthropic 兼容入口 messages 在网关 API Key 无效时返回 401，不转发上游。
+     */
+    @Test
+    void messages_invalidApiKey_returns401AndDoesNotRelay() {
+        when(apiKeyService.resolveIdFromAuthHeader("sk-invalid")).thenReturn(null);
+        String errorResp = "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"无效或缺失的 API Key\"}}";
+        when(messageTransformer.buildErrorResponse("anthropic", "无效或缺失的 API Key", "authentication_error", 401))
+                .thenReturn(errorResp);
+
+        String result = relayService.messages("sk-invalid",
+                "{\"model\":\"x\",\"messages\":[],\"max_tokens\":100}", "2023-06-01")
+                .block(Duration.ofSeconds(5));
+
+        assertThat(result).isEqualTo(errorResp);
+        verify(modelService, never()).getByModelName(anyString());
+    }
+
+    /**
+     * #1 修复验证：有效网关 API Key（resolveIdFromAuthHeader 返回非 null）时正常进入中继流程。
+     */
+    @Test
+    void chatCompletions_validApiKey_proceedsToRelay() {
+        // 有效 key
+        when(apiKeyService.resolveIdFromAuthHeader("Bearer valid-key")).thenReturn(99L);
+        // mock parseOpenAiRequest 返回基本请求（鉴权通过后 parseRequest 才会被调用）
+        InternalRequest parsedReq = new InternalRequest();
+        parsedReq.setModel("x");
+        parsedReq.setClientApiFormat("openai");
+        when(messageTransformer.parseOpenAiRequest(any())).thenReturn(parsedReq);
+        // 模型存在但无可用候选（快速路径验证鉴权通过后进入了 executeRelay）
+        Model model = new Model();
+        model.setId(1L);
+        model.setModelName("x");
+        when(modelService.getByModelName("x")).thenReturn(model);
+        when(modelService.getChannelRels(1L)).thenReturn(List.of());
+        when(modelService.getCircuitBreakerConfig(1L)).thenReturn(null);
+        when(messageTransformer.buildErrorResponse(eq("openai"), anyString(), eq("api_error"), eq(503)))
+                .thenReturn("{\"error\":{\"message\":\"no candidates\"}}");
+
+        relayService.chatCompletions("Bearer valid-key", "{\"model\":\"x\",\"messages\":[]}")
+                .block(Duration.ofSeconds(5));
+
+        // 鉴权通过后应查询模型（进入了 executeRelay -> getAvailableCandidates）
+        verify(modelService, atLeastOnce()).getByModelName("x");
     }
 
     private RoutingCandidate createMockCandidate() {

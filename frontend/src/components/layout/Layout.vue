@@ -14,8 +14,6 @@
           <button class="mobile-menu-btn" @click="sidebarOpen = !sidebarOpen">
             <SvgIcon name="menu" :size="20" />
           </button>
-          <span class="page-title">{{ currentTitle }}</span>
-          <span class="version-badge">v1.0</span>
         </div>
         <div class="mobile-header-right">
           <button class="btn-icon-mobile" @click="toggleTheme" :title="isDark ? t('layout.switchLight') : t('layout.switchDark')">
@@ -32,10 +30,7 @@
 
       <!-- Top header -->
       <header class="top-header">
-        <div class="header-left">
-          <div class="page-title">{{ currentTitle }}</div>
-          <span class="version-tag">v1.0</span>
-        </div>
+        <div class="header-left"></div>
         <div class="header-right">
           <button class="btn-icon" @click="toggleTheme" :title="isDark ? t('layout.switchLight') : t('layout.switchDark')">
             <SvgIcon :name="isDark ? 'sun' : 'moon'" :size="16" />
@@ -130,10 +125,14 @@ async function handleLogout() {
   }
 }
 
-/* Top header */
+/* ── Top Header (Modern) ──
+ * Subtle backdrop blur for depth, sticky behavior.
+ */
 .top-header {
   height: var(--header-height);
-  background: var(--bg-secondary);
+  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
@@ -150,22 +149,6 @@ async function handleLogout() {
   gap: 12px;
 }
 
-.page-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.version-tag {
-  font-size: 12px;
-  color: var(--text-muted);
-  background: var(--bg-tertiary);
-  padding: 2px 10px;
-  border-radius: 10px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
-}
-
 .header-right {
   display: flex;
   align-items: center;
@@ -179,7 +162,7 @@ async function handleLogout() {
   justify-content: center;
   width: 32px;
   height: 32px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--text-secondary);
   background: transparent;
   text-decoration: none;
@@ -198,21 +181,22 @@ async function handleLogout() {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   font-size: 13px;
   font-weight: 500;
   color: var(--text-secondary);
-  background: var(--bg-tertiary);
+  background: transparent;
   text-decoration: none;
-  transition: all 0.15s;
-  border: none;
+  transition: all 0.18s ease;
+  border: 1px solid transparent;
   cursor: pointer;
   font-family: inherit;
 }
 
 .btn-logout:hover {
-  background: color-mix(in srgb, var(--accent-red) 15%, transparent);
+  background: color-mix(in srgb, var(--accent-red) 12%, transparent);
   color: var(--accent-red);
+  border-color: color-mix(in srgb, var(--accent-red) 20%, transparent);
 }
 
 .content-area {
@@ -245,7 +229,7 @@ async function handleLogout() {
   justify-content: center;
   width: 36px;
   height: 36px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--text-secondary);
   background: transparent;
   text-decoration: none;
@@ -259,21 +243,6 @@ async function handleLogout() {
   color: var(--text-primary);
 }
 
-.mobile-header .page-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.mobile-header .version-badge {
-  font-size: 11px;
-  color: var(--text-muted);
-  background: var(--bg-tertiary);
-  padding: 1px 8px;
-  border-radius: 8px;
-  font-weight: 500;
-}
-
 .mobile-menu-btn {
   background: none;
   border: none;
@@ -282,26 +251,6 @@ async function handleLogout() {
   padding: 4px 8px;
   display: flex;
   align-items: center;
-}
-
-.btn-logout-mobile {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 6px;
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  text-decoration: none;
-  transition: all 0.15s;
-  border: none;
-  cursor: pointer;
-}
-
-.btn-logout-mobile:hover {
-  background: color-mix(in srgb, var(--accent-red) 15%, transparent);
-  color: var(--accent-red);
 }
 
 @media (max-width: 768px) {
@@ -316,7 +265,9 @@ async function handleLogout() {
     align-items: center;
     justify-content: space-between;
     padding: 10px 16px;
-    background: var(--bg-secondary);
+    background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--border-color);
     position: sticky;
     top: 0;

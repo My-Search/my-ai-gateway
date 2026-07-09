@@ -421,6 +421,14 @@ export default {
   'apikey.form.createSuccess': 'Key created',
   'apikey.form.saveFailed': 'Save failed',
 
+  /* ========== Log Phase Labels ========== */
+  'log.phase.start': 'Start',
+  'log.phase.retry': 'Retry',
+  'log.phase.reroute': 'Reroute',
+  'log.phase.success': 'Success',
+  'log.phase.fail': 'Failed',
+  'log.phase.skip': 'Skipped',
+
   /* ========== Log List ========== */
   'log.list.title': 'Request Logs',
   'log.list.realtime': 'Live',

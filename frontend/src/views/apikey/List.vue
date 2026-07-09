@@ -27,9 +27,7 @@
               <code class="model-tag" style="user-select:all;cursor:pointer;" @click="copyKey(key.keyValue)">
                 {{ maskKey(key.keyValue) }}
               </code>
-              <button class="copy-btn" @click="copyKey(key.keyValue)" :title="t('apikey.list.copy')">
-                <SvgIcon name="copy" :size="14" />
-              </button>
+              <CopyButton :text="key.keyValue" :title="t('apikey.list.copy')" />
             </td>
             <td>
               <span v-if="key.enabled === 1" class="badge badge-success">
@@ -95,7 +93,6 @@
           <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)"><SvgIcon name="link" :size="14" /> {{ t('apikey.list.shareLink') }}</button>
           <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)"><SvgIcon name="link" :size="14" /> {{ t('apikey.list.shareLink') }}</button>
           <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)"><SvgIcon name="x-bold" :size="14" /> {{ t('apikey.list.revoke') }}</button>
-          <button class="btn btn-sm btn-secondary" @click="copyKey(key.keyValue)"><SvgIcon name="copy" :size="14" /> {{ t('apikey.list.copy') }}</button>
           <button class="btn btn-sm btn-secondary" @click="openForm(key)"><SvgIcon name="edit" :size="14" /> {{ t('apikey.list.edit') }}</button>
           <button class="btn btn-sm btn-danger" @click="confirmDelete(key)"><SvgIcon name="trash" :size="14" /> {{ t('apikey.list.delete') }}</button>
         </div>
@@ -155,6 +152,7 @@ import { useRouter } from 'vue-router'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { shareApi } from '@/api/share'
 import Dialog from '@/components/common/Dialog.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { formatLocalDateTimeFull } from '@/utils/date'
@@ -358,14 +356,6 @@ onMounted(loadKeys)
 </script>
 
 <style scoped>
-.copy-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px; cursor: pointer; color: var(--text-muted);
-  background: var(--bg-tertiary); border: 1px solid var(--border-color);
-  border-radius: 4px; padding: 0; margin-left: 8px; vertical-align: middle;
-}
-.copy-btn:hover { color: var(--accent-blue); border-color: var(--accent-blue); }
-
 /* Warning button (revoke share) */
 :deep(.btn-warning) {
   background: #f59e0b; color: #fff; border-color: #d97706;

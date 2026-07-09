@@ -123,85 +123,70 @@
   </div>
 
   <!-- Add/Edit Rule Dialog -->
-  <Teleport to="body">
-    <Transition name="dialog">
-      <div v-if="formVisible" class="dialog-overlay" @click.self="cancelForm">
-        <div class="dialog-box pi-dialog" role="dialog" aria-modal="true">
-          <div class="dialog-header">
-            <span class="dialog-title">{{ editingRule ? t('promptInjection.editRule') : t('promptInjection.addRule') }}</span>
-            <button class="dialog-close" @click="cancelForm" :aria-label="t('common.close')">
-              <SvgIcon name="x" :size="18" />
-            </button>
-          </div>
-          <div class="dialog-body">
-            <form @submit.prevent="handleSave">
-              <!-- Name -->
-              <div class="form-group">
-                <label for="pi-name">{{ t('promptInjection.name') }}</label>
-                <input id="pi-name" v-model="form.name" class="form-control" :placeholder="t('promptInjection.namePlaceholder')" />
-              </div>
+  <Dialog
+    v-model="formVisible"
+    :title="editingRule ? t('promptInjection.editRule') : t('promptInjection.addRule')"
+    type="confirm"
+    :confirm-text="t('common.save')"
+    width="520px"
+    @confirm="handleSave"
+    @cancel="cancelForm"
+  >
+    <form @submit.prevent="handleSave">
+      <!-- Name -->
+      <div class="form-group">
+        <label for="pi-name">{{ t('promptInjection.name') }}</label>
+        <input id="pi-name" v-model="form.name" class="form-control" :placeholder="t('promptInjection.namePlaceholder')" />
+      </div>
 
-              <!-- Inject Role -->
-              <div class="form-group">
-                <label for="pi-role">{{ t('promptInjection.injectRole') }}</label>
-                <select id="pi-role" v-model="form.injectRole" class="form-control">
-                  <option value="system">System</option>
-                  <option value="user">User</option>
-                  <option value="assistant">Assistant</option>
-                </select>
-                <div class="form-hint">{{ t('promptInjection.injectRoleHint') }}</div>
-              </div>
+      <!-- Inject Role -->
+      <div class="form-group">
+        <label for="pi-role">{{ t('promptInjection.injectRole') }}</label>
+        <select id="pi-role" v-model="form.injectRole" class="form-control">
+          <option value="system">System</option>
+          <option value="user">User</option>
+          <option value="assistant">Assistant</option>
+        </select>
+        <div class="form-hint">{{ t('promptInjection.injectRoleHint') }}</div>
+      </div>
 
-              <!-- Inject Position -->
-              <div class="form-group">
-                <label for="pi-position">{{ t('promptInjection.injectPosition') }}</label>
-                <select id="pi-position" v-model="form.injectPosition" class="form-control">
-                  <option value="prepend">{{ t('promptInjection.positionPrepend') }}</option>
-                  <option value="append">{{ t('promptInjection.positionAppend') }}</option>
-                  <option value="replace_system">{{ t('promptInjection.positionReplaceSystem') }}</option>
-                </select>
-                <div class="form-hint">{{ t('promptInjection.injectPositionHint') }}</div>
-              </div>
+      <!-- Inject Position -->
+      <div class="form-group">
+        <label for="pi-position">{{ t('promptInjection.injectPosition') }}</label>
+        <select id="pi-position" v-model="form.injectPosition" class="form-control">
+          <option value="prepend">{{ t('promptInjection.positionPrepend') }}</option>
+          <option value="append">{{ t('promptInjection.positionAppend') }}</option>
+          <option value="replace_system">{{ t('promptInjection.positionReplaceSystem') }}</option>
+        </select>
+        <div class="form-hint">{{ t('promptInjection.injectPositionHint') }}</div>
+      </div>
 
-              <!-- Content -->
-              <div class="form-group">
-                <label for="pi-content">{{ t('promptInjection.content') }} *</label>
-                <textarea id="pi-content" v-model="form.content" class="form-control pi-content-input"
-                          :placeholder="t('promptInjection.contentPlaceholder')" rows="5" required></textarea>
-              </div>
+      <!-- Content -->
+      <div class="form-group">
+        <label for="pi-content">{{ t('promptInjection.content') }} *</label>
+        <textarea id="pi-content" v-model="form.content" class="form-control pi-content-input"
+                  :placeholder="t('promptInjection.contentPlaceholder')" rows="5" required></textarea>
+      </div>
 
-              <!-- Priority -->
-              <div class="form-row">
-                <div class="form-group" style="flex:1;">
-                  <label for="pi-priority">{{ t('promptInjection.priority') }}</label>
-                  <input id="pi-priority" v-model.number="form.priority" type="number" class="form-control" min="0" max="999" />
-                </div>
-                <div class="form-group" style="flex:1;">
-                  <label>{{ t('promptInjection.status') }}</label>
-                  <div class="switch-group" style="margin-top:6px;">
-                    <label class="switch">
-                      <input type="checkbox" v-model="form.enabled" :true-value="1" :false-value="0" />
-                      <span class="switch-slider"></span>
-                    </label>
-                    <span class="switch-label">{{ form.enabled === 1 ? t('common.on') : t('common.off') }}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div class="dialog-footer-inner">
-                <button type="button" class="btn btn-secondary" @click="cancelForm">
-                  <SvgIcon name="x" :size="14" /> {{ t('common.cancel') }}
-                </button>
-                <button type="submit" class="btn btn-primary" :disabled="saving">
-                  <SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('common.save') }}
-                </button>
-              </div>
-            </form>
+      <!-- Priority -->
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label for="pi-priority">{{ t('promptInjection.priority') }}</label>
+          <input id="pi-priority" v-model.number="form.priority" type="number" class="form-control" min="0" max="999" />
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label>{{ t('promptInjection.status') }}</label>
+          <div class="switch-group" style="margin-top:6px;">
+            <ToggleSwitch
+              v-model="form.enabled"
+              :active-label="t('common.on')"
+              :inactive-label="t('common.off')"
+            />
           </div>
         </div>
       </div>
-    </Transition>
-  </Teleport>
+    </form>
+  </Dialog>
 
   <!-- Common Dialog -->
   <Dialog
@@ -223,6 +208,7 @@ import { useDialog } from '@/composables/useDialog'
 import { promptInjectionApi, type PromptInjection, type InjectRole, type InjectPosition } from '@/api/promptInjection'
 import { modelApi, type CustomModel } from '@/api/model'
 import Dialog from '@/components/common/Dialog.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -450,7 +436,7 @@ onMounted(async () => {
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   color: var(--text-secondary);
 }
@@ -546,70 +532,7 @@ onMounted(async () => {
   transform: translateX(12px);
 }
 
-/* ---------- Dialog form ---------- */
-.dialog-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 10000;
-  padding: 16px;
-}
-.dialog-box.pi-dialog {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 10px;
-  width: 100%;
-  max-width: 520px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  overflow: hidden;
-  max-height: 90vh;
-  overflow-y: auto;
-}
-.dialog-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color);
-}
-.dialog-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-.dialog-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.dialog-close:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-.dialog-body {
-  padding: 20px;
-}
-.dialog-footer-inner {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border-color);
-}
-
-/* Form rows */
+/* Form rows within dialog */
 .form-row {
   display: flex;
   gap: 12px;
@@ -622,57 +545,13 @@ onMounted(async () => {
   resize: vertical;
 }
 
-/* Switch group inside form */
 .switch-group {
   display: flex;
   align-items: center;
   gap: 10px;
 }
-.switch {
-  position: relative;
-  display: inline-block;
-  width: 40px;
-  height: 22px;
-}
-.switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-.switch-slider {
-  position: absolute;
-  cursor: pointer;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--border-color, #444);
-  transition: 0.3s;
-  border-radius: 22px;
-}
-.switch-slider::before {
-  position: absolute;
-  content: "";
-  height: 16px;
-  width: 16px;
-  left: 3px;
-  bottom: 3px;
-  background-color: var(--bg-primary, #fff);
-  transition: 0.3s;
-  border-radius: 50%;
-}
-.switch input:checked + .switch-slider {
-  background-color: var(--accent-blue, #58a6ff);
-}
-.switch input:checked + .switch-slider::before {
-  transform: translateX(18px);
-}
-.switch-label {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
 
-/* ---------- Mobile card list ---------- */
+/* Mobile card list */
 .mobile-card-list {
   display: none;
   flex-direction: column;
@@ -715,7 +594,7 @@ onMounted(async () => {
   color: var(--text-secondary);
   font-family: var(--font-mono, monospace);
   padding: 8px 10px;
-  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
   margin-bottom: 8px;
   line-height: 1.6;
@@ -731,25 +610,6 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
-}
-
-/* ---------- Transition ---------- */
-.dialog-enter-active,
-.dialog-leave-active {
-  transition: opacity 0.2s ease;
-}
-.dialog-enter-active .dialog-box,
-.dialog-leave-active .dialog-box {
-  transition: transform 0.2s ease, opacity 0.2s ease;
-}
-.dialog-enter-from,
-.dialog-leave-to {
-  opacity: 0;
-}
-.dialog-enter-from .dialog-box,
-.dialog-leave-to .dialog-box {
-  opacity: 0;
-  transform: scale(0.96) translateY(-8px);
 }
 
 /* ---------- Responsive ---------- */

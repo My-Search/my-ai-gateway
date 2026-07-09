@@ -1,57 +1,82 @@
-/* My AI Gateway - Global Styles (Dark/Light Theme)
+/* ══════════════════════════════════════════════════════════════
+   My AI Gateway — Modern Design System
+   ══════════════════════════════════════════════════════════════
  *
- * Color system ported from FreeLLMAPI (oklch color space) for
- * accurate, vibrant hues that stay consistent across themes.
+ * Color system uses oklch color space for accurate, vibrant hues
+ * that stay consistent across themes.
  *
  * ── Token architecture ──
- *   :root  → shared tokens + light-theme defaults
- *   [data-theme="dark"] → dark-theme overrides
+ *   :root                → shared tokens + light-theme defaults
+ *   [data-theme="dark"]  → dark-theme overrides
  *   .theme-transitioning → smooth 0.3s transitions on theme-affected props
  *
- * Components reference the same variable names as before, so no
- * existing component code needs to change.
+ * ── Modern additions in this redesign ──
+ *   Shadow token system (--shadow-sm/md/lg/xl)
+ *   Subtle glass morphism utilities (--glass-*)
+ *   Enhanced hover/focus transitions
+ *   Gradient accent support
+ *   Refined card, button, form, table aesthetics
  */
 
 /* ── Shared tokens (independent of light/dark) ── */
 :root {
   --sidebar-width: 240px;
   --header-height: 56px;
+
+  /* Accent Colors */
   --accent-blue: #61afef;
   --accent-green: #98c379;
   --accent-red: #e06c75;
   --accent-yellow: #e5c07b;
   --accent-purple: #c678dd;
   --accent-cyan: #56b6c2;
-  --radius: 0.5rem;
+
+  /* Border Radius Scale */
+  --radius-sm: 0.375rem;   /* 6px  */
+  --radius: 0.5rem;        /* 8px  */
+  --radius-md: 0.75rem;    /* 12px */
+  --radius-lg: 1rem;       /* 16px */
+  --radius-xl: 1.25rem;    /* 20px */
+  --radius-full: 9999px;
+
+  /* Font families */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
 }
 
 /* ── Light theme (default) ── */
 :root {
-  --bg-primary: oklch(0.995 0 0);
+  --bg-primary: oklch(0.985 0 0);
   --bg-secondary: oklch(1 0 0);
-  --bg-tertiary: oklch(0.97 0 0);
-  --bg-hover: oklch(0.93 0 0);
-  --border-color: oklch(0.92 0 0);
-  --text-primary: oklch(0.18 0 0);
-  --text-secondary: oklch(0.52 0 0);
-  --text-muted: oklch(0.65 0 0);
+  --bg-tertiary: oklch(0.96 0 0);
+  --bg-hover: oklch(0.92 0 0);
+  --border-color: oklch(0.90 0 0);
+  --text-primary: oklch(0.15 0 0);
+  --text-secondary: oklch(0.48 0 0);
+  --text-muted: oklch(0.62 0 0);
 
-  --foreground: oklch(0.18 0 0);
+  --foreground: oklch(0.15 0 0);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.18 0 0);
+  --card-foreground: oklch(0.15 0 0);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.18 0 0);
-  --primary: oklch(0.22 0 0);
+  --popover-foreground: oklch(0.15 0 0);
+  --primary: oklch(0.20 0 0);
   --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.22 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.52 0 0);
-  --accent: oklch(0.96 0 0);
-  --accent-foreground: oklch(0.22 0 0);
+  --secondary: oklch(0.96 0 0);
+  --secondary-foreground: oklch(0.20 0 0);
+  --muted: oklch(0.96 0 0);
+  --muted-foreground: oklch(0.48 0 0);
+  --accent: oklch(0.94 0 0);
+  --accent-foreground: oklch(0.20 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --input: oklch(0.92 0 0);
-  --ring: oklch(0.55 0 0);
+  --input: oklch(0.90 0 0);
+  --ring: oklch(0.50 0 0);
+
+  /* Shadows — light mode uses soft dark shadows */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04), 0 1px 1px rgba(0,0,0,0.02);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --shadow-xl: 0 8px 32px rgba(0,0,0,0.10), 0 4px 8px rgba(0,0,0,0.04);
 }
 
 /* ── Dark theme (pure deep black) ── */
@@ -81,6 +106,12 @@
   --destructive: #e06c75;
   --input: #282828;
   --ring: #6b6b6b;
+
+  /* Shadows — dark mode uses bright shadows for depth */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3), 0 1px 1px rgba(0,0,0,0.2);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,0.5), 0 2px 4px rgba(0,0,0,0.3);
+  --shadow-xl: 0 8px 32px rgba(0,0,0,0.6), 0 4px 8px rgba(0,0,0,0.3);
 }
 
 /* ── Smooth theme transitions ──
@@ -105,13 +136,14 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
   background: var(--bg-primary);
   color: var(--text-primary);
   min-height: 100vh;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  line-height: 1.6;
 }
 
 a {
@@ -139,13 +171,39 @@ a {
   padding: 24px;
 }
 
-/* ── Card ── */
+/* ── Section Page Header ── */
+.page-header {
+  margin-bottom: 24px;
+}
+
+.page-header h2 {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+}
+
+.page-header p {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+/* ── Card (Modern) ──
+ * Softer corners, subtle shadow, hover lift effect.
+ */
 .card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 20px;
   margin-bottom: 16px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-md);
 }
 
 .card-header {
@@ -166,16 +224,19 @@ a {
   display: flex;
   align-items: center;
   gap: 8px;
+  color: var(--text-primary);
 }
 
-/* ── Badge ── */
+/* ── Badge (Modern) ── */
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 500;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
 }
 
 .badge-success {
@@ -198,114 +259,151 @@ a {
   color: var(--accent-yellow);
 }
 
-/* ── Buttons ── */
+/* ── Buttons (Modern) ──
+ * Clean hover/active feedback, subtle shadow on primary.
+ */
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 14px;
-  border-radius: 6px;
+  padding: 7px 16px;
+  border-radius: var(--radius);
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: all 0.15s;
+  transition: all 0.18s ease;
   text-decoration: none;
   line-height: 1.5;
   font-family: inherit;
   white-space: nowrap;
+  user-select: none;
+}
+
+.btn:active {
+  transform: scale(0.97);
 }
 
 .btn-primary {
   background: var(--accent-blue);
   color: #fff;
   border-color: var(--accent-blue);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
 }
 
 .btn-primary:hover {
   background: color-mix(in srgb, var(--accent-blue) 80%, black);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-blue) 30%, transparent);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active {
+  transform: translateY(0) scale(0.97);
 }
 
 .btn-secondary {
-  background: var(--bg-tertiary);
+  background: transparent;
   color: var(--text-primary);
   border-color: var(--border-color);
 }
 
 .btn-secondary:hover {
   background: var(--bg-hover);
+  border-color: color-mix(in srgb, var(--text-muted) 30%, var(--border-color));
 }
 
 .btn-danger {
-  background: color-mix(in srgb, var(--accent-red) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-red) 10%, transparent);
   color: var(--accent-red);
   border-color: transparent;
 }
 
 .btn-danger:hover {
-  background: color-mix(in srgb, var(--accent-red) 22%, transparent);
+  background: color-mix(in srgb, var(--accent-red) 20%, transparent);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent-red) 15%, transparent);
 }
 
 .btn-success {
-  background: color-mix(in srgb, var(--accent-green) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-green) 10%, transparent);
   color: var(--accent-green);
   border-color: transparent;
 }
 
 .btn-success:hover {
-  background: color-mix(in srgb, var(--accent-green) 22%, transparent);
+  background: color-mix(in srgb, var(--accent-green) 20%, transparent);
 }
 
 .btn-warning {
-  background: color-mix(in srgb, var(--accent-yellow) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-yellow) 10%, transparent);
   color: var(--accent-yellow);
   border-color: transparent;
 }
 
 .btn-warning:hover {
-  background: color-mix(in srgb, var(--accent-yellow) 22%, transparent);
+  background: color-mix(in srgb, var(--accent-yellow) 20%, transparent);
 }
 
 .btn-sm {
   padding: 4px 12px;
   font-size: 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .btn:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
 }
 
-/* ── Tables ── */
+/* ── Tables (Modern) ──
+ * Clean header with subtle background, row hover with highlight,
+ * consistent vertical rhythm.
+ */
 .table-container {
   overflow-x: auto;
+  border-radius: var(--radius);
 }
 
 table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
 }
 
 table th {
-  background: var(--bg-tertiary);
-  padding: 10px 12px;
+  padding: 12px 14px;
   text-align: left;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 700;
   color: var(--text-secondary);
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+table th:first-child {
+  border-top-left-radius: var(--radius);
+}
+
+table th:last-child {
+  border-top-right-radius: var(--radius);
 }
 
 table td {
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--border-color);
-  font-size: 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: background 0.12s ease;
 }
 
-table tr:hover {
+table tr {
+  transition: background 0.12s ease;
+}
+
+table tr:hover td {
   background: var(--bg-hover);
 }
 
@@ -313,35 +411,51 @@ table tr:last-child td {
   border-bottom: none;
 }
 
-/* ── Forms ── */
+table tr:last-child td:first-child {
+  border-bottom-left-radius: var(--radius);
+}
+
+table tr:last-child td:last-child {
+  border-bottom-right-radius: var(--radius);
+}
+
+/* ── Forms (Modern) ──
+ * Softer focus rings, better hover states, more vertical breathing room.
+ */
 .form-group {
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .form-group label {
   display: block;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-secondary);
   margin-bottom: 6px;
+  letter-spacing: 0.01em;
 }
 
 .form-control {
   width: 100%;
-  padding: 8px 12px;
+  padding: 10px 14px;
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius);
   color: var(--text-primary);
   font-size: 14px;
-  transition: border-color 0.15s;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
   font-family: inherit;
+  line-height: 1.5;
+}
+
+.form-control:hover:not(:disabled):not(:focus) {
+  border-color: color-mix(in srgb, var(--text-muted) 40%, var(--border-color));
 }
 
 .form-control:focus {
   outline: none;
   border-color: var(--accent-blue);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 15%, transparent);
 }
 
 .form-control::placeholder {
@@ -363,20 +477,21 @@ textarea.form-control {
   padding: 8px 12px;
   font-size: 13px;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--bg-primary);
   color: var(--text-primary);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
   font-family: inherit;
   box-sizing: border-box;
+  line-height: 1.5;
 }
 .form-input:hover:not(:disabled):not(:focus) {
-  border-color: color-mix(in srgb, var(--text-muted) 50%, var(--border-color));
+  border-color: color-mix(in srgb, var(--text-muted) 40%, var(--border-color));
 }
 .form-input:focus {
   outline: none;
   border-color: var(--accent-blue);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 20%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 18%, transparent);
 }
 .form-input:disabled {
   opacity: 0.5;
@@ -406,7 +521,7 @@ select.form-input option {
 .form-input-sm {
   padding: 5px 10px;
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 .form-input-sm[type="datetime-local"] {
   color-scheme: dark;
@@ -422,34 +537,36 @@ select.form-input option {
   font-size: 12px;
   color: var(--text-muted);
   margin-top: 4px;
+  line-height: 1.5;
 }
 
-/* ── Alerts ── */
+/* ── Alerts (Modern) ── */
 .alert {
   padding: 12px 16px;
-  border-radius: 6px;
+  border-radius: var(--radius);
   font-size: 14px;
   margin-bottom: 16px;
   display: flex;
   align-items: center;
   gap: 8px;
+  line-height: 1.5;
 }
 
 .alert-success {
-  background: color-mix(in srgb, var(--accent-green) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-green) 20%, transparent);
+  background: color-mix(in srgb, var(--accent-green) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-green) 18%, transparent);
   color: var(--accent-green);
 }
 
 .alert-error {
-  background: color-mix(in srgb, var(--accent-red) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-red) 20%, transparent);
+  background: color-mix(in srgb, var(--accent-red) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-red) 18%, transparent);
   color: var(--accent-red);
 }
 
 .alert-info {
-  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent);
+  background: color-mix(in srgb, var(--accent-blue) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 18%, transparent);
   color: var(--accent-blue);
 }
 
@@ -481,6 +598,7 @@ select.form-input option {
   height: 8px;
   border-radius: 50%;
   margin-right: 6px;
+  flex-shrink: 0;
 }
 
 .status-dot.active {
@@ -492,16 +610,21 @@ select.form-input option {
   background: var(--text-muted);
 }
 
+.status-dot.error {
+  background: var(--accent-red);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent-red) 50%, transparent);
+}
+
 /* ── Model tag ── */
 .model-tag {
   display: inline-block;
-  padding: 2px 8px;
-  background: var(--bg-tertiary);
-  border-radius: 4px;
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-family: var(--font-mono);
   color: var(--accent-blue);
   margin: 2px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 50%, transparent);
 }
 
 /* ── Grid helpers ── */

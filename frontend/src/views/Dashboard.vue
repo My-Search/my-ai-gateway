@@ -1,12 +1,18 @@
 <template>
-  <div>
+  <div class="dashboard">
+    <!-- Page Header -->
+    <div class="page-header">
+      <h2>{{ t('nav.dashboard') }}</h2>
+      <p>{{ t('dashboard.resourceSummary') }}</p>
+    </div>
+
     <!-- 今日请求趋势 -->
     <TodayTrendChart />
 
     <div class="stats-grid">
       <div class="stat-card">
-        <div class="stat-icon" style="background:rgba(88,166,255,0.1);color:var(--accent-blue);">
-          <SvgIcon name="chart" :size="24" />
+        <div class="stat-icon" style="background:linear-gradient(135deg,rgba(88,166,255,0.15),rgba(88,166,255,0.05));color:var(--accent-blue);">
+          <SvgIcon name="chart" :size="22" />
         </div>
         <div class="stat-body">
           <div class="stat-label">{{ t('dashboard.todayRequests') }}</div>
@@ -24,8 +30,8 @@
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-icon" style="background:rgba(63,185,80,0.1);color:var(--accent-green);">
-          <SvgIcon name="check" :size="24" />
+        <div class="stat-icon" style="background:linear-gradient(135deg,rgba(63,185,80,0.15),rgba(63,185,80,0.05));color:var(--accent-green);">
+          <SvgIcon name="check" :size="22" />
         </div>
         <div class="stat-body">
           <div class="stat-label">{{ t('dashboard.successRate') }}</div>
@@ -37,8 +43,8 @@
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-icon" style="background:rgba(188,140,255,0.1);color:var(--accent-purple);">
-          <SvgIcon name="zap" :size="24" />
+        <div class="stat-icon" style="background:linear-gradient(135deg,rgba(188,140,255,0.15),rgba(188,140,255,0.05));color:var(--accent-purple);">
+          <SvgIcon name="zap" :size="22" />
         </div>
         <div class="stat-body">
           <div class="stat-label">{{ t('dashboard.avgResponse') }}</div>
@@ -47,8 +53,8 @@
         </div>
       </div>
       <div class="stat-card">
-        <div class="stat-icon" style="background:rgba(210,153,34,0.1);color:var(--accent-yellow);">
-          <SvgIcon name="monitor" :size="24" />
+        <div class="stat-icon" style="background:linear-gradient(135deg,rgba(210,153,34,0.15),rgba(210,153,34,0.05));color:var(--accent-yellow);">
+          <SvgIcon name="monitor" :size="22" />
         </div>
         <div class="stat-body">
           <div class="stat-label">{{ t('dashboard.overview') }}</div>
@@ -63,7 +69,7 @@
     </div>
 
     <!-- 本月统计 -->
-    <div class="monthly-card" style="margin-top:20px;">
+    <div class="monthly-card">
       <div class="card-header">
         <div class="card-title"><SvgIcon name="chart" :size="18" /> {{ t('dashboard.monthlyStats') }}</div>
       </div>
@@ -89,23 +95,23 @@
         </div>
       </div>
       <div v-else style="text-align:center;padding:20px;color:var(--text-muted);font-size:13px;">
-        <span class="loading-spinner"></span> {{ t('common.loading') }}
+        <LoadingSpinner :text="t('common.loading')" />
       </div>
     </div>
 
-    <div class="grid-2" style="margin-top:20px;">
+    <div class="grid-2">
       <div class="card">
         <div class="card-header">
           <div class="card-title"><SvgIcon name="rank" :size="18" /> {{ t('dashboard.channelRank') }}</div>
-          <div class="period-switch">
-            <button :class="['period-btn', channelRankPeriod === 'today' ? 'active' : '']" @click="channelRankPeriod = 'today'">{{ t('dashboard.periodToday') }}</button>
-            <button :class="['period-btn', channelRankPeriod === 'yesterday' ? 'active' : '']" @click="channelRankPeriod = 'yesterday'">{{ t('dashboard.periodYesterday') }}</button>
-            <button :class="['period-btn', channelRankPeriod === 'week' ? 'active' : '']" @click="channelRankPeriod = 'week'">{{ t('dashboard.periodWeek') }}</button>
-            <button :class="['period-btn', channelRankPeriod === 'month' ? 'active' : '']" @click="channelRankPeriod = 'month'">{{ t('dashboard.periodMonth') }}</button>
-          </div>
+          <TabSwitch v-model="channelRankPeriod" variant="period" :tabs="[
+            { value: 'today', label: t('dashboard.periodToday') },
+            { value: 'yesterday', label: t('dashboard.periodYesterday') },
+            { value: 'week', label: t('dashboard.periodWeek') },
+            { value: 'month', label: t('dashboard.periodMonth') },
+          ]" />
         </div>
         <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
-          <span class="loading-spinner"></span> {{ t('common.loading') }}
+          <LoadingSpinner :text="t('common.loading')" />
         </div>
         <div v-else-if="!stats.channelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">
           {{ t('dashboard.noRankData') }}
@@ -135,20 +141,20 @@
         <div class="card-header">
           <div class="card-title"><SvgIcon name="model" :size="18" /> {{ t('dashboard.modelRank') }}</div>
           <div class="card-header-right">
-            <div class="tab-switch">
-              <button :class="['tab-btn', modelRankTab === 'entry' ? 'active' : '']" @click="modelRankTab = 'entry'">{{ t('dashboard.entryModel') }}</button>
-              <button :class="['tab-btn', modelRankTab === 'channel' ? 'active' : '']" @click="modelRankTab = 'channel'">{{ t('dashboard.channelModel') }}</button>
-            </div>
-            <div class="period-switch">
-              <button :class="['period-btn', modelRankPeriod === 'today' ? 'active' : '']" @click="modelRankPeriod = 'today'">{{ t('dashboard.periodToday') }}</button>
-              <button :class="['period-btn', modelRankPeriod === 'yesterday' ? 'active' : '']" @click="modelRankPeriod = 'yesterday'">{{ t('dashboard.periodYesterday') }}</button>
-              <button :class="['period-btn', modelRankPeriod === 'week' ? 'active' : '']" @click="modelRankPeriod = 'week'">{{ t('dashboard.periodWeek') }}</button>
-              <button :class="['period-btn', modelRankPeriod === 'month' ? 'active' : '']" @click="modelRankPeriod = 'month'">{{ t('dashboard.periodMonth') }}</button>
-            </div>
+            <TabSwitch v-model="modelRankTab" :tabs="[
+              { value: 'entry', label: t('dashboard.entryModel') },
+              { value: 'channel', label: t('dashboard.channelModel') },
+            ]" />
+            <TabSwitch v-model="modelRankPeriod" variant="period" :tabs="[
+              { value: 'today', label: t('dashboard.periodToday') },
+              { value: 'yesterday', label: t('dashboard.periodYesterday') },
+              { value: 'week', label: t('dashboard.periodWeek') },
+              { value: 'month', label: t('dashboard.periodMonth') },
+            ]" />
           </div>
         </div>
         <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
-          <span class="loading-spinner"></span> {{ t('common.loading') }}
+          <LoadingSpinner :text="t('common.loading')" />
         </div>
         <div v-else-if="!currentModelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">{{ t('dashboard.noData') }}</div>
         <div class="rank-list" v-else>
@@ -172,18 +178,18 @@
       </div>
     </div>
 
-    <div class="card" style="margin-top:16px;">
+    <div class="card">
       <div class="card-header">
         <div class="card-title"><SvgIcon name="clock" :size="18" /> {{ t('dashboard.recentActivity') }}</div>
         <router-link to="/admin/log/list" class="btn btn-sm btn-secondary">{{ t('dashboard.viewAll') }}</router-link>
       </div>
       <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
-        <span class="loading-spinner"></span> {{ t('common.loading') }}
+        <LoadingSpinner :text="t('common.loading')" />
       </div>
       <div v-else-if="!stats.recentLogs?.length" style="text-align:center;padding:30px;color:var(--text-muted);">{{ t('dashboard.noActivity') }}</div>
       <div class="activity-list" v-else>
         <div class="activity-item" v-for="log in stats.recentLogs" :key="log.id">
-          <span :class="'phase phase-' + log.phase">{{ phaseLabel(log.phase) }}</span>
+          <PhaseBadge :phase="log.phase as any" />
           <code class="model-tag" style="font-size:11px;">{{ log.modelName }}</code>
           <span class="activity-channel">{{ log.channelName }}</span>
           <span class="activity-time">{{ formatTime(log.createdAt) }}</span>
@@ -199,6 +205,7 @@ import { dashboardApi, type DashboardStats } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
 import { formatLocalTime } from '@/utils/date'
 import TodayTrendChart from '@/components/dashboard/TodayTrendChart.vue'
+import PhaseBadge from '@/components/common/PhaseBadge.vue'
 
 const { t } = useI18n()
 
@@ -213,10 +220,7 @@ const currentModelRank = computed(() => {
   return modelRankTab.value === 'entry' ? stats.value.modelRank : stats.value.channelModelRank
 })
 
-function phaseLabel(phase: string) {
-  const map: Record<string, string> = { start: t('dashboard.start'), retry: t('dashboard.retry'), reroute: t('dashboard.reroute'), success: t('dashboard.success'), fail: t('common.fail') }
-  return map[phase] || phase
-}
+
 
 function formatTime(dateStr: string) {
   return formatLocalTime(dateStr)
@@ -258,44 +262,55 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 16px;
+  margin-bottom: 20px;
 }
+
 .stat-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: var(--radius-md, 12px);
   padding: 20px;
   display: flex;
   gap: 16px;
   align-items: center;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
 }
+
+.stat-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
 .stat-icon {
   width: 48px;
   height: 48px;
-  border-radius: 12px;
+  border-radius: var(--radius-md, 12px);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
 .stat-body { flex: 1; min-width: 0; }
-.stat-label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; }
-.stat-value { font-size: 28px; font-weight: 700; line-height: 1.2; }
+.stat-label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500; }
+.stat-value { font-size: 28px; font-weight: 700; line-height: 1.2; color: var(--text-primary); }
 .stat-value small { font-size: 14px; font-weight: 400; color: var(--text-muted); margin-left: 2px; }
-.stat-value.resource-value { font-size: 16px; line-height: 1.6; }
+.stat-value.resource-value { font-size: 15px; line-height: 1.6; }
 .dot-sep { color: var(--text-muted); margin: 0 6px; }
 .stat-hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
 .hint-sep { color: var(--border-color); margin: 0 4px; }
 
-/* Rank channel card scroll */
-.grid-2 > .card:last-child {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
+/* Rank section */
 .rank-list {
   flex: 1;
   overflow-y: auto;
@@ -318,14 +333,14 @@ onUnmounted(() => {
 .rank-list::-webkit-scrollbar-thumb:hover {
   background: var(--text-muted);
 }
-.rank-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 8px; background: var(--bg-tertiary); transition: background 0.15s; }
-.rank-item:hover { background: var(--bg-hover); }
-.rank-pos { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; }
+.rank-item { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--border-color); transition: background 0.15s, transform 0.15s; }
+.rank-item:hover { background: var(--bg-hover); transform: translateX(4px); }
+.rank-pos { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; flex-shrink: 0; }
 .rank-pos.gold { background: linear-gradient(135deg, #ffd700, #ffb700); color: #1a1a1a; }
 .rank-pos.silver { background: linear-gradient(135deg, #c0c0c0, #a8a8a8); color: #1a1a1a; }
 .rank-pos.bronze { background: linear-gradient(135deg, #cd7f32, #b87333); color: #fff; }
 .rank-info { flex: 1; min-width: 0; }
-.rank-name { display: flex; align-items: center; font-size: 14px; font-weight: 600; min-width: 0; }
+.rank-name { display: flex; align-items: center; font-size: 14px; font-weight: 600; min-width: 0; color: var(--text-primary); }
 .rank-model-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .rank-meta { font-size: 12px; color: var(--text-muted); display: flex; gap: 8px; margin-top: 3px; align-items: center; }
 .rank-meta-time { color: var(--text-muted); font-size: 11px; }
@@ -333,7 +348,7 @@ onUnmounted(() => {
 .rank-channel-tag {
   display: inline-block;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm, 4px);
   font-size: 11px;
   font-weight: 600;
   background: rgba(88,166,255,0.15);
@@ -341,37 +356,28 @@ onUnmounted(() => {
   margin-right: 6px;
   line-height: 1.4;
 }
-.rank-bar-bg { width: 80px; height: 6px; background: var(--bg-primary); border-radius: 3px; overflow: hidden; flex-shrink: 0; min-width: 20px; }
-.rank-bar { height: 100%; background: var(--accent-blue); border-radius: 3px; transition: width 0.3s; min-width: 4px; }
+.rank-bar-bg { width: 80px; height: 6px; background: var(--bg-primary); border-radius: var(--radius-full, 9999px); overflow: hidden; flex-shrink: 0; min-width: 20px; }
+.rank-bar { height: 100%; background: linear-gradient(90deg, var(--accent-blue), color-mix(in srgb, var(--accent-blue) 70%, white)); border-radius: var(--radius-full, 9999px); transition: width 0.3s; min-width: 4px; }
 
 /* Tab switch */
-.tab-switch { display: flex; gap: 4px; background: var(--bg-primary); border-radius: 6px; padding: 2px; }
-.tab-btn { padding: 4px 10px; border: none; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 500; border-radius: 4px; cursor: pointer; transition: all 0.15s; }
-.tab-btn:hover { color: var(--text-primary); }
-.tab-btn.active { background: var(--bg-secondary); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
-
-/* Card header right group */
 .card-header-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-
-/* Period switch */
-.period-switch { display: flex; gap: 3px; background: var(--bg-primary); border-radius: 6px; padding: 2px; }
-.period-btn { padding: 3px 8px; border: none; background: transparent; color: var(--text-muted); font-size: 11px; font-weight: 500; border-radius: 4px; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
-.period-btn:hover { color: var(--text-primary); }
-.period-btn.active { background: var(--bg-secondary); color: var(--accent-blue); box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
 
 /* Activity */
 .activity-list { display: flex; flex-direction: column; gap: 6px; }
-.activity-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px; font-size: 13px; background: var(--bg-tertiary); }
+.activity-item { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--radius); font-size: 13px; border: 1px solid var(--border-color); transition: background 0.12s; }
+.activity-item:hover { background: var(--bg-hover); }
 .activity-channel { font-size: 12px; color: var(--text-secondary); flex: 1; text-align: right; }
-.activity-time { font-size: 11px; color: var(--text-muted); white-space: nowrap; font-family: 'SF Mono', 'Fira Code', monospace; }
+.activity-time { font-size: 11px; color: var(--text-muted); white-space: nowrap; font-family: var(--font-mono, monospace); }
 
 /* Monthly stats */
 .monthly-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: var(--radius-md, 12px);
   padding: 20px;
   overflow: hidden;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
 }
 .monthly-body {
   display: flex;
@@ -387,11 +393,13 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--text-muted);
   margin-bottom: 6px;
+  font-weight: 500;
 }
 .monthly-value {
   font-size: 22px;
   font-weight: 700;
   line-height: 1.2;
+  color: var(--text-primary);
 }
 .monthly-divider {
   width: 1px;
@@ -415,14 +423,6 @@ onUnmounted(() => {
   }
 }
 
-/* Phase colors */
-.phase { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 600; }
-.phase-start { background: rgba(88,166,255,0.2); color: var(--accent-blue); }
-.phase-retry { background: rgba(210,153,34,0.2); color: var(--accent-yellow); }
-.phase-reroute { background: rgba(188,140,255,0.2); color: var(--accent-purple); }
-.phase-success { background: rgba(63,185,80,0.2); color: var(--accent-green); }
-.phase-fail { background: rgba(248,81,73,0.2); color: var(--accent-red); }
-
 @media (max-width: 1400px) { .stats-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 1000px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 768px) {
@@ -432,19 +432,4 @@ onUnmounted(() => {
   .rank-bar-bg { width: 60px; margin-left: auto; }
 }
 
-/* Loading spinner */
-.loading-spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-blue);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  vertical-align: middle;
-  margin-right: 6px;
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
 </style>

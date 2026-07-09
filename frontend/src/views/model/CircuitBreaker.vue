@@ -38,12 +38,13 @@
 
   <!-- Common Dialog -->
   <Dialog
-    v-model="dialogVisible"
-    :title="dialogTitle"
-    :type="dialogType"
-    @confirm="onDialogConfirm"
+    v-model="visible"
+    :title="title"
+    :type="type"
+    :confirm-class="confirmClass"
+    @confirm="onConfirm"
   >
-    {{ dialogMessage }}
+    {{ message }}
   </Dialog>
 </template>
 
@@ -51,44 +52,20 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
+import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel, type CircuitBreakerConfig } from '@/api/model'
 import Dialog from '@/components/common/Dialog.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
+const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 const model = ref<CustomModel | null>(null)
 const saving = ref(false)
 const config = ref<CircuitBreakerConfig>({
   modelId: 0, enabled: 0, retryCount: 3,
   circuitBreakDuration: 60, circuitBreakScope: 'model'
 })
-
-/* ---------- Dialog state ---------- */
-const dialogVisible = ref(false)
-const dialogTitle = ref(t('common.prompt'))
-const dialogMessage = ref('')
-const dialogType = ref<'alert' | 'confirm'>('alert')
-let dialogOnConfirm: (() => void) | null = null
-
-function openDialog(opts: {
-  title?: string
-  message: string
-  type?: 'alert' | 'confirm'
-  onConfirm?: () => void
-}) {
-  dialogTitle.value = opts.title ?? t('common.prompt')
-  dialogMessage.value = opts.message
-  dialogType.value = opts.type ?? 'alert'
-  dialogOnConfirm = opts.onConfirm ?? null
-  dialogVisible.value = true
-}
-
-function onDialogConfirm() {
-  dialogOnConfirm?.()
-  dialogOnConfirm = null
-}
-/* ------------------------------ */
 
 onMounted(async () => {
   const id = Number(route.params.id)
@@ -101,7 +78,7 @@ onMounted(async () => {
       config.value.modelId = id
     }
   } catch (e: any) {
-    openDialog({ title: t('error.loadFailed'), message: e.message })
+    open({ title: t('error.loadFailed'), message: e.message })
     router.push('/admin/model/list')
   }
 })
@@ -110,9 +87,9 @@ async function handleSave() {
   saving.value = true
   try {
     await modelApi.saveCircuitBreaker(Number(route.params.id), config.value)
-    openDialog({ title: t('common.success'), message: t('cb.saveSuccess'), onConfirm: () => router.push('/admin/model/list') })
+    open({ title: t('common.success'), message: t('cb.saveSuccess'), onConfirm: () => router.push('/admin/model/list') })
   } catch (e: any) {
-    openDialog({ title: t('cb.saveFailed'), message: e.message })
+    open({ title: t('cb.saveFailed'), message: e.message })
   } finally {
     saving.value = false
   }

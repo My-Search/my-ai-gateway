@@ -37,9 +37,7 @@
           <div v-for="(ak, idx) in apiKeys" :key="idx" class="api-key-item">
             <span class="api-key-left"><strong>{{ ak.keyName }}</strong><code class="api-key-masked">{{ maskKey(ak.apiKey) }}</code></span>
             <span class="api-key-actions">
-              <button type="button" class="copy-btn" @click="copyKey(ak.apiKey)" :title="t('common.copy')">
-                <SvgIcon name="copy" :size="14" />
-              </button>
+              <CopyButton :text="ak.apiKey" :title="t('common.copy')" />
               <button type="button" class="btn btn-sm btn-danger" @click="removeApiKey(idx)"><SvgIcon name="trash" :size="14" /> {{ t('common.delete') }}</button>
             </span>
           </div>
@@ -100,25 +98,25 @@
     </form>
 
     <!-- Add Model Dialog -->
-    <div v-if="showAddModel" class="modal-overlay" @click.self="showAddModel = false">
-      <div class="modal-box" style="width:400px;">
-        <h3>{{ t('channel.form.addModelTitle') }}</h3>
-        <div class="form-group">
-          <label>{{ t('channel.form.modelName') }}</label>
-          <input v-model="newModelName" class="form-control" :placeholder="t('channel.form.modelNamePlaceholder')"
-                 @keydown.enter.prevent="confirmAddModel" />
-        </div>
-        <div class="form-group">
-          <label>{{ t('channel.form.displayName') }}</label>
-          <input v-model="newDisplayName" class="form-control" :placeholder="t('channel.form.displayNamePlaceholder')"
-                 @keydown.enter.prevent="confirmAddModel" />
-        </div>
-        <div class="modal-actions">
-          <button class="btn btn-secondary" @click="showAddModel = false"><SvgIcon name="x" :size="14" /> {{ t('common.cancel') }}</button>
-          <button class="btn btn-primary" @click="confirmAddModel"><SvgIcon name="check" :size="14" /> {{ t('channel.form.confirmAddModel') }}</button>
-        </div>
+    <Dialog
+      v-model="showAddModel"
+      :title="t('channel.form.addModelTitle')"
+      type="confirm"
+      confirm-text="确认添加"
+      width="400px"
+      @confirm="confirmAddModel"
+    >
+      <div class="form-group">
+        <label>{{ t('channel.form.modelName') }}</label>
+        <input v-model="newModelName" class="form-control" :placeholder="t('channel.form.modelNamePlaceholder')"
+               @keydown.enter.prevent="confirmAddModel" />
       </div>
-    </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label>{{ t('channel.form.displayName') }}</label>
+        <input v-model="newDisplayName" class="form-control" :placeholder="t('channel.form.displayNamePlaceholder')"
+               @keydown.enter.prevent="confirmAddModel" />
+      </div>
+    </Dialog>
   </div>
 
   <!-- Common Dialog -->
@@ -160,6 +158,7 @@ import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { channelApi, type Channel, type ChannelApiKey, type ChannelModel } from '@/api/channel'
 import Dialog from '@/components/common/Dialog.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -261,23 +260,6 @@ function maskKey(key: string) {
   if (!key) return ''
   if (key.length <= 10) return '•'.repeat(key.length)
   return key.substring(0, 6) + '••••' + key.substring(key.length - 4)
-}
-
-async function copyKey(val: string) {
-  try {
-    await navigator.clipboard.writeText(val)
-    const toast = document.createElement('div')
-    toast.textContent = t('common.copySuccess')
-    Object.assign(toast.style, {
-      position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
-      background: '#10b981', color: '#fff', padding: '8px 20px', borderRadius: '8px',
-      fontSize: '14px', zIndex: '9999', transition: 'opacity .3s'
-    })
-    document.body.appendChild(toast)
-    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300) }, 1500)
-  } catch {
-    open({ message: t('common.copyFailed') })
-  }
 }
 
 function removeApiKey(index: number) {
@@ -441,7 +423,7 @@ async function handleSave() {
 }
 .api-key-item {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
-  background: var(--bg-tertiary); border-radius: 6px;
+  border: 1px solid var(--border-color); border-radius: 6px;
 }
 .api-key-left {
   flex: 1; display: inline-flex; align-items: center; gap: 8px;
@@ -453,13 +435,13 @@ async function handleSave() {
 .api-key-masked {
   font-size: 13px; font-family: var(--font-mono, monospace);
   user-select: all; cursor: pointer;
-  padding: 2px 8px; background: var(--bg-secondary);
+  padding: 2px 8px;
   border-radius: 4px; letter-spacing: 0.5px;
 }
 .copy-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; cursor: pointer; color: var(--text-muted);
-  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  border: 1px solid var(--border-color);
   border-radius: 4px; padding: 0; vertical-align: middle;
 }
 .copy-btn:hover { color: var(--accent-blue); border-color: var(--accent-blue); }
@@ -470,7 +452,7 @@ async function handleSave() {
 .model-stats { font-size: 12px; color: var(--text-muted); }
 .model-tags-container {
   display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; padding: 6px 8px;
-  background: var(--bg-secondary); border-radius: 8px; min-height: 28px;
+  border: 1px solid var(--border-color); border-radius: 8px; min-height: 28px;
   max-height: 140px; overflow-y: auto;
 }
 .model-tags-container .empty-hint {
@@ -478,7 +460,7 @@ async function handleSave() {
 }
 .model-tag {
   display: inline-flex; align-items: center; gap: 0;
-  padding: 2px 8px; background: var(--bg-tertiary);
+  padding: 2px 8px;
   border: 1px solid var(--border-color); border-radius: 12px;
   font-size: 11px; color: var(--text-primary); line-height: 1.5; cursor: pointer;
   transition: all 0.15s;
@@ -488,17 +470,4 @@ async function handleSave() {
 .model-tag .tag-remove { display: none; cursor: pointer; opacity: 0.6; margin-left: 4px; }
 .model-tag:hover .tag-remove { display: inline-flex; align-items: center; }
 .model-tag .tag-remove:hover { opacity: 1; color: var(--accent-red); }
-
-.modal-overlay {
-  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.5); z-index: 200;
-  display: flex; align-items: center; justify-content: center;
-}
-.modal-box {
-  background: var(--bg-secondary); border: 1px solid var(--border-color);
-  border-radius: 12px; padding: 24px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-}
-.modal-box h3 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
-.modal-actions { display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end; }
 </style>

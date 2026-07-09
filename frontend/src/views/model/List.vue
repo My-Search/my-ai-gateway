@@ -227,18 +227,18 @@ onUnmounted(() => {
 
 /* ── Model Card ── */
 .model-card {
-  background: var(--bg-tertiary);
+  background: transparent;
   border: 1px solid var(--border-color);
-  border-radius: 10px;
+  border-radius: var(--radius-md, 10px);
   padding: 16px;
   display: flex;
   flex-direction: column;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .model-card:hover {
-  border-color: color-mix(in srgb, var(--accent-blue) 30%, var(--border-color));
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border-color));
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
 }
 
 /* Card Head */
@@ -359,9 +359,9 @@ onUnmounted(() => {
   min-width: 140px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 4px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-lg);
   z-index: 100;
   overflow: hidden;
 }
