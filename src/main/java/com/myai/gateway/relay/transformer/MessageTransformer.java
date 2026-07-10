@@ -348,11 +348,21 @@ public class MessageTransformer {
             ObjectNode msgNode = messagesNode.addObject();
             if ("tool".equals(role)) {
                 msgNode.put("role", "user");
-                ArrayNode contentArr = msgNode.putArray("content");
-                ObjectNode toolResult = contentArr.addObject();
-                toolResult.put("type", "tool_result");
-                toolResult.put("tool_use_id", msg.getToolCallId() != null ? msg.getToolCallId() : "");
-                toolResult.put("content", msg.getContent() != null ? msg.getContent() : "");
+                if (msg.getContentParts() != null && !msg.getContentParts().isEmpty()) {
+                    // Anthropic→Anthropic 场景：contentParts 保留了原始的所有 tool_result 块，
+                    // 直接透传避免多 tool_result 丢失（parseAnthropicRequest 只提取了第一个）
+                    ArrayNode contentArr = msgNode.putArray("content");
+                    for (Map<String, Object> part : msg.getContentParts()) {
+                        contentArr.add(objectMapper.valueToTree(part));
+                    }
+                } else {
+                    // OpenAI→Anthropic 场景：每个 tool 结果是独立消息，降级为单 tool_result
+                    ArrayNode contentArr = msgNode.putArray("content");
+                    ObjectNode toolResult = contentArr.addObject();
+                    toolResult.put("type", "tool_result");
+                    toolResult.put("tool_use_id", msg.getToolCallId() != null ? msg.getToolCallId() : "");
+                    toolResult.put("content", msg.getContent() != null ? msg.getContent() : "");
+                }
                 continue;
             }
             msgNode.put("role", role);
@@ -387,7 +397,17 @@ public class MessageTransformer {
             }
             if ("assistant".equals(role) && msg.getToolCalls() != null) {
                 ArrayNode contentArr = msgNode.putArray("content");
-                if (msg.getContent() != null && !msg.getContent().isEmpty()) {
+                // Anthropic→Anthropic 场景：contentParts 保留了原始文本块（与 tool_use 共存的 text 块）
+                if (msg.getContentParts() != null) {
+                    for (Map<String, Object> part : msg.getContentParts()) {
+                        if ("text".equals(part.get("type"))) {
+                            ObjectNode textBlock = contentArr.addObject();
+                            textBlock.put("type", "text");
+                            textBlock.put("text", (String) part.get("text"));
+                        }
+                    }
+                } else if (msg.getContent() != null && !msg.getContent().isEmpty()) {
+                    // OpenAI→Anthropic 场景：文本在 content 字段
                     ObjectNode textBlock = contentArr.addObject();
                     textBlock.put("type", "text");
                     textBlock.put("text", msg.getContent());

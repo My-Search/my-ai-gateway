@@ -13,6 +13,9 @@
       </div>
     </div>
 
+    <!-- 今日请求趋势 -->
+    <TodayTrendChart />
+
     <!-- Stats Grid -->
     <div class="stats-grid">
       <div class="stat-card">
@@ -76,12 +79,6 @@
             <div class="stat-hint">{{ t('dashboard.basedOnToday') }}</div>
           </div>
         </div>
-        <div class="stat-sparkline">
-          <svg viewBox="0 0 100 30" preserveAspectRatio="none">
-            <path :d="sparklinePaths(dailyRequests).area" fill="rgba(188,140,255,0.12)" stroke="none" />
-            <path :d="sparklinePaths(dailyRequests).line" fill="none" stroke="var(--accent-purple)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-          </svg>
-        </div>
       </div>
 
       <div class="stat-card">
@@ -99,17 +96,8 @@
             <div class="stat-hint">{{ t('dashboard.resourceSummary') }}</div>
           </div>
         </div>
-        <div class="stat-sparkline">
-          <svg viewBox="0 0 100 30" preserveAspectRatio="none">
-            <path :d="sparklinePaths(dailyRequests).area" fill="rgba(210,153,34,0.12)" stroke="none" />
-            <path :d="sparklinePaths(dailyRequests).line" fill="none" stroke="var(--accent-yellow)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
-          </svg>
-        </div>
       </div>
     </div>
-
-    <!-- 今日请求趋势 -->
-    <TodayTrendChart />
 
     <!-- 本月统计 -->
     <div class="monthly-card">
@@ -326,25 +314,35 @@ const dailyRequests = computed(() => {
 })
 
 const dailySuccessRates = computed(() => {
-  return stats.value.dailyTrend?.map(d => {
+  // 无请求的天沿用前一个有效成功率，避免曲线从 100% 砸到 0% 造成"成功率崩盘"的误导
+  let lastValid = 0
+  return (stats.value.dailyTrend ?? []).map(d => {
     const total = d.success + d.fail
-    return total > 0 ? (d.success / total) * 100 : 0
-  }) ?? []
+    if (total > 0) {
+      lastValid = (d.success / total) * 100
+    }
+    return lastValid
+  })
 })
 
+const FLAT_SPARKLINE = { line: 'M 0 15 L 100 15', area: '' }
+
 function sparklinePaths(data: number[]): { line: string; area: string } {
-  if (!data || data.length < 2) return { line: '', area: '' }
-  const max = Math.max(...data, 1)
+  // 无数据或点数不足：画中间水平平线（不返回空，避免卡片线图区域空白）
+  if (!data || data.length < 2) return FLAT_SPARKLINE
+  const max = Math.max(...data)
   const min = Math.min(...data)
   const range = max - min
   const width = 100
   const height = 30
+  // 全部为 0 或所有值相等时画中间水平平线，避免线贴底产生"有波动"的错觉
+  if (range === 0) return FLAT_SPARKLINE
   const step = width / (data.length - 1)
   let linePath = ''
   const points: { x: number; y: number }[] = []
   data.forEach((val, i) => {
     const x = i * step
-    const y = range === 0 ? height / 2 : height - ((val - min) / range) * height
+    const y = height - ((val - min) / range) * height
     points.push({ x, y })
     linePath += (i === 0 ? 'M' : 'L') + ` ${x.toFixed(1)} ${y.toFixed(1)}`
   })
