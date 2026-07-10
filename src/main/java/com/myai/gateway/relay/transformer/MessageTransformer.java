@@ -239,8 +239,15 @@ public class MessageTransformer {
             } else if (msg.getContentParts() != null) {
                 ArrayNode contentArray = msgNode.putArray("content");
                 for (Map<String, Object> part : msg.getContentParts()) {
-                    ObjectNode partNode = contentArray.addObject();
                     String type = (String) part.get("type");
+                    // tool_use / tool_result 是 Anthropic 专有内容块：前者已由 tool_calls 字段表达，
+                    // 后者已由 role=tool + tool_call_id 表达，不能再透传进 OpenAI 的 content 数组，
+                    // 否则上游会以 400 拒绝：invalid content.type `tool_use`。
+                    // 参考 new-api-main: tool_use 仅入 tool_calls，tool_result 拆为独立 tool 消息。
+                    if ("tool_use".equals(type) || "tool_result".equals(type)) {
+                        continue;
+                    }
+                    ObjectNode partNode = contentArray.addObject();
                     if ("text".equals(type)) {
                         partNode.put("type", "text");
                         partNode.put("text", (String) part.get("text"));
@@ -257,8 +264,14 @@ public class MessageTransformer {
                             imageUrl.put("url", "data:" + mediaType + ";base64," + data);
                         }
                     } else {
+                        log.warn("buildOpenAiRequest 遇到未识别的 content part type={}, 已原样透传，可能被上游拒绝", type);
                         partNode.setAll((ObjectNode) objectMapper.valueToTree(part));
                     }
+                }
+                // 过滤掉 tool_use / tool_result 后 content 可能为空：assistant 消息仅含 tool_calls 时，
+                // OpenAI 要求 content 为 null 或缺省，不能保留空数组。
+                if (contentArray.isEmpty()) {
+                    msgNode.remove("content");
                 }
             }
             if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {

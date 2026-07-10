@@ -2,39 +2,47 @@ package com.myai.gateway.relay.transformer.protocol.openai_to_anthropic;
 
 import com.myai.gateway.relay.transformer.registry.StreamTranslateState;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * OpenAI → Anthropic 流式翻译的跨 chunk 状态。
  *
- * <p>追踪 OpenAI SSE chunk 流中跨多个 chunk 的上下文信息，
- * 用于正确映射到 Anthropic Messages SSE 事件格式。
- *
- * <p>CPA 参考：对应 Go 中 {@code ConvertOpenAIResponseToAnthropicParams} 结构体。
- *
- * <p>状态字段说明：
- * <ul>
- *   <li>{@code contentBlockIndex} — 当前 content block 索引（文本和 tool_use 交替递增）</li>
- *   <li>{@code textContentStarted} — 当前文本 content block 是否已开始（避免重复发 start）</li>
- *   <li>{@code toolCallAccumulators} — 按 index 累积 tool_calls 的状态（id、name、arguments）</li>
- *   <li>{@code finishReasonSeen} — 是否已遇到 finish_reason</li>
- *   <li>{@code messageDeltaSent} — message_delta 事件是否已发出</li>
- * </ul>
+ * <p>参考 new-api-main 的 {@code ConvertOpenAIResponseToAnthropicParams}：
+ * 显式追踪当前打开的 content block 类型，类型切换时先 stop 旧 block 再 start 新 block。
+ * 支持 message_start 首事件、延迟关闭（finish_reason 与 usage 解耦）、并行 tool_use 索引管理。
  */
 public class OpenAiToAnthropicState implements StreamTranslateState {
 
-    /** 当��� content block 索引 */
-    int contentBlockIndex;
+    /** message_start 是否已发出 */
+    boolean messageStartSent;
 
-    /** 当前文本 content block 是否已通过 content_block_start 发出 */
-    boolean textContentStarted;
+    /** 当前 content block 索引（线性递增，每个 block 有唯一 index，从 0 开始） */
+    int contentBlockIndex = -1;
 
-    /** 按 tool_calls[index] 累积的工具调用定义 */
-    final java.util.Map<Integer, ToolCallAccumulator> toolCallAccumulators = new java.util.HashMap<>();
+    /** 当前打开的 block 类型：none / text / thinking / tools */
+    String currentBlockType = "none";
+
+    /** 当前这组 tool_use block 的起始 index */
+    int toolCallBaseIndex;
+
+    /** 当前这组 tool_use block 的最大偏移量 */
+    int toolCallMaxIndexOffset;
+
+    /** 按 OpenAI toolCall.Index 累积的工具调用定义 */
+    final Map<Integer, ToolCallAccumulator> toolCallAccumulators = new HashMap<>();
 
     /** 是否已遇到 finish_reason */
     boolean finishReasonSeen;
 
+    /** 暂存的 finish_reason 值 */
+    String pendingFinishReason;
+
     /** message_delta 事件是否已发出 */
     boolean messageDeltaSent;
+
+    /** 是否已收到 usage（用于延迟关闭） */
+    boolean usageReceived;
 
     /** 累积的 prompt_tokens */
     int promptTokens;
@@ -50,7 +58,5 @@ public class OpenAiToAnthropicState implements StreamTranslateState {
         String id;
         String name;
         final StringBuilder arguments = new StringBuilder();
-        boolean contentBlockStarted;
-        boolean contentBlockStopped;
     }
 }
