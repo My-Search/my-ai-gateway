@@ -159,8 +159,12 @@ public class MessageTransformer {
                             tc.put("type", "function");
                             Map<String, Object> func = new LinkedHashMap<>();
                             func.put("name", block.get("name").asText());
-                            func.put("arguments", block.has("input") ?
-                                    objectMapper.convertValue(block.get("input"), String.class) : "{}");
+                            // Anthropic tool_use.input 是 JSON 对象（如 {"location":"Beijing"}），
+                            // OpenAI function.arguments 期望其 JSON 字符串形式。
+                            // 不能用 convertValue(node, String.class)：Jackson 拒绝把 Object 反序列化为 String，
+                            // 会抛 "Cannot deserialize value of type `java.lang.String` from Object value"。
+                            // JsonNode.toString() 等价于 writeValueAsString 但不抛 checked exception。
+                            func.put("arguments", block.has("input") ? block.get("input").toString() : "{}");
                             tc.put("function", func);
                             toolCalls.add(tc);
                         }
