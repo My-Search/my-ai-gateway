@@ -433,6 +433,8 @@ public class RelayService {
                                 candidate.getChannelModel().getModelName(),
                                 candidate.getChannelApiKey().getKeyName());
                         remaining.remove(candidate);
+                        logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
+                                "400错误跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName() + " 原因: " + err.getMessage(), retryIndex);
                         log.info("候选失败已移除，准备重路由 - traceId={} 剩余候选数={}", traceId, remaining.size());
                         return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, ctx, err.getMessage());
                     }
@@ -446,6 +448,8 @@ public class RelayService {
                     handleFailure(candidate, req);
                     balancer.markFailed(candidate);
                     remaining.remove(candidate);
+                    logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
+                            "重试耗尽跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName() + " 原因: " + err.getMessage(), retryIndex);
                     log.info("候选失败已移除，准备重路由 - traceId={} 剩余候选数={}", traceId, remaining.size());
                     for (int i = 0; i < remaining.size(); i++) {
                         RoutingCandidate c = remaining.get(i);
@@ -670,6 +674,8 @@ public class RelayService {
                                 candidate.getChannelApiKey().getKeyName());
                         streamContentManager.clearContent(traceId);
                         remaining.remove(candidate);
+                        logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
+                                "400错误跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName() + " 原因: " + err.getMessage(), retryIndex);
                         return Flux.concat(
                                 tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, ctx, err.getMessage()));
                     }
@@ -698,6 +704,8 @@ public class RelayService {
                     handleFailure(candidate, contextReq);
                     balancer.markFailed(candidate);
                     remaining.remove(candidate);
+                    logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
+                            "重试耗尽跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName() + " 原因: " + err.getMessage(), retryIndex);
                     log.info("流式候选失败已移除，准备重路由 - traceId={} 剩余候选数={}", traceId, remaining.size());
                     for (int i = 0; i < remaining.size(); i++) {
                         RoutingCandidate c = remaining.get(i);
