@@ -87,13 +87,14 @@ function renderChart() {
       }
     ]
   } else {
-    // entry/channel 模式：每条线细
+    // entry/channel 模式：每条线带面积
     seriesList = modelNames.map((name) => ({
       name,
       type: 'line',
       smooth: true,
       symbol: 'none',
-      lineStyle: { width: 1 },
+      lineStyle: { width: 1.5 },
+      areaStyle: { opacity: 0.12 },
       emphasis: { focus: 'series' },
       data: data.series[name]
     }))

@@ -72,12 +72,43 @@ public class StatsService {
 
         // 5. 本月统计
         LocalDateTime monthStart = now.toLocalDate().withDayOfMonth(1).atStartOfDay();
-        Map<String, Object> monthAgg = requestLogMapper.selectMonthlyAggregatedStats(monthStart);
+        LocalDateTime monthEnd = now.toLocalDate().plusMonths(1).withDayOfMonth(1).atStartOfDay();
+        Map<String, Object> monthAgg = requestLogMapper.selectMonthlyAggregatedStats(monthStart, monthEnd);
+        long monthlyRequests = toLong(monthAgg.get("monthly_requests"));
+        long monthlySuccess = toLong(monthAgg.get("monthly_success"));
+        long monthlyFail = toLong(monthAgg.get("monthly_fail"));
+        double monthlyAvgResponse = monthAgg.get("avg_response_time") != null
+                ? ((Number) monthAgg.get("avg_response_time")).doubleValue() : 0.0;
+        double monthlySuccessRate = monthlyRequests > 0 ? (double) monthlySuccess / monthlyRequests * 100 : 0.0;
+
         Map<String, Object> monthlyStats = new LinkedHashMap<>();
-        monthlyStats.put("requests", toLong(monthAgg.get("monthly_requests")));
+        monthlyStats.put("requests", monthlyRequests);
         monthlyStats.put("promptTokens", toLong(monthAgg.get("monthly_prompt_tokens")));
         monthlyStats.put("completionTokens", toLong(monthAgg.get("monthly_completion_tokens")));
         monthlyStats.put("totalTokens", toLong(monthAgg.get("monthly_total_tokens")));
+        monthlyStats.put("successRate", Math.round(monthlySuccessRate * 10) / 10.0);
+        monthlyStats.put("avgResponseTime", Math.round(monthlyAvgResponse));
+        monthlyStats.put("failCount", monthlyFail);
+
+        // 5.1 上月统计（用于环比）
+        LocalDateTime prevMonthStart = now.toLocalDate().minusMonths(1).withDayOfMonth(1).atStartOfDay();
+        LocalDateTime prevMonthEnd = now.toLocalDate().withDayOfMonth(1).atStartOfDay();
+        Map<String, Object> prevMonthAgg = requestLogMapper.selectMonthlyAggregatedStats(prevMonthStart, prevMonthEnd);
+        long prevMonthlyRequests = toLong(prevMonthAgg.get("monthly_requests"));
+        long prevMonthlySuccess = toLong(prevMonthAgg.get("monthly_success"));
+        long prevMonthlyFail = toLong(prevMonthAgg.get("monthly_fail"));
+        double prevMonthlyAvgResponse = prevMonthAgg.get("avg_response_time") != null
+                ? ((Number) prevMonthAgg.get("avg_response_time")).doubleValue() : 0.0;
+        double prevMonthlySuccessRate = prevMonthlyRequests > 0 ? (double) prevMonthlySuccess / prevMonthlyRequests * 100 : 0.0;
+
+        Map<String, Object> prevMonthlyStats = new LinkedHashMap<>();
+        prevMonthlyStats.put("requests", prevMonthlyRequests);
+        prevMonthlyStats.put("totalTokens", toLong(prevMonthAgg.get("monthly_total_tokens")));
+        prevMonthlyStats.put("successRate", Math.round(prevMonthlySuccessRate * 10) / 10.0);
+        prevMonthlyStats.put("avgResponseTime", Math.round(prevMonthlyAvgResponse));
+        prevMonthlyStats.put("failCount", prevMonthlyFail);
+
+        monthlyStats.put("prev", prevMonthlyStats);
         stats.put("monthlyStats", monthlyStats);
 
         // 6. 渠道排行、模型排行（按周期参数聚合）

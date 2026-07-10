@@ -261,11 +261,39 @@ onUnmounted(() => {
 .model-name {
   font-size: 15px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--accent-blue, #61afef);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: 'SF Mono', 'Fira Code', monospace;
+  /* 向外发光效果 */
+  text-shadow:
+    0 0 4px color-mix(in srgb, var(--accent-blue, #61afef) 60%, transparent),
+    0 0 10px color-mix(in srgb, var(--accent-blue, #61afef) 45%, transparent),
+    0 0 18px color-mix(in srgb, var(--accent-blue, #61afef) 30%, transparent);
+  animation: model-name-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes model-name-glow {
+  0%, 100% {
+    text-shadow:
+      0 0 4px color-mix(in srgb, var(--accent-blue, #61afef) 55%, transparent),
+      0 0 10px color-mix(in srgb, var(--accent-blue, #61afef) 40%, transparent),
+      0 0 18px color-mix(in srgb, var(--accent-blue, #61afef) 25%, transparent);
+  }
+  50% {
+    text-shadow:
+      0 0 6px color-mix(in srgb, var(--accent-blue, #61afef) 75%, transparent),
+      0 0 14px color-mix(in srgb, var(--accent-blue, #61afef) 55%, transparent),
+      0 0 24px color-mix(in srgb, var(--accent-blue, #61afef) 40%, transparent);
+  }
+}
+
+/* 尊重无动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .model-name {
+    animation: none;
+  }
 }
 
 .hidden-badge {

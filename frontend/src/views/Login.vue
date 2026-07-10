@@ -440,7 +440,8 @@ async function handleSetup() {
   }
 
   .form-panel {
-    padding: 32px 20px;
+    align-items: center;
+    padding: 40px 20px 30vh;
   }
 }
 

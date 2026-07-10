@@ -124,15 +124,19 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
     // ==================== Dashboard 聚合查询 ====================
 
     /**
-     * 获取本月聚合统计（请求数使用 trace 去重，tokens 仅统计 success）
+     * 获取指定月份聚合统计（请求数使用 trace 去重，tokens 仅统计 success）
      */
     @Select("SELECT " +
             "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as monthly_requests, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(prompt_tokens, 0) ELSE 0 END), 0) as monthly_prompt_tokens, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(completion_tokens, 0) ELSE 0 END), 0) as monthly_completion_tokens, " +
-            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as monthly_total_tokens " +
-            "FROM request_logs WHERE created_at >= #{monthStart}")
-    Map<String, Object> selectMonthlyAggregatedStats(@Param("monthStart") LocalDateTime monthStart);
+            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as monthly_total_tokens, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as monthly_success, " +
+            "AVG(CASE WHEN response_time_ms > 0 THEN response_time_ms ELSE NULL END) as avg_response_time, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'fail' THEN trace_id END) as monthly_fail " +
+            "FROM request_logs WHERE created_at >= #{monthStart} AND created_at < #{monthEnd}")
+    Map<String, Object> selectMonthlyAggregatedStats(@Param("monthStart") LocalDateTime monthStart,
+                                                      @Param("monthEnd") LocalDateTime monthEnd);
 
     /**
      * 获取今日聚合统计（trace-level 去重，tokens 仅统计 success）
