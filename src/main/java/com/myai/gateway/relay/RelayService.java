@@ -80,7 +80,7 @@ public class RelayService {
     private final ConcurrentHashMap<String, int[]> streamUsageMap = new ConcurrentHashMap<>();
 
     /** 流式空闲超时下限（毫秒）：自适应超时低于此值时仍按此值计，确保长流有足够空闲容忍 */
-    private static final long STREAM_IDLE_TIMEOUT_MS = 120_000L;
+    private static final long STREAM_IDLE_TIMEOUT_MS = 60_000L;
 
     /** 流式请求跨 chunk 翻译状态：traceId -> StreamTranslateState */
     private final ConcurrentHashMap<String, StreamTranslateState> streamTranslateStates = new ConcurrentHashMap<>();
@@ -170,7 +170,7 @@ public class RelayService {
      * @param internalClient 是否为内部客户端（Playground），true 时发送 _routing_progress/_gateway_meta 等自定义事件
      */
     public SseEmitter chatCompletionsStream(String authHeader, String requestBody, boolean internalClient) {
-        // 0L = 禁用 SseEmitter 墙钟硬超时，改由 STREAM_IDLE_TIMEOUT_MS（120s 空闲超时）管控死连接。
+        // 0L = 禁用 SseEmitter 墙钟硬超时，改由 STREAM_IDLE_TIMEOUT_MS（60s 空闲超时）管控死连接。
         // 原先 300_000L (5min) 会强制完成 emitter，但推理模型/长文本生成可能超过 5 分钟，
         // 导致上游仍在吐数据时 emitter 已完成，send() 抛 IllegalStateException。
         SseEmitter emitter = new SseEmitter(0L);
@@ -185,8 +185,17 @@ public class RelayService {
         }
         // 保存订阅句柄，用于在超时/完成时取消上游 Flux，防止资源泄漏与对已完成 emitter 的写入
         Disposable[] disposableRef = new Disposable[1];
+        // 标记终态是否已记录：正常完成 / onError / handleStreamSubscribeError 中会设为 true
+        // 客户端在"等待上游响应"阶段断开时，onCompletion 被调用但 onError/onComplete 不触发，
+        // 靠此标志检测并补记 fail/interrupted 终态
+        java.util.concurrent.atomic.AtomicBoolean finalStateLogged = new java.util.concurrent.atomic.AtomicBoolean(false);
         // 注册资源清理回调：无论正常完成、超时还是客户端断开，都清理 StreamContentManager 和 streamUsageMap
         emitter.onCompletion(() -> {
+            if (!finalStateLogged.get()) {
+                // 客户端断开导致 completion，但 subscribe 的 onError/onComplete 未触发，补记终态
+                requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
+                        "fail", "interrupted", "客户端断开连接", 0, 0);
+            }
             cleanupStreamResources(traceId);
             if (disposableRef[0] != null && !disposableRef[0].isDisposed()) {
                 disposableRef[0].dispose();
@@ -210,8 +219,9 @@ public class RelayService {
                 .publishOn(reactor.core.scheduler.Schedulers.boundedElastic(), 1)
                 .subscribe(
                         event -> sendSseEvent(emitter, event),
-                        err -> handleStreamSubscribeError(traceId, gatewayApiKeyId, emitter, err),
+                        err -> handleStreamSubscribeError(traceId, gatewayApiKeyId, emitter, err, finalStateLogged),
                         () -> {
+                            finalStateLogged.set(true);
                             cleanupStreamResources(traceId);
                             emitter.complete();
                         }
@@ -225,7 +235,7 @@ public class RelayService {
      * @param internalClient 是否为内部客户端（Playground），true 时发送 _routing_progress/_gateway_meta 等自定义事件
      */
     public SseEmitter messagesStream(String apiKeyHeader, String requestBody, String anthropicVersion, boolean internalClient) {
-        // 0L = 禁用 SseEmitter 墙钟硬超时，改由 STREAM_IDLE_TIMEOUT_MS（120s 空闲超时）管控死连接
+        // 0L = 禁用 SseEmitter 墙钟硬超时，改由 STREAM_IDLE_TIMEOUT_MS（60s 空闲超时）管控死连接
         SseEmitter emitter = new SseEmitter(0L);
         String traceId = requestLogService.startTrace();
         Long gatewayApiKeyId = logOriginalRequest(traceId, apiKeyHeader, buildAnthropicHeadersJson(apiKeyHeader, anthropicVersion), requestBody);
@@ -238,8 +248,17 @@ public class RelayService {
         }
         // 保存订阅句柄，用于在超时/完成时取消上游 Flux，防止资源泄漏与对已完成 emitter 的写入
         Disposable[] disposableRef = new Disposable[1];
+        // 标记终态是否已记录：正常完成 / onError / handleStreamSubscribeError 中会设为 true
+        // 客户端在"等待上游响应"阶段断开时，onCompletion 被调用但 onError/onComplete 不触发，
+        // 靠此标志检测并补记 fail/interrupted 终态
+        java.util.concurrent.atomic.AtomicBoolean finalStateLogged = new java.util.concurrent.atomic.AtomicBoolean(false);
         // 注册资源清理回调：无论正常完成、超时还是客户端断开，都清理 StreamContentManager 和 streamUsageMap
         emitter.onCompletion(() -> {
+            if (!finalStateLogged.get()) {
+                // 客户端断开导致 completion，但 subscribe 的 onError/onComplete 未触发，补记终态
+                requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
+                        "fail", "interrupted", "客户端断开连接", 0, 0);
+            }
             cleanupStreamResources(traceId);
             if (disposableRef[0] != null && !disposableRef[0].isDisposed()) {
                 disposableRef[0].dispose();
@@ -262,8 +281,9 @@ public class RelayService {
                 .publishOn(reactor.core.scheduler.Schedulers.boundedElastic(), 1)
                 .subscribe(
                         event -> sendSseEvent(emitter, event),
-                        err -> handleStreamSubscribeError(traceId, gatewayApiKeyId, emitter, err),
+                        err -> handleStreamSubscribeError(traceId, gatewayApiKeyId, emitter, err, finalStateLogged),
                         () -> {
+                            finalStateLogged.set(true);
                             cleanupStreamResources(traceId);
                             emitter.complete();
                         }
@@ -2105,7 +2125,8 @@ public class RelayService {
      *       记录了 {@code fail}，此处不重复记录，仅发送 SSE 错误事件并清理。</li>
      * </ul>
      */
-    private void handleStreamSubscribeError(String traceId, Long gatewayApiKeyId, SseEmitter emitter, Throwable err) {
+    private void handleStreamSubscribeError(String traceId, Long gatewayApiKeyId, SseEmitter emitter, Throwable err,
+                                             java.util.concurrent.atomic.AtomicBoolean finalStateLogged) {
         log.error("Stream relay failed - traceId={}", traceId, err);
         cleanupStreamResources(traceId);
         // 客户端断开时补记终态日志（上游错误已由 tryStreamCandidates 记录，不重复）
@@ -2113,6 +2134,7 @@ public class RelayService {
         if (msg.contains("Client disconnected")) {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
                     "fail", "interrupted", "客户端断开连接", 0, 0);
+            finalStateLogged.set(true);
             // 客户端已断开，sendSseError 大概率失败，但仍尝试（内部已处理异常）
             try {
                 emitter.completeWithError(err);
@@ -2124,6 +2146,7 @@ public class RelayService {
             // 不经过 onErrorResume，请求日志会停留在"请求开始"状态，此处补记终态
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
                     "fail", "error", msg.isEmpty() ? "流式请求失败" : msg, 0, 0);
+            finalStateLogged.set(true);
             sendSseError(emitter, msg);
         }
     }
