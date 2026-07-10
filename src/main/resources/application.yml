@@ -59,10 +59,8 @@ app:
     secret: ${APP_JWT_SECRET:my-ai-gateway-jwt-secret-key-2024-change-in-production}
     # Token 过期时间（毫秒），365 天，实现持久登录
     expiration: 31536000000
-  relay:
-    connect-timeout: 60000
-    read-timeout: 120000
-    max-retries: 3
+  # 超时配置说明：RelayService 的超时由 LatencyTracker 自适应计算，
+  # 系统配置项 timeout_min_seconds / timeout_max_seconds 在管理后台设置，此处不配置。
 
 # Actuator
 management:

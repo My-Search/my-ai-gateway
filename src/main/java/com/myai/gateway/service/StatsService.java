@@ -32,11 +32,12 @@ public class StatsService {
      *
      * @param channelRankPeriod 渠道排行时间周期：today / yesterday / week / month
      * @param modelRankPeriod   模型排行时间周期：today / yesterday / week / month
+     * @param date              参考日期（yyyy-MM-dd，可选，null 表示今天）
      */
-    public Map<String, Object> getDashboardStats(String channelRankPeriod, String modelRankPeriod) {
+    public Map<String, Object> getDashboardStats(String channelRankPeriod, String modelRankPeriod, String date) {
         Map<String, Object> stats = new LinkedHashMap<>();
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime todayStart = now.toLocalDate().atStartOfDay();
+        LocalDate refDate = date != null && !date.isBlank() ? LocalDate.parse(date) : LocalDate.now();
+        LocalDateTime todayStart = refDate.atStartOfDay();
         LocalDateTime yesterdayStart = todayStart.minusDays(1);
         LocalDateTime sevenDaysAgo = todayStart.minusDays(6);
 
@@ -71,8 +72,8 @@ public class StatsService {
         stats.put("todayTokenStats", tokenStats);
 
         // 5. 本月统计
-        LocalDateTime monthStart = now.toLocalDate().withDayOfMonth(1).atStartOfDay();
-        LocalDateTime monthEnd = now.toLocalDate().plusMonths(1).withDayOfMonth(1).atStartOfDay();
+        LocalDateTime monthStart = refDate.withDayOfMonth(1).atStartOfDay();
+        LocalDateTime monthEnd = refDate.plusMonths(1).withDayOfMonth(1).atStartOfDay();
         Map<String, Object> monthAgg = requestLogMapper.selectMonthlyAggregatedStats(monthStart, monthEnd);
         long monthlyRequests = toLong(monthAgg.get("monthly_requests"));
         long monthlySuccess = toLong(monthAgg.get("monthly_success"));
@@ -91,8 +92,8 @@ public class StatsService {
         monthlyStats.put("failCount", monthlyFail);
 
         // 5.1 上月统计（用于环比）
-        LocalDateTime prevMonthStart = now.toLocalDate().minusMonths(1).withDayOfMonth(1).atStartOfDay();
-        LocalDateTime prevMonthEnd = now.toLocalDate().withDayOfMonth(1).atStartOfDay();
+        LocalDateTime prevMonthStart = refDate.minusMonths(1).withDayOfMonth(1).atStartOfDay();
+        LocalDateTime prevMonthEnd = refDate.withDayOfMonth(1).atStartOfDay();
         Map<String, Object> prevMonthAgg = requestLogMapper.selectMonthlyAggregatedStats(prevMonthStart, prevMonthEnd);
         long prevMonthlyRequests = toLong(prevMonthAgg.get("monthly_requests"));
         long prevMonthlySuccess = toLong(prevMonthAgg.get("monthly_success"));
@@ -112,8 +113,8 @@ public class StatsService {
         stats.put("monthlyStats", monthlyStats);
 
         // 6. 渠道排行、模型排行（按周期参数聚合）
-        PeriodRange channelPeriod = calculatePeriodRange(channelRankPeriod);
-        PeriodRange modelPeriod = calculatePeriodRange(modelRankPeriod);
+        PeriodRange channelPeriod = calculatePeriodRange(channelRankPeriod, refDate);
+        PeriodRange modelPeriod = calculatePeriodRange(modelRankPeriod, refDate);
         stats.put("channelRank", requestLogMapper.selectChannelRank(channelPeriod.since(), channelPeriod.end()));
         stats.put("modelRank", requestLogMapper.selectEntryModelRank(modelPeriod.since(), modelPeriod.end()));
         stats.put("channelModelRank", requestLogMapper.selectChannelModelRank(modelPeriod.since(), modelPeriod.end()));
@@ -137,23 +138,23 @@ public class StatsService {
     /**
      * 根据周期字符串计算查询时间范围
      */
-    private PeriodRange calculatePeriodRange(String period) {
+    private PeriodRange calculatePeriodRange(String period, LocalDate refDate) {
         if (period == null) period = "today";
-        LocalDate today = LocalDate.now();
+        if (refDate == null) refDate = LocalDate.now();
         return switch (period) {
             case "yesterday" -> {
-                LocalDate yesterday = today.minusDays(1);
-                yield new PeriodRange(yesterday.atStartOfDay(), today.atStartOfDay());
+                LocalDate yesterday = refDate.minusDays(1);
+                yield new PeriodRange(yesterday.atStartOfDay(), refDate.atStartOfDay());
             }
             case "week" -> {
-                LocalDate weekStart = today.with(DayOfWeek.MONDAY);
+                LocalDate weekStart = refDate.with(DayOfWeek.MONDAY);
                 yield new PeriodRange(weekStart.atStartOfDay(), null);
             }
             case "month" -> {
-                LocalDate monthStart = today.withDayOfMonth(1);
+                LocalDate monthStart = refDate.withDayOfMonth(1);
                 yield new PeriodRange(monthStart.atStartOfDay(), null);
             }
-            default -> new PeriodRange(today.atStartOfDay(), null);
+            default -> new PeriodRange(refDate.atStartOfDay(), null);
         };
     }
 
@@ -213,13 +214,13 @@ public class StatsService {
      * 返回全天 144 个时间桶（00:00, 00:10, ..., 23:50）的请求数，缺省桶补 0。
      * </p>
      */
-    public Map<String, Object> getTodayHourlyTrend(String mode) {
+    public Map<String, Object> getTodayHourlyTrend(String mode, String date) {
         // 使用 Asia/Shanghai 时区计算今日范围，因为 created_at 存储为 UTC
         // 将上海时区的今日起止转换为 UTC 用于 SQL WHERE
         ZoneId shanghai = ZoneId.of("Asia/Shanghai");
-        LocalDate todayInShanghai = LocalDate.now(shanghai);
-        LocalDateTime todayStart = todayInShanghai.atStartOfDay().atZone(shanghai).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
-        LocalDateTime tomorrowStart = todayInShanghai.plusDays(1).atStartOfDay().atZone(shanghai).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+        LocalDate refDate = date != null && !date.isBlank() ? LocalDate.parse(date) : LocalDate.now(shanghai);
+        LocalDateTime todayStart = refDate.atStartOfDay().atZone(shanghai).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+        LocalDateTime tomorrowStart = refDate.plusDays(1).atStartOfDay().atZone(shanghai).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
 
         // 预填 144 个时间桶标签 ["00:00", "00:10", ..., "23:50"]
         int bucketCount = 24 * 6; // 144

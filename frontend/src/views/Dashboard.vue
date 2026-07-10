@@ -7,14 +7,14 @@
         <p>{{ t('dashboard.subtitle') }}</p>
       </div>
       <div class="header-right">
-        <div class="date-display">
-          <span>{{ todayDate }}</span>
+        <div class="date-picker-wrap">
+          <input type="date" class="form-input-sm date-input" v-model="selectedDate" />
         </div>
       </div>
     </div>
 
     <!-- 今日请求趋势 -->
-    <TodayTrendChart />
+    <TodayTrendChart :date="selectedDate" />
 
     <!-- Stats Grid -->
     <div class="stats-grid">
@@ -300,10 +300,15 @@ const modelRankTab = ref<'entry' | 'channel'>('entry')
 const channelRankPeriod = ref('today')
 const modelRankPeriod = ref('today')
 
-const todayDate = computed(() => {
-  const now = new Date()
-  return now.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\//g, '-')
-})
+function todayStr(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+const selectedDate = ref(todayStr())
 
 const currentModelRank = computed(() => {
   return modelRankTab.value === 'entry' ? stats.value.modelRank : stats.value.channelModelRank
@@ -402,7 +407,8 @@ async function fetchStats() {
   try {
     const res = await dashboardApi.getStats({
       channelRankPeriod: channelRankPeriod.value,
-      modelRankPeriod: modelRankPeriod.value
+      modelRankPeriod: modelRankPeriod.value,
+      date: selectedDate.value
     })
     stats.value = res.data
   } catch {
@@ -410,7 +416,7 @@ async function fetchStats() {
   }
 }
 
-watch([channelRankPeriod, modelRankPeriod], fetchStats)
+watch([channelRankPeriod, modelRankPeriod, selectedDate], fetchStats)
 
 onMounted(async () => {
   loading.value = true
@@ -452,16 +458,31 @@ onUnmounted(() => {
   margin-top: 4px;
 }
 
-.date-display {
+.date-picker-wrap {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
+  gap: 8px;
+  padding: 4px 12px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius);
-  font-size: 13px;
   color: var(--text-secondary);
+}
+.date-picker-wrap .date-input {
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  padding: 2px 0;
+  outline: none;
+  min-width: 130px;
+}
+.date-picker-wrap .date-input::-webkit-calendar-picker-indicator {
+  filter: invert(0.6);
+  cursor: pointer;
+}
+[data-theme="dark"] .date-picker-wrap .date-input::-webkit-calendar-picker-indicator {
+  filter: invert(0.8);
 }
 
 /* Stats Grid */

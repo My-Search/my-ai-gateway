@@ -22,6 +22,7 @@
  * ```
  */
 import { useI18n } from '@/composables/useI18n'
+import { useToast } from '@/composables/useToast'
 import SvgIcon from './SvgIcon.vue'
 
 interface Props {
@@ -33,37 +34,15 @@ interface Props {
 
 const props = defineProps<Props>()
 const { t } = useI18n()
+const { showToast } = useToast()
 
 async function handleCopy() {
   try {
     await navigator.clipboard.writeText(props.text)
-    showToast(t('common.copySuccess'), false)
+    showToast(t('common.copySuccess'))
   } catch {
-    showToast(t('common.copyFailed'), true)
+    showToast(t('common.copyFailed'), { isError: true })
   }
-}
-
-function showToast(msg: string, isError: boolean) {
-  const toast = document.createElement('div')
-  toast.textContent = msg
-  Object.assign(toast.style, {
-    position: 'fixed',
-    bottom: '24px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    background: isError ? '#f87171' : '#10b981',
-    color: '#fff',
-    padding: '8px 20px',
-    borderRadius: '8px',
-    fontSize: '14px',
-    zIndex: '9999',
-    transition: 'opacity .3s',
-  })
-  document.body.appendChild(toast)
-  setTimeout(() => {
-    toast.style.opacity = '0'
-    setTimeout(() => toast.remove(), 300)
-  }, 1500)
 }
 </script>
 

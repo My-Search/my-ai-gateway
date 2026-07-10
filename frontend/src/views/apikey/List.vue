@@ -155,10 +155,12 @@ import Dialog from '@/components/common/Dialog.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
+import { useToast } from '@/composables/useToast'
 import { formatLocalDateTimeFull } from '@/utils/date'
 
 const { t } = useI18n()
 const { visible, title, message, type, confirmClass, confirmText, onConfirm, open } = useDialog()
+const { showToast } = useToast()
 
 const router = useRouter()
 
@@ -228,15 +230,7 @@ function maskKey(key: string) {
 async function copyKey(val: string) {
   try {
     await navigator.clipboard.writeText(val)
-    const toast = document.createElement('div')
-    toast.textContent = t('common.copySuccess')
-    Object.assign(toast.style, {
-      position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
-      background: '#10b981', color: '#fff', padding: '8px 20px', borderRadius: '8px',
-      fontSize: '14px', zIndex: '9999', transition: 'opacity .3s'
-    })
-    document.body.appendChild(toast)
-    setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300) }, 1500)
+    showToast(t('common.copySuccess'))
   } catch {
     open({ message: t('apikey.list.manualCopyFailed') })
   }
@@ -253,7 +247,7 @@ function shareKey(key: ApiKey) {
   }
   const shareUrl = `${window.location.origin}/share/${encodeURIComponent(code)}`
   navigator.clipboard.writeText(shareUrl).then(() => {
-    showToastMsg(t('apikey.list.shareLinkCopied'))
+    showToast(t('apikey.list.shareLinkCopied'))
   }).catch(() => {
     open({ message: t('apikey.list.shareLinkCopyFailed') })
   })
@@ -307,26 +301,11 @@ async function revokeShare(key: ApiKey) {
       return
     }
     key.shared = 0
-    showToastMsg(t('apikey.list.revokeSuccess'))
+    showToast(t('apikey.list.revokeSuccess'))
     loadKeys()
   } catch (e: any) {
     open({ title: t('error.unknown'), message: e.message })
   }
-}
-
-/**
- * Show toast message
- */
-function showToastMsg(text: string) {
-  const toast = document.createElement('div')
-  toast.textContent = text
-  Object.assign(toast.style, {
-    position: 'fixed', bottom: '24px', left: '50%', transform: 'translateX(-50%)',
-    background: '#10b981', color: '#fff', padding: '8px 20px', borderRadius: '8px',
-    fontSize: '14px', zIndex: '9999', transition: 'opacity .3s'
-  })
-  document.body.appendChild(toast)
-  setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300) }, 1500)
 }
 
 function confirmDelete(key: ApiKey) {

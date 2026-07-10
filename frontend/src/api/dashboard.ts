@@ -45,6 +45,7 @@ export interface DashboardStats {
 export interface RankingPeriodParams {
   channelRankPeriod?: string
   modelRankPeriod?: string
+  date?: string
 }
 
 export interface TodayTrendData {
@@ -57,7 +58,7 @@ export const dashboardApi = {
   getStats(params?: RankingPeriodParams) {
     return http.get<DashboardStats>('/dashboard/stats', { params })
   },
-  getTodayTrend(mode: 'all' | 'entry' | 'channel' = 'all') {
-    return http.get<TodayTrendData>('/dashboard/today-trend', { params: { mode } })
+  getTodayTrend(mode: 'all' | 'entry' | 'channel' = 'all', date?: string) {
+    return http.get<TodayTrendData>('/dashboard/today-trend', { params: { mode, date } })
   }
 }

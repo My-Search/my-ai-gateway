@@ -82,6 +82,12 @@ public class RelayService {
     /** 流式空闲超时下限（毫秒）：自适应超时低于此值时仍按此值计，确保长流有足够空闲容忍 */
     private static final long STREAM_IDLE_TIMEOUT_MS = 60_000L;
 
+    /** 非流式单次尝试最小超时（毫秒）：自适应超时低于此值时仍按此值计，避免误杀长推理 */
+    private static final long NON_STREAM_MIN_TIMEOUT_MS = 30_000L;
+
+    /** 非流式请求总超时兜底（毫秒）：防止多候选 × 多重试导致客户端无限等待 */
+    private static final long MAX_TOTAL_TIMEOUT_MS = 600_000L;
+
     /** 流式请求跨 chunk 翻译状态：traceId -> StreamTranslateState */
     private final ConcurrentHashMap<String, StreamTranslateState> streamTranslateStates = new ConcurrentHashMap<>();
 
@@ -111,10 +117,19 @@ public class RelayService {
         this.streamContentManager = streamContentManager;
         this.latencyTracker = latencyTracker;
         this.promptInjectionService = promptInjectionService;
-        // 配置 HttpClient 超时：连接超时 10s、响应超时 60s
-        reactor.netty.http.client.HttpClient httpClient = reactor.netty.http.client.HttpClient.create()
-                .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000)
-                .responseTimeout(java.time.Duration.ofSeconds(60));
+        // 配置 HttpClient：
+        // - 连接超时 5s（云上 AI API 握手通常 < 1s，5s 足够区分不可达）
+        // - 不设 responseTimeout（它是字节级 idle 超时，对流式和非流式都会生效，
+        //   但项目已有业务层 .timeout() 管控，重复设只会造成双层超时互相干扰）
+        // - 连接池：max 100 连接、获取超时 30s、空闲 30s 回收，避免高并发时连接耗尽
+        reactor.netty.resources.ConnectionProvider provider = reactor.netty.resources.ConnectionProvider
+                .builder("relay")
+                .maxConnections(100)
+                .pendingAcquireTimeout(java.time.Duration.ofSeconds(30))
+                .maxIdleTime(java.time.Duration.ofSeconds(30))
+                .build();
+        reactor.netty.http.client.HttpClient httpClient = reactor.netty.http.client.HttpClient.create(provider)
+                .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 5_000);
         this.webClient = WebClient.builder()
                 .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(httpClient))
                 .codecs(config -> config.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
@@ -324,7 +339,16 @@ public class RelayService {
                     "没有可用的路由候选（渠道/API Key/模型都被熔断或不可用）", "api_error", 503));
         }
 
-        return tryCandidates(traceId, new ArrayList<>(candidates), authHeader, gatewayApiKeyId, req, provider, 0, startTime, ctx, null);
+        return tryCandidates(traceId, new ArrayList<>(candidates), authHeader, gatewayApiKeyId, req, provider, 0, startTime, ctx, null)
+                // 总超时兜底：防止多候选 × 多重试导致客户端无限等待
+                .timeout(Duration.ofMillis(MAX_TOTAL_TIMEOUT_MS))
+                .onErrorResume(java.util.concurrent.TimeoutException.class, e -> {
+                    log.warn("请求总超时兜底触发 - traceId={} 总耗时={}ms", traceId, System.currentTimeMillis() - startTime);
+                    requestLogService.logComplete(traceId, null, gatewayApiKeyId, originalModel, null, null,
+                            "fail", "timeout", "请求总超时", System.currentTimeMillis() - startTime, 0);
+                    return Mono.just(messageTransformer.buildErrorResponse(req.getClientApiFormat(),
+                            "请求总超时（所有候选重试总耗时超过上限）", "api_error", 503));
+                });
     }
 
     /**
@@ -481,7 +505,8 @@ public class RelayService {
                     }
                     return Mono.just(body);
                 })
-                .timeout(Duration.ofMillis(timeoutMs))
+                // 非流式也加下限保护：自适应算出 20s 时，长推理（>20s 才返回）会被误杀
+                .timeout(Duration.ofMillis(Math.max(timeoutMs, NON_STREAM_MIN_TIMEOUT_MS)))
                 .doOnError(err -> {
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
                     latencyTracker.recordTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId(), timeoutMs);
@@ -744,7 +769,7 @@ public class RelayService {
         return callProviderStream(authHeader, req, candidate, provider, internalClient, traceId)
                 // 流式使用「空闲超时」而非全局超时：每收到一个 chunk 计时器重置，
                 // 只有持续无输出的卡死连接才会触发，避免误杀持续出 chunk 的长响应（如长文生成、推理模型）。
-                // idleTimeout 取 Math.max(自适应超时, 120s)，保证长流至少有 2 分钟空闲容忍。
+                // idleTimeout 取 Math.max(自适应超时, STREAM_IDLE_TIMEOUT_MS)，保证长流至少有 1 分钟空闲容忍。
                 .timeout(Duration.ofMillis(Math.max(timeoutMs, STREAM_IDLE_TIMEOUT_MS)),
                         Flux.error(new RuntimeException("Stream idle timeout")))
                 .doOnError(err -> {
@@ -953,7 +978,10 @@ public class RelayService {
                                         resp.statusCode(), channel.getName(), channelModel.getModelName(), apiKey.getKeyName());
                                 return Mono.error(new RuntimeException("渠道测试失败: " + resp.statusCode() + " body: " + body));
                             }))
-                    .block(java.time.Duration.ofSeconds(30));
+                    // 超时取自适应值与最小下限的较大值，避免冷启动模型 30s 不够
+                    .block(java.time.Duration.ofMillis(
+                            Math.max(latencyTracker.getTimeout(channel.getId(), channelModel.getId()),
+                                     NON_STREAM_MIN_TIMEOUT_MS)));
         } catch (Exception e) {
             log.error("渠道模型测试异常: channel={}, model={}: {}",
                     channel.getName(), channelModel.getModelName(), e.getMessage());

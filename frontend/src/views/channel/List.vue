@@ -9,6 +9,13 @@
         <router-link to="/admin/channel/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> {{ t('channel.list.add') }}</router-link>
       </div>
     </div>
+
+    <!-- Loading state -->
+    <div v-if="loading" class="loading-container">
+      <LoadingSpinner size="32" />
+    </div>
+
+    <template v-else>
     <div class="table-container">
       <table>
         <thead>
@@ -134,6 +141,7 @@
         {{ t('channel.list.empty') }}
       </div>
     </div>
+    </template>
 
     <!-- Quick Test Modal -->
     <div v-if="showTestModal" class="modal-overlay" @click.self="closeTestModal">
@@ -216,6 +224,7 @@ const { t } = useI18n()
 const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 
 const channels = ref<Channel[]>([])
+const loading = ref(false)
 const showTestModal = ref(false)
 const testChannel = ref<Channel | null>(null)
 const testMessage = ref('Hello, this is a test message.')
@@ -230,11 +239,14 @@ const modelSelectOptions = computed(() =>
 )
 
 async function loadChannels() {
+  loading.value = true
   try {
     const res = await channelApi.list()
     channels.value = res.data
   } catch (e: any) {
     open({ title: t('error.loadFailed'), message: t('error.loadFailed') + ': ' + e.message })
+  } finally {
+    loading.value = false
   }
 }
 
@@ -523,5 +535,13 @@ onMounted(loadChannels)
 .btn-mm-rule:hover {
   color: var(--text-primary);
   background: var(--bg-hover);
+}
+
+/* Loading state */
+.loading-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 0;
 }
 </style>

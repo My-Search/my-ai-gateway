@@ -63,8 +63,10 @@ export async function chat(
   }
 
   // 管理端使用 axios（拦截器自动处理 token 和 401）
+  // 非流式请求可能涉及多候选重路由，后端总超时兜底 10 分钟，前端同步放宽
   const response = await http.post('/admin/api/chat', body, {
-    headers: { 'Content-Type': 'application/json; charset=utf-8' }
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    timeout: 600000
   })
   return { ok: true, data: response.data, status: response.status }
 }

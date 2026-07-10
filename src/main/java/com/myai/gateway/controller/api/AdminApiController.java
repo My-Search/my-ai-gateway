@@ -226,8 +226,9 @@ public class AdminApiController {
     @GetMapping(value = "/dashboard/stats", produces = "application/json;charset=UTF-8")
     public ResponseEntity<Map<String, Object>> dashboardStats(
             @RequestParam(defaultValue = "today") String channelRankPeriod,
-            @RequestParam(defaultValue = "today") String modelRankPeriod) {
-        Map<String, Object> stats = statsService.getDashboardStats(channelRankPeriod, modelRankPeriod);
+            @RequestParam(defaultValue = "today") String modelRankPeriod,
+            @RequestParam(required = false) String date) {
+        Map<String, Object> stats = statsService.getDashboardStats(channelRankPeriod, modelRankPeriod, date);
         stats.put("channelCount", channelService.listAll().size());
         stats.put("customModelCount", modelService.listAll().size());
         stats.put("apiKeyCount", apiKeyService.listAll().size());
@@ -241,8 +242,9 @@ public class AdminApiController {
      */
     @GetMapping(value = "/dashboard/today-trend", produces = "application/json;charset=UTF-8")
     public ResponseEntity<Map<String, Object>> todayTrend(
-            @RequestParam(defaultValue = "all") String mode) {
-        return ResponseEntity.ok(statsService.getTodayHourlyTrend(mode));
+            @RequestParam(defaultValue = "all") String mode,
+            @RequestParam(required = false) String date) {
+        return ResponseEntity.ok(statsService.getTodayHourlyTrend(mode, date));
     }
 
     // ==================== Channels ====================

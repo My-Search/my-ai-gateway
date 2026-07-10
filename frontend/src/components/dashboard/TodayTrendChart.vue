@@ -20,6 +20,12 @@ import * as echarts from 'echarts'
 
 const { t } = useI18n()
 
+const props = withDefaults(defineProps<{
+  date?: string
+}>(), {
+  date: ''
+})
+
 const mode = ref<'all' | 'entry' | 'channel'>('all')
 const trendData = ref<TodayTrendData | null>(null)
 const chartRef = ref<HTMLDivElement | null>(null)
@@ -33,7 +39,8 @@ function switchMode(newMode: 'all' | 'entry' | 'channel'): void {
 
 async function fetchData() {
   try {
-    const res = await dashboardApi.getTodayTrend(mode.value)
+    const dateVal = props.date || undefined
+    const res = await dashboardApi.getTodayTrend(mode.value, dateVal)
     trendData.value = res.data
     nextTick(() => renderChart())
   } catch {
@@ -175,6 +182,10 @@ watch(() => t('dashboard.trendRequests'), () => {
   // 语言切换时重新渲染
   nextTick(() => renderChart())
 }, { flush: 'post' })
+
+watch(() => props.date, () => {
+  fetchData()
+})
 </script>
 
 <style scoped>
