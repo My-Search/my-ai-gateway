@@ -45,7 +45,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>重试策略：对每个候选会先按熔断配置中的 {@code retryCount} 进行候选内重试；
  * 全部重试失败后才会触发熔断，并将该候选从列表中移除，继续尝试下一个候选。</p>
  *
- * <p>熔断粒度：1112222
+ * <p>熔断粒度：
  * <ul>
  *   <li>模型级：按 {@code (channelModelId, channelApiKeyId)} 组合熔断，只影响该 API Key 下的该模型。</li>
  *   <li>渠道级（按 API Key）：按 {@code (channelId, channelApiKeyId)} 组合熔断，
@@ -2147,21 +2147,33 @@ public class RelayService {
     }
 
     /**
-     * 发送 SSE 错误事件
+     * 发送 SSE 错误事件。
+     * <p>无论发送是否成功，最终都使用 {@link SseEmitter#complete()} 而非 {@link SseEmitter#completeWithError(Throwable)}。
+     * 原因：completeWithError 会触发 Spring 尝试返回 500 错误响应，但 SSE 响应头（text/event-stream）可能已提交，
+     * 导致 HTTP 响应不完整，客户端报 {@code hyper::Error(IncompleteMessage)}。
+     * 改用 complete 让连接干净关闭，错误信息已通过 SSE error 事件传达给客户端。</p>
      */
     private void sendSseError(SseEmitter emitter, String message) {
         try {
             ObjectNode err = objectMapper.createObjectNode();
             err.put("error", message != null ? message : "Unknown stream error");
             emitter.send(SseEmitter.event().name("error").data(err.toString()));
-            emitter.complete();
-        } catch (IOException e) {
+        } catch (Exception e) {
+            // IOException：客户端已断开；IllegalStateException：emitter 已完成
             log.warn("Failed to send SSE error (client already disconnected?): {}", e.getMessage());
-            try {
-                emitter.completeWithError(e);
-            } catch (Exception ignored) {
-                // SseEmitter 可能已关闭/已完成，忽略二次异常
-            }
+        }
+        safeCompleteEmitter(emitter);
+    }
+
+    /**
+     * 安全地完成 SseEmitter，吞掉所有二次异常（emitter 可能已关闭/已完成）。
+     * 不使用 completeWithError，避免 Spring 尝试返回 500 与已提交的 SSE 响应头冲突。
+     */
+    private void safeCompleteEmitter(SseEmitter emitter) {
+        try {
+            emitter.complete();
+        } catch (Exception ignored) {
+            // emitter 可能已关闭/已完成，忽略二次异常
         }
     }
 
@@ -2184,10 +2196,9 @@ public class RelayService {
         if (msg.contains("Client disconnected") && finalStateLogged.compareAndSet(false, true)) {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
                     "fail", "interrupted", "客户端断开连接", 0, 0);
-            try {
-                emitter.completeWithError(err);
-            } catch (Exception ignored) {
-            }
+            // 不使用 completeWithError：它会让 Spring 尝试返回 500 响应，但 SSE 响应头可能已提交，
+            // 导致 HTTP 响应不完整（客户端报 IncompleteMessage）。改用 complete 干净关闭连接。
+            safeCompleteEmitter(emitter);
         } else if (finalStateLogged.compareAndSet(false, true)) {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
                     "fail", "error", msg.isEmpty() ? "流式请求失败" : msg, 0, 0);
