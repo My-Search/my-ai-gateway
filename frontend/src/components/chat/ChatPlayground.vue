@@ -149,20 +149,28 @@
       </div>
 
       <div class="chat-input-area">
-        <textarea v-model="userInput" class="form-control" :placeholder="t('playground.inputPlaceholder')"
-                  :rows="compact ? 2 : 3" @keydown="handleKeydown" @paste="handlePaste"></textarea>
-        <div v-if="pastedImages.length" class="pasted-images">
-          <div v-for="img in pastedImages" :key="img.id" class="pasted-image-item" :class="{ uploading: img.uploading }">
-            <img :src="img.dataUrl" class="pasted-image-preview" alt="pasted image" />
-            <div v-if="img.uploading" class="pasted-image-overlay">
-              <span class="upload-spinner"></span>
-            </div>
-            <div v-else-if="img.error" class="pasted-image-overlay error">
-              <SvgIcon name="x" :size="14" />
-            </div>
-            <button v-if="!img.uploading" class="pasted-image-remove" @click="removePastedImage(img.id)" :title="t('common.delete')">
-              <SvgIcon name="x" :size="12" />
+        <div class="chat-input-wrapper">
+          <input ref="fileInputRef" type="file" accept="image/*" multiple class="hidden-file-input" @change="handleFileSelect" />
+          <textarea v-model="userInput" class="form-control chat-textarea" :placeholder="t('playground.inputPlaceholder')"
+                    :rows="compact ? 2 : 3" @keydown="handleKeydown" @paste="handlePaste"></textarea>
+          <div class="chat-input-footer">
+            <button class="btn-image-upload" :disabled="streaming || !selectedModel" @click="triggerFileSelect" :title="t('playground.uploadImage')">
+              <SvgIcon name="image" :size="16" />
             </button>
+            <div v-if="pastedImages.length" class="pasted-images">
+              <div v-for="img in pastedImages" :key="img.id" class="pasted-image-item" :class="{ uploading: img.uploading }">
+                <img :src="img.dataUrl" class="pasted-image-preview" alt="pasted image" />
+                <div v-if="img.uploading" class="pasted-image-overlay">
+                  <span class="upload-spinner"></span>
+                </div>
+                <div v-else-if="img.error" class="pasted-image-overlay error">
+                  <SvgIcon name="x" :size="14" />
+                </div>
+                <button v-if="!img.uploading" class="pasted-image-remove" @click="removePastedImage(img.id)" :title="t('common.delete')">
+                  <SvgIcon name="x" :size="12" />
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -316,6 +324,49 @@ async function handlePaste(e: ClipboardEvent) {
       break
     }
   }
+}
+
+/**
+ * 处理文件选择事件：上传选中图片
+ */
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+function triggerFileSelect() {
+  fileInputRef.value?.click()
+}
+
+async function handleFileSelect(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = input.files
+  if (!files || files.length === 0) return
+
+  for (const file of Array.from(files)) {
+    if (!file.type.startsWith('image/')) continue
+
+    const dataUrl = await fileToDataUrl(file)
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+
+    const pasted: PastedImage = { id, dataUrl, serverUrl: '', uploading: true }
+    pastedImages.value.push(pasted)
+
+    try {
+      const res = await uploadApi.upload(file)
+      const found = pastedImages.value.find(i => i.id === id)
+      if (found) {
+        found.serverUrl = res.data.url
+        found.uploading = false
+      }
+    } catch (err: any) {
+      const found = pastedImages.value.find(i => i.id === id)
+      if (found) {
+        found.error = err.message || t('common.fail')
+        found.uploading = false
+      }
+    }
+  }
+
+  // 重置 input 以便再次选择同一文件
+  input.value = ''
 }
 
 /** 是否已选好模型（必要配置），用于自动收起侧栏
@@ -837,7 +888,62 @@ function renderReasoningMarkdown(text: string): string {
   border-top: 1px solid var(--border-color);
 }
 .chat-input-area { margin-top: 4px; }
-.chat-input-area textarea { resize: none; }
+.chat-input-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 4px;
+}
+.chat-input-wrapper:focus-within {
+  border-color: var(--accent-blue);
+}
+.chat-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: none !important;
+  background: transparent !important;
+  resize: none;
+  padding: 6px 8px;
+  font-size: 14px;
+  outline: none;
+  min-height: 40px;
+  box-shadow: none !important;
+  margin-bottom: 0;
+}
+.chat-input-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+}
+.btn-image-upload {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.btn-image-upload:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  color: var(--accent-blue);
+}
+.btn-image-upload:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.hidden-file-input {
+  display: none;
+}
 
 .btn-quick {
   font-size: 12px; padding: 4px 12px;

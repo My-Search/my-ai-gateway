@@ -239,6 +239,16 @@ export default {
 
   /* ========== Model List ========== */
   'model.list.title': '入口模型',
+  'model.list.subtitle': '管理和配置所有 AI 入口模型，包括路由策略、渠道关联与统计监控',
+  'model.list.searchPlaceholder': '搜索模型名称...',
+  'model.list.allStatus': '全部状态',
+  'model.list.allTypes': '全部类型',
+  'model.list.enabled': '已启用',
+  'model.list.disabled': '已禁用',
+  'model.list.todayRequests': '今日请求',
+  'model.list.successRate': '成功率',
+  'model.list.avgResponse': '平均响应',
+  'model.list.noData': '暂无数据',
   'model.list.add': '添加模型',
   'model.list.modelName': '模型ID',
   'model.list.description': '描述',
@@ -511,6 +521,7 @@ export default {
 'playground.thinking': '思考中...',
 'playground.thinkingClick': '点击展开详情',
 'playground.thinkingCollapse': '思考过程',
+'playground.uploadImage': '上传图片',
 
   /* ========== Share ========== */
   'share.loading': '加载中...',

@@ -56,9 +56,25 @@ export interface CircuitBreakerConfig {
   circuitBreakScope?: 'channel' | 'model'
 }
 
+export interface ModelStatsItem {
+  modelName: string
+  requests: number
+  successRate: number
+  avgResponseTime: number
+}
+
+export interface ModelStatsResponse {
+  stats: ModelStatsItem[]
+  trends: Record<string, number[]>
+  buckets: string[]
+}
+
 export const modelApi = {
   list() {
     return http.get<CustomModel[]>('/models')
+  },
+  getStats(date?: string) {
+    return http.get<ModelStatsResponse>('/models/stats', { params: date ? { date } : undefined })
   },
   get(id: number) {
     return http.get<CustomModel>(`/models/${id}`)

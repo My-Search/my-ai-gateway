@@ -583,6 +583,21 @@ public class AdminApiController {
         return ResponseEntity.ok(modelService.listAll());
     }
 
+    /**
+     * GET /admin/api/models/stats
+     * 获取模型管理页所需的各模型统计与今日趋势数据
+     */
+    @GetMapping(value = "/models/stats", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> listModelStats(@RequestParam(required = false) String date) {
+        List<com.myai.gateway.entity.Model> models = modelService.listAll();
+        List<String> modelNames = models.stream()
+                .map(com.myai.gateway.entity.Model::getModelName)
+                .filter(name -> name != null && !name.isBlank())
+                .collect(Collectors.toList());
+        Map<String, Object> stats = statsService.getModelListStats(modelNames, date);
+        return ResponseEntity.ok(stats);
+    }
+
     @GetMapping(value = "/models/{id}", produces = "application/json;charset=UTF-8")
     public ResponseEntity<?> getModel(@PathVariable Long id) {
         com.myai.gateway.entity.Model m = modelService.getById(id);

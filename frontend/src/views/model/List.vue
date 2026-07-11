@@ -1,128 +1,303 @@
 <template>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title"><SvgIcon name="model" :size="18" /> {{ t('model.list.title') }}</div>
-      <router-link to="/admin/model/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> {{ t('model.list.add') }}</router-link>
+  <div class="model-mgr">
+    <!-- ── Page Header ── -->
+    <div class="mgr-header">
+      <div class="header-left">
+        <h2>{{ t('model.list.title') }}</h2>
+        <p class="header-subtitle">{{ t('model.list.subtitle') }}</p>
+      </div>
+      <router-link to="/admin/model/form" class="btn btn-primary">
+        <SvgIcon name="plus" :size="14" /> {{ t('model.list.add') }}
+      </router-link>
     </div>
 
-    <!-- Card Grid -->
-    <div class="card-grid">
-      <div v-for="m in models" :key="m.id" class="model-card">
-        <!-- Card Head: model name + toggle -->
-        <div class="card-head">
-          <div class="card-title-area">
-            <strong class="model-name" :class="{ 'is-hidden': m.hidden === 1 }">{{ m.modelName }}</strong>
-            <span v-if="m.hidden === 1" class="hidden-badge">{{ t('model.list.hidden') }}</span>
+    <!-- ── Filter Bar ── -->
+    <div class="mgr-filter-bar">
+      <div class="filter-search">
+        <SvgIcon name="search" :size="14" class="search-icon" />
+        <input
+          v-model="searchQuery"
+          type="text"
+          class="filter-input"
+          :placeholder="t('model.list.searchPlaceholder')"
+        />
+      </div>
+      <div class="filter-selects">
+        <select v-model="statusFilter" class="filter-select">
+          <option value="all">{{ t('model.list.allStatus') }}</option>
+          <option value="enabled">{{ t('model.list.enabled') }}</option>
+          <option value="disabled">{{ t('model.list.disabled') }}</option>
+        </select>
+        <select v-model="typeFilter" class="filter-select">
+          <option value="all">{{ t('model.list.allTypes') }}</option>
+          <option value="failover">{{ t('model.list.strategyFailover') }}</option>
+          <option value="random">{{ t('model.list.strategyRandom') }}</option>
+          <option value="round_robin">{{ t('model.list.strategyRoundRobin') }}</option>
+        </select>
+      </div>
+      <div class="filter-view">
+        <button
+          class="view-btn"
+          :class="{ active: viewMode === 'grid' }"
+          @click="viewMode = 'grid'"
+        >
+          <SvgIcon name="grid" :size="16" />
+        </button>
+        <button
+          class="view-btn"
+          :class="{ active: viewMode === 'list' }"
+          @click="viewMode = 'list'"
+        >
+          <SvgIcon name="list" :size="16" />
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Loading ── -->
+    <div v-if="loading" class="mgr-loading">
+      <LoadingSpinner size="28" />
+    </div>
+
+    <!-- ── Card Grid ── -->
+    <template v-else>
+      <div v-if="filteredCards.length === 0" class="mgr-empty">
+        {{ t('model.list.empty') }}
+      </div>
+
+      <div v-else :class="['mgr-grid', viewMode === 'list' ? 'mgr-list' : '']">
+        <div
+          v-for="card in filteredCards"
+          :key="card.model.id"
+          class="model-card"
+          :class="{ 'card-disabled': card.model.enabled !== 1 }"
+        >
+          <!-- Card Top: icon + name + toggle -->
+          <div class="card-top">
+            <div class="card-icon-wrap" :style="{ background: iconGradient(card.model.modelName) }">
+              <span class="card-icon-letter">{{ card.model.modelName.charAt(0).toUpperCase() }}</span>
+            </div>
+            <div class="card-name-area">
+              <div class="card-name-row">
+                <strong class="card-name" :class="{ 'is-hidden': card.model.hidden === 1 }">
+                  {{ card.model.modelName }}
+                </strong>
+                <span v-if="card.model.hidden === 1" class="hidden-badge">{{ t('model.list.hidden') }}</span>
+              </div>
+              <div class="card-tags">
+                <span class="tag" :class="strategyTagClass(card.model.strategy)">
+                  {{ strategyLabel(card.model.strategy) }}
+                </span>
+                <span class="tag" :class="card.model.relMode === 'inherit' ? 'tag-inherit' : 'tag-self'">
+                  {{ card.model.relMode === 'inherit' ? t('model.rels.modeInherit') : t('model.rels.modeSelfAdd') }}
+                </span>
+              </div>
+            </div>
+            <ToggleSwitch
+              :model-value="card.model.enabled === 1"
+              :active-label="t('common.enabled')"
+              :inactive-label="t('common.disabled')"
+              size="sm"
+              :show-label="false"
+              :disabled="toggleLoading === card.model.id"
+              @update:model-value="toggleEnabled(card.model)"
+            />
           </div>
-          <button
-            class="toggle-btn"
-            :class="m.enabled === 1 ? 'active' : 'inactive'"
-            :title="m.enabled === 1 ? t('model.list.clickToDisable') : t('model.list.clickToEnable')"
-            @click.stop="toggleEnabled(m)"
-            :disabled="toggleLoading === m.id"
-          >
-            <span class="toggle-track">
-              <span class="toggle-thumb"></span>
-            </span>
-            <span class="toggle-label">{{ m.enabled === 1 ? t('common.enabled') : t('common.disabled') }}</span>
-          </button>
-        </div>
 
-        <!-- Description -->
-        <div class="card-desc" :title="m.description || undefined">
-          {{ m.description || '\u2014' }}
-        </div>
+          <!-- Stats Row -->
+          <div class="card-stats">
+            <div class="stat-item">
+              <span class="stat-label">{{ t('model.list.todayRequests') }}</span>
+              <span class="stat-value">{{ card.stats?.requests ?? '-' }}</span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <span class="stat-label">{{ t('model.list.successRate') }}</span>
+              <span class="stat-value" :class="rateColor(card.stats?.successRate)">
+                {{ card.stats?.successRate != null ? card.stats.successRate + '%' : '-' }}
+              </span>
+            </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <span class="stat-label">{{ t('model.list.avgResponse') }}</span>
+              <span class="stat-value">{{ card.stats?.avgResponseTime != null ? card.stats.avgResponseTime + 'ms' : '-' }}</span>
+            </div>
+          </div>
 
-        <!-- Meta badges -->
-        <div class="card-meta">
-          <span class="badge" :class="strategyBadge(m.strategy)">
-            {{ strategyLabel(m.strategy) }}
-          </span>
-          <span class="mode-badge" :class="`mode-${m.relMode || 'self_add'}`">
-            {{ (m.relMode || 'self_add') === 'inherit' ? t('model.rels.modeInherit') : t('model.rels.modeSelfAdd') }}
-          </span>
-          <span class="card-created">{{ formatLocalDateTimeFull(m.createdAt) }}</span>
-        </div>
+          <!-- Sparkline -->
+          <div class="card-sparkline" v-if="card.trend && card.trend.length >= 2">
+            <svg :viewBox="'0 0 100 24'" class="sparkline-svg" preserveAspectRatio="none">
+              <path :d="sparklinePaths(card.trend, 100, 24).area" fill="var(--sparkline-area)" stroke="none" />
+              <path :d="sparklinePaths(card.trend, 100, 24).line" fill="none" stroke="var(--sparkline-line)" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+            </svg>
+          </div>
 
-        <div class="card-divider"></div>
-
-        <!-- Card Foot: action buttons + dropdown -->
-        <div class="card-foot">
-          <router-link
-            :to="`/admin/model/rels/${m.id}`"
-            class="action-btn"
-            :title="t('model.list.manageRels')"
-          >
-            <SvgIcon name="link" :size="14" />
-          </router-link>
-          <router-link
-            :to="`/admin/model/circuit-breaker/${m.id}`"
-            class="action-btn"
-            :title="t('model.list.config')"
-          >
-            <SvgIcon name="zap" :size="14" />
-          </router-link>
-          <router-link
-            :to="`/admin/model/advanced/${m.id}`"
-            class="action-btn"
-            :title="t('model.list.advanced')"
-          >
-            <SvgIcon name="settings" :size="14" />
-          </router-link>
-          <div class="dropdown-wrapper" @click.stop>
-            <button class="action-btn dropdown-toggle" @click="toggleDropdown(m.id!)" :title="t('model.list.actions')">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none"/>
-                <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
-                <circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none"/>
-              </svg>
-            </button>
-            <div v-if="openDropdown === m.id" class="dropdown-menu" @click="closeDropdown">
-              <router-link :to="`/admin/model/form/${m.id}`" class="dropdown-item">
-                <SvgIcon name="edit" :size="14" /> {{ t('model.list.edit') }}
-              </router-link>
-              <button class="dropdown-item dropdown-danger" @click.stop="confirmDelete(m)">
-                <SvgIcon name="trash" :size="14" /> {{ t('model.list.delete') }}
+          <!-- Card Actions -->
+          <div class="card-actions">
+            <router-link
+              :to="`/admin/model/rels/${card.model.id}`"
+              class="action-btn"
+              :title="t('model.list.manageRels')"
+            >
+              <SvgIcon name="link" :size="14" />
+            </router-link>
+            <router-link
+              :to="`/admin/model/circuit-breaker/${card.model.id}`"
+              class="action-btn"
+              :title="t('model.list.config')"
+            >
+              <SvgIcon name="zap" :size="14" />
+            </router-link>
+            <router-link
+              :to="`/admin/model/advanced/${card.model.id}`"
+              class="action-btn"
+              :title="t('model.list.advanced')"
+            >
+              <SvgIcon name="settings" :size="14" />
+            </router-link>
+            <div class="action-spacer"></div>
+            <div class="dropdown-wrapper" @click.stop>
+              <button class="action-btn" @click="toggleDropdown(card.model.id!)" :title="t('model.list.actions')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none"/>
+                  <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                  <circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none"/>
+                </svg>
               </button>
+              <div v-if="openDropdown === card.model.id" class="dropdown-menu" @click="closeDropdown">
+                <router-link :to="`/admin/model/form/${card.model.id}`" class="dropdown-item">
+                  <SvgIcon name="edit" :size="14" /> {{ t('model.list.edit') }}
+                </router-link>
+                <button class="dropdown-item dropdown-danger" @click.stop="confirmDelete(card.model)">
+                  <SvgIcon name="trash" :size="14" /> {{ t('model.list.delete') }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </div>
+    </template>
 
-      <!-- Empty state -->
-      <div v-if="!models.length" class="empty-state">
-        {{ t('model.list.empty') }}
-      </div>
-    </div>
+    <!-- Dialog -->
+    <Dialog
+      v-model="visible"
+      :title="title"
+      :type="type"
+      :confirm-class="confirmClass"
+      @confirm="onConfirm"
+    >
+      {{ message }}
+    </Dialog>
   </div>
-
-  <!-- Dialog -->
-  <Dialog
-    v-model="visible"
-    :title="title"
-    :type="type"
-    :confirm-class="confirmClass"
-    @confirm="onConfirm"
-  >
-    {{ message }}
-  </Dialog>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
-import { modelApi, type CustomModel } from '@/api/model'
-import { formatLocalDateTimeFull } from '@/utils/date'
+import { modelApi, type CustomModel, type ModelStatsItem } from '@/api/model'
+import { sparklinePaths } from '@/utils/sparkline'
 import Dialog from '@/components/common/Dialog.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 
+/* ══════════════════════════════════════
+   Types
+   ══════════════════════════════════════ */
+interface ModelCardData {
+  model: CustomModel
+  stats?: ModelStatsItem
+  trend: number[]
+}
+
+/* ══════════════════════════════════════
+   State
+   ══════════════════════════════════════ */
 const { t } = useI18n()
 const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 
-const models = ref<CustomModel[]>([])
+const cards = ref<ModelCardData[]>([])
+const loading = ref(true)
 const toggleLoading = ref<number | null>(null)
 const openDropdown = ref<number | null>(null)
 
+// Filter state
+const searchQuery = ref('')
+const statusFilter = ref('all')
+const typeFilter = ref('all')
+const viewMode = ref<'grid' | 'list'>('grid')
+
+/* ══════════════════════════════════════
+   Computed
+   ══════════════════════════════════════ */
+const filteredCards = computed(() => {
+  return cards.value.filter(card => {
+    // Search by name
+    if (searchQuery.value) {
+      const q = searchQuery.value.toLowerCase()
+      if (!card.model.modelName.toLowerCase().includes(q)) return false
+    }
+    // Status filter
+    if (statusFilter.value === 'enabled' && card.model.enabled !== 1) return false
+    if (statusFilter.value === 'disabled' && card.model.enabled === 1) return false
+    // Type filter
+    if (typeFilter.value !== 'all' && card.model.strategy !== typeFilter.value) return false
+    return true
+  })
+})
+
+/* ══════════════════════════════════════
+   Icon gradients
+   ══════════════════════════════════════ */
+const iconPalette = [
+  'linear-gradient(135deg, #58a6ff, #1a5fb4)',
+  'linear-gradient(135deg, #98c379, #3b6e22)',
+  'linear-gradient(135deg, #e5c07b, #b8860b)',
+  'linear-gradient(135deg, #c678dd, #7c3a9e)',
+  'linear-gradient(135deg, #56b6c2, #1a7a8a)',
+  'linear-gradient(135deg, #e06c75, #b33b3b)',
+  'linear-gradient(135deg, #d4a0f0, #8b5cf6)',
+  'linear-gradient(135deg, #7ee787, #2d7d46)',
+]
+
+function iconGradient(name: string): string {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash) + name.charCodeAt(i)
+    hash |= 0
+  }
+  return iconPalette[Math.abs(hash) % iconPalette.length]
+}
+
+/* ══════════════════════════════════════
+   Helpers
+   ══════════════════════════════════════ */
+function strategyLabel(s?: string) {
+  return s === 'random'
+    ? t('model.list.strategyRandom')
+    : s === 'round_robin'
+      ? t('model.list.strategyRoundRobin')
+      : t('model.list.strategyFailover')
+}
+
+function strategyTagClass(s?: string) {
+  return s === 'random'
+    ? 'tag-info'
+    : s === 'round_robin'
+      ? 'tag-success'
+      : 'tag-warning'
+}
+
+function rateColor(rate?: number): string {
+  if (rate == null) return ''
+  if (rate >= 99) return 'rate-perfect'
+  if (rate >= 95) return 'rate-good'
+  if (rate >= 80) return 'rate-ok'
+  return 'rate-poor'
+}
+
+/* ══════════════════════════════════════
+   Dropdown
+   ══════════════════════════════════════ */
 function toggleDropdown(id: number) {
   openDropdown.value = openDropdown.value === id ? null : id
 }
@@ -135,22 +310,9 @@ function onDocumentClick() {
   closeDropdown()
 }
 
-function strategyLabel(s?: string) {
-  return s === 'random'
-    ? t('model.list.strategyRandom')
-    : s === 'round_robin'
-      ? t('model.list.strategyRoundRobin')
-      : t('model.list.strategyFailover')
-}
-
-function strategyBadge(s?: string) {
-  return s === 'random'
-    ? 'badge-info'
-    : s === 'round_robin'
-      ? 'badge-success'
-      : 'badge-warning'
-}
-
+/* ══════════════════════════════════════
+   Actions
+   ══════════════════════════════════════ */
 function confirmDelete(m: CustomModel) {
   closeDropdown()
   open({
@@ -159,7 +321,7 @@ function confirmDelete(m: CustomModel) {
     type: 'confirm',
     confirmClass: 'btn-danger',
     onConfirm: () => {
-      modelApi.delete(m.id!).then(() => loadModels()).catch(e =>
+      modelApi.delete(m.id!).then(() => loadData()).catch(e =>
         open({ title: t('error.deleteFailed'), message: e.message })
       )
     }
@@ -189,17 +351,43 @@ async function toggleEnabled(m: CustomModel) {
   })
 }
 
-async function loadModels() {
+/* ══════════════════════════════════════
+   Data loading
+   ══════════════════════════════════════ */
+async function loadData() {
+  loading.value = true
   try {
-    const res = await modelApi.list()
-    models.value = res.data
+    const [modelsRes, statsRes] = await Promise.all([
+      modelApi.list(),
+      modelApi.getStats()
+    ])
+    const models = modelsRes.data
+    const statsList = statsRes.data.stats ?? []
+    const trends = statsRes.data.trends ?? {}
+
+    // Build stats lookup by modelName
+    const statsByModel = new Map<string, ModelStatsItem>()
+    for (const s of statsList) {
+      statsByModel.set(s.modelName, s)
+    }
+
+    cards.value = models.map(m => ({
+      model: m,
+      stats: statsByModel.get(m.modelName),
+      trend: trends[m.modelName] ?? []
+    }))
   } catch (e: any) {
     open({ title: t('error.loadFailed'), message: e.message })
+  } finally {
+    loading.value = false
   }
 }
 
+/* ══════════════════════════════════════
+   Lifecycle
+   ══════════════════════════════════════ */
 onMounted(() => {
-  loadModels()
+  loadData()
   document.addEventListener('click', onDocumentClick)
 })
 
@@ -209,91 +397,243 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.card {
+/* ══════════════════════════════════════
+   Layout
+   ══════════════════════════════════════ */
+.model-mgr {
   flex: 1;
   display: flex;
   flex-direction: column;
+  gap: 20px;
   min-height: 0;
 }
 
-/* ── Card Grid ── */
-.card-grid {
+/* ── Header ── */
+.mgr-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.header-left h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.header-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* ── Filter Bar ── */
+.mgr-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.filter-search {
+  position: relative;
+  display: flex;
+  align-items: center;
   flex: 1;
+  min-width: 180px;
+  max-width: 320px;
+}
+
+.filter-search .search-icon {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.filter-input {
+  width: 100%;
+  padding: 7px 10px 7px 32px;
+  font-size: 13px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.filter-input:focus {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 15%, transparent);
+}
+
+.filter-input::placeholder {
+  color: var(--text-muted);
+}
+
+.filter-selects {
+  display: flex;
+  gap: 8px;
+}
+
+.filter-select {
+  padding: 7px 28px 7px 10px;
+  font-size: 13px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  transition: border-color 0.15s;
+}
+
+.filter-select:focus {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 15%, transparent);
+}
+
+/* ── View Toggle ── */
+.filter-view {
+  display: flex;
+  gap: 2px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 2px;
+}
+
+.view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.view-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.view-btn.active {
+  color: var(--accent-blue);
+  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+}
+
+/* ── Loading ── */
+.mgr-loading {
+  display: flex;
+  justify-content: center;
+  padding: 60px 0;
+}
+
+/* ── Empty ── */
+.mgr-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ══════════════════════════════════════
+   Card Grid
+   ══════════════════════════════════════ */
+.mgr-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
-  align-content: start;
 }
 
 /* ── Model Card ── */
 .model-card {
-  background: transparent;
+  background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md, 10px);
   padding: 16px;
   display: flex;
   flex-direction: column;
+  gap: 12px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .model-card:hover {
-  border-color: color-mix(in srgb, var(--accent-blue) 40%, var(--border-color));
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  border-color: color-mix(in srgb, var(--accent-blue) 35%, var(--border-color));
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 
-/* Card Head */
-.card-head {
+.card-disabled {
+  opacity: 0.65;
+}
+
+/* ── Card Top: icon + name + toggle ── */
+.card-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 10px;
 }
 
-.card-title-area {
+.card-icon-wrap {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.card-icon-letter {
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  line-height: 1;
+  user-select: none;
+}
+
+.card-name-area {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.card-name-row {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 0;
-  flex: 1;
 }
 
-.model-name {
-  font-size: 15px;
+.card-name {
+  font-size: 14px;
   font-weight: 600;
-  color: var(--accent-blue, #61afef);
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: 'SF Mono', 'Fira Code', monospace;
-  /* 向外发光效果 */
-  text-shadow:
-    0 0 4px color-mix(in srgb, var(--accent-blue, #61afef) 60%, transparent),
-    0 0 10px color-mix(in srgb, var(--accent-blue, #61afef) 45%, transparent),
-    0 0 18px color-mix(in srgb, var(--accent-blue, #61afef) 30%, transparent);
-  animation: model-name-glow 2.4s ease-in-out infinite;
 }
 
-@keyframes model-name-glow {
-  0%, 100% {
-    text-shadow:
-      0 0 4px color-mix(in srgb, var(--accent-blue, #61afef) 55%, transparent),
-      0 0 10px color-mix(in srgb, var(--accent-blue, #61afef) 40%, transparent),
-      0 0 18px color-mix(in srgb, var(--accent-blue, #61afef) 25%, transparent);
-  }
-  50% {
-    text-shadow:
-      0 0 6px color-mix(in srgb, var(--accent-blue, #61afef) 75%, transparent),
-      0 0 14px color-mix(in srgb, var(--accent-blue, #61afef) 55%, transparent),
-      0 0 24px color-mix(in srgb, var(--accent-blue, #61afef) 40%, transparent);
-  }
-}
-
-/* 尊重无动画偏好 */
-@media (prefers-reduced-motion: reduce) {
-  .model-name {
-    animation: none;
-  }
+.card-name.is-hidden {
+  color: var(--text-muted);
 }
 
 .hidden-badge {
@@ -304,49 +644,116 @@ onUnmounted(() => {
   color: var(--text-muted);
   white-space: nowrap;
   flex-shrink: 0;
-  user-select: none;
 }
 
-/* Description */
-.card-desc {
-  font-size: 12px;
-  color: var(--text-secondary);
-  line-height: 1.5;
-  margin-bottom: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  min-height: 18px;
-}
-
-/* Meta */
-.card-meta {
+/* ── Card Tags ── */
+.card-tags {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
-  margin-bottom: 12px;
 }
 
-.card-created {
+.tag {
   font-size: 11px;
-  color: var(--text-muted);
-  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 8px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
   white-space: nowrap;
 }
 
-/* Divider */
-.card-divider {
-  height: 1px;
-  background: var(--border-color);
-  margin-top: auto;
-  margin-bottom: 10px;
+.tag-warning {
+  background: color-mix(in srgb, var(--accent-yellow) 15%, transparent);
+  color: var(--accent-yellow);
 }
 
-/* Card Foot: actions */
-.card-foot {
+.tag-info {
+  background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  color: var(--accent-blue);
+}
+
+.tag-success {
+  background: color-mix(in srgb, var(--accent-green) 15%, transparent);
+  color: var(--accent-green);
+}
+
+.tag-inherit {
+  background: color-mix(in srgb, #d29922 15%, transparent);
+  color: #d29922;
+}
+
+.tag-self {
+  background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  color: var(--accent-blue);
+}
+
+/* ── Stats Row ── */
+.card-stats {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.stat-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.stat-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border-color);
+  flex-shrink: 0;
+}
+
+/* Success rate colors */
+.rate-perfect { color: var(--accent-green); }
+.rate-good { color: var(--accent-green); }
+.rate-ok { color: var(--accent-yellow); }
+.rate-poor { color: var(--accent-red); }
+
+/* ── Sparkline ── */
+.card-sparkline {
+  height: 32px;
+  margin: 0 -4px;
+}
+
+.sparkline-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* — Sparkline color tokens — */
+.model-mgr {
+  --sparkline-line: rgba(88, 166, 255, 0.55);
+  --sparkline-area: rgba(88, 166, 255, 0.06);
+}
+
+/* ── Card Actions ── */
+.card-actions {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -373,10 +780,13 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 
+.action-spacer {
+  flex: 1;
+}
+
 /* Dropdown */
 .dropdown-wrapper {
   position: relative;
-  margin-left: auto;
 }
 
 .dropdown-menu {
@@ -424,108 +834,117 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--accent-red) 12%, transparent);
 }
 
-/* Toggle Button (same as before, slightly compact) */
-.toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 3px 6px;
-  border-radius: 16px;
-  transition: all 0.2s;
-  flex-shrink: 0;
-}
-.toggle-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.toggle-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
-}
-.toggle-track {
-  width: 28px;
-  height: 16px;
-  border-radius: 8px;
-  position: relative;
-  transition: background 0.2s;
-}
-.toggle-btn.active .toggle-track {
-  background: var(--accent-green);
-}
-.toggle-btn.inactive .toggle-track {
-  background: var(--text-muted);
-}
-.toggle-thumb {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: white;
-  transition: transform 0.2s;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-}
-.toggle-btn.active .toggle-thumb {
-  transform: translateX(12px);
-}
-.toggle-label {
-  font-size: 11px;
-  font-weight: 500;
-  min-width: 34px;
-}
-.toggle-btn.active .toggle-label {
-  color: var(--accent-green);
-}
-.toggle-btn.inactive .toggle-label {
-  color: var(--text-muted);
-}
-
-/* Mode badge */
-.mode-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-weight: 500;
-  letter-spacing: 0.3px;
-  white-space: nowrap;
-}
-.mode-badge.mode-self_add {
-  background: rgba(88, 166, 255, 0.15);
-  color: var(--accent-blue, #58a6ff);
-}
-.mode-badge.mode-inherit {
-  background: rgba(210, 153, 34, 0.15);
-  color: #d29922;
-}
-
-/* Empty state */
-.empty-state {
-  grid-column: 1 / -1;
+/* ══════════════════════════════════════
+   List View Mode
+   ══════════════════════════════════════ */
+.mgr-list {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  color: var(--text-muted);
-  font-size: 14px;
+  gap: 8px;
 }
 
-/* ── Responsive ── */
+.mgr-list .model-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  grid-template-rows: auto auto;
+  gap: 8px 16px;
+  padding: 12px 16px;
+}
+
+.mgr-list .card-top {
+  grid-column: 1 / 2;
+  grid-row: 1 / 3;
+}
+
+.mgr-list .card-stats {
+  grid-column: 2 / 3;
+  grid-row: 1 / 2;
+  border: none;
+  padding: 0;
+  gap: 12px;
+}
+
+.mgr-list .card-stats .stat-item {
+  flex-direction: row;
+  gap: 6px;
+}
+
+.mgr-list .card-stats .stat-divider {
+  display: none;
+}
+
+.mgr-list .card-actions {
+  grid-column: 3 / 4;
+  grid-row: 1 / 3;
+}
+
+.mgr-list .card-sparkline {
+  grid-column: 2 / 3;
+  grid-row: 2 / 3;
+  margin: 0;
+  height: 28px;
+  max-width: 200px;
+}
+
+/* ══════════════════════════════════════
+   Responsive
+   ══════════════════════════════════════ */
 @media (max-width: 768px) {
-  .card-grid {
+  .mgr-grid {
     grid-template-columns: 1fr;
     gap: 12px;
   }
-  .model-card {
-    padding: 14px;
+
+  .mgr-filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .filter-search {
+    max-width: none;
+  }
+
+  .filter-selects {
+    flex-wrap: wrap;
+  }
+
+  .filter-view {
+    align-self: flex-end;
+  }
+
+  /* List view not suitable on mobile, stick to cards */
+  .mgr-list .model-card {
+    grid-template-columns: auto 1fr auto;
+    grid-template-rows: auto auto auto;
+  }
+
+  .mgr-list .card-top {
+    grid-column: 1 / 2;
+    grid-row: 1 / 2;
+  }
+
+  .mgr-list .card-stats {
+    grid-column: 1 / 4;
+    grid-row: 2 / 3;
+    border-top: 1px solid var(--border-color);
+    padding-top: 8px;
+    justify-content: space-around;
+  }
+
+  .mgr-list .card-actions {
+    grid-column: 3 / 4;
+    grid-row: 1 / 2;
+  }
+
+  .mgr-list .card-sparkline {
+    grid-column: 1 / 4;
+    grid-row: 3 / 4;
+    max-width: none;
   }
 }
 
 @media (min-width: 769px) and (max-width: 1024px) {
-  .card-grid {
+  .mgr-grid {
     grid-template-columns: repeat(2, 1fr);
   }
 }

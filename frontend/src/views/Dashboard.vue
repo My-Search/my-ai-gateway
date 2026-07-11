@@ -290,6 +290,7 @@ import { useI18n } from '@/composables/useI18n'
 import { formatLocalTime } from '@/utils/date'
 import TodayTrendChart from '@/components/dashboard/TodayTrendChart.vue'
 import PhaseBadge from '@/components/common/PhaseBadge.vue'
+import { sparklinePaths } from '@/utils/sparkline'
 
 const { t } = useI18n()
 
@@ -329,33 +330,6 @@ const dailySuccessRates = computed(() => {
     return lastValid
   })
 })
-
-const FLAT_SPARKLINE = { line: 'M 0 15 L 100 15', area: '' }
-
-function sparklinePaths(data: number[]): { line: string; area: string } {
-  // 无数据或点数不足：画中间水平平线（不返回空，避免卡片线图区域空白）
-  if (!data || data.length < 2) return FLAT_SPARKLINE
-  const max = Math.max(...data)
-  const min = Math.min(...data)
-  const range = max - min
-  const width = 100
-  const height = 30
-  // 全部为 0 或所有值相等时画中间水平平线，避免线贴底产生"有波动"的错觉
-  if (range === 0) return FLAT_SPARKLINE
-  const step = width / (data.length - 1)
-  let linePath = ''
-  const points: { x: number; y: number }[] = []
-  data.forEach((val, i) => {
-    const x = i * step
-    const y = height - ((val - min) / range) * height
-    points.push({ x, y })
-    linePath += (i === 0 ? 'M' : 'L') + ` ${x.toFixed(1)} ${y.toFixed(1)}`
-  })
-  const first = points[0]
-  const last = points[points.length - 1]
-  const areaPath = linePath + ` L ${last.x.toFixed(1)} ${height} L ${first.x.toFixed(1)} ${height} Z`
-  return { line: linePath, area: areaPath }
-}
 
 function formatTime(dateStr: string) {
   return formatLocalTime(dateStr)

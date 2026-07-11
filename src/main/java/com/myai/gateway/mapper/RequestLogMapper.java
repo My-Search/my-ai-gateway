@@ -345,4 +345,34 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
                                                                 @Param("modelName") String modelName,
                                                                 @Param("gatewayApiKeyId") Long gatewayApiKeyId,
                                                                 @Param("apiKeyName") String apiKeyName);
+
+    // ==================== 模型管理页统计 ====================
+
+    /**
+     * 按入口模型聚合今日统计（trace-level 去重）。
+     * 返回 { model_name, requests, success, avg_response_time }
+     */
+    @Select("SELECT " +
+            "model_name, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
+            "AVG(CASE WHEN response_time_ms > 0 THEN response_time_ms ELSE NULL END) as avg_response_time " +
+            "FROM request_logs WHERE created_at >= #{since} " +
+            "AND model_name IS NOT NULL AND model_name != '' " +
+            "GROUP BY model_name")
+    List<Map<String, Object>> selectTodayModelStats(@Param("since") LocalDateTime since);
+
+    /**
+     * 今日按入口模型每10分钟聚合请求数（trace-level 去重）。
+     * 返回 { bucket, model_name, requests }
+     */
+    @Select("SELECT " +
+            "printf('%02d:%02d', CAST(STRFTIME('%H', DATETIME(created_at, '+8 hours')) AS INTEGER), (CAST(STRFTIME('%M', DATETIME(created_at, '+8 hours')) AS INTEGER) / 10) * 10) as bucket, " +
+            "model_name, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests " +
+            "FROM request_logs WHERE created_at >= #{since} AND created_at < #{until} " +
+            "AND model_name IS NOT NULL AND model_name != '' " +
+            "GROUP BY bucket, model_name ORDER BY bucket ASC")
+    List<Map<String, Object>> selectTodayModelBucketTrend(@Param("since") LocalDateTime since,
+                                                           @Param("until") LocalDateTime until);
 }

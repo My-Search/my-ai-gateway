@@ -238,7 +238,17 @@ export default {
   'channel.models.inputTypes': 'Supported Input',
 
   /* ========== Model List ========== */
-  'model.list.title': 'Custom Models',
+  'model.list.title': 'Entry Models',
+  'model.list.subtitle': 'Manage and configure all AI entry models, including routing strategies, channel associations, and stats monitoring',
+  'model.list.searchPlaceholder': 'Search model name...',
+  'model.list.allStatus': 'All Status',
+  'model.list.allTypes': 'All Types',
+  'model.list.enabled': 'Enabled',
+  'model.list.disabled': 'Disabled',
+  'model.list.todayRequests': 'Today',
+  'model.list.successRate': 'Success',
+  'model.list.avgResponse': 'Avg Resp',
+  'model.list.noData': 'No data',
   'model.list.add': 'Add Model',
   'model.list.modelName': 'Model ID',
   'model.list.description': 'Description',
@@ -511,6 +521,7 @@ export default {
 'playground.thinking': 'Thinking...',
 'playground.thinkingClick': 'Click to expand',
 'playground.thinkingCollapse': 'Thinking process',
+'playground.uploadImage': 'Upload image',
 
   /* ========== Share ========== */
   'share.loading': 'Loading...',

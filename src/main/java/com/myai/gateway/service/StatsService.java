@@ -16,6 +16,8 @@ import java.util.stream.Collectors;
 @Service
 public class StatsService {
 
+    private static final ZoneId SHANGHAI = ZoneId.of("Asia/Shanghai");
+
     private final RequestLogMapper requestLogMapper;
 
     public StatsService(RequestLogMapper requestLogMapper) {
@@ -36,8 +38,10 @@ public class StatsService {
      */
     public Map<String, Object> getDashboardStats(String channelRankPeriod, String modelRankPeriod, String date) {
         Map<String, Object> stats = new LinkedHashMap<>();
-        LocalDate refDate = date != null && !date.isBlank() ? LocalDate.parse(date) : LocalDate.now();
-        LocalDateTime todayStart = refDate.atStartOfDay();
+        // 统一使用 Asia/Shanghai 时区计算日期范围，与 getTodayHourlyTrend 保持一致
+        // created_at 存储为 UTC，需要将上海时区的日期起止转换为 UTC 用于 SQL WHERE
+        LocalDate refDate = date != null && !date.isBlank() ? LocalDate.parse(date) : LocalDate.now(SHANGHAI);
+        LocalDateTime todayStart = refDate.atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
         LocalDateTime yesterdayStart = todayStart.minusDays(1);
         LocalDateTime sevenDaysAgo = todayStart.minusDays(6);
 
@@ -71,9 +75,9 @@ public class StatsService {
         tokenStats.put("totalTokens", toLong(todayAgg.get("total_tokens")));
         stats.put("todayTokenStats", tokenStats);
 
-        // 5. 本月统计
-        LocalDateTime monthStart = refDate.withDayOfMonth(1).atStartOfDay();
-        LocalDateTime monthEnd = refDate.plusMonths(1).withDayOfMonth(1).atStartOfDay();
+        // 5. 本月统计（上海时区日期转 UTC 查询）
+        LocalDateTime monthStart = toUtc(refDate.withDayOfMonth(1));
+        LocalDateTime monthEnd = toUtc(refDate.plusMonths(1).withDayOfMonth(1));
         Map<String, Object> monthAgg = requestLogMapper.selectMonthlyAggregatedStats(monthStart, monthEnd);
         long monthlyRequests = toLong(monthAgg.get("monthly_requests"));
         long monthlySuccess = toLong(monthAgg.get("monthly_success"));
@@ -92,8 +96,8 @@ public class StatsService {
         monthlyStats.put("failCount", monthlyFail);
 
         // 5.1 上月统计（用于环比）
-        LocalDateTime prevMonthStart = refDate.minusMonths(1).withDayOfMonth(1).atStartOfDay();
-        LocalDateTime prevMonthEnd = refDate.withDayOfMonth(1).atStartOfDay();
+        LocalDateTime prevMonthStart = toUtc(refDate.minusMonths(1).withDayOfMonth(1));
+        LocalDateTime prevMonthEnd = toUtc(refDate.withDayOfMonth(1));
         Map<String, Object> prevMonthAgg = requestLogMapper.selectMonthlyAggregatedStats(prevMonthStart, prevMonthEnd);
         long prevMonthlyRequests = toLong(prevMonthAgg.get("monthly_requests"));
         long prevMonthlySuccess = toLong(prevMonthAgg.get("monthly_success"));
@@ -137,29 +141,35 @@ public class StatsService {
 
     /**
      * 根据周期字符串计算查询时间范围
+     * 返回的时间范围已转换为 UTC（上海时区日期 → UTC）
      */
     private PeriodRange calculatePeriodRange(String period, LocalDate refDate) {
         if (period == null) period = "today";
-        if (refDate == null) refDate = LocalDate.now();
+        if (refDate == null) refDate = LocalDate.now(SHANGHAI);
         return switch (period) {
             case "yesterday" -> {
                 LocalDate yesterday = refDate.minusDays(1);
-                yield new PeriodRange(yesterday.atStartOfDay(), refDate.atStartOfDay());
+                yield new PeriodRange(toUtc(yesterday), toUtc(refDate));
             }
             case "week" -> {
                 LocalDate weekStart = refDate.with(DayOfWeek.MONDAY);
-                yield new PeriodRange(weekStart.atStartOfDay(), null);
+                yield new PeriodRange(toUtc(weekStart), null);
             }
             case "month" -> {
                 LocalDate monthStart = refDate.withDayOfMonth(1);
-                yield new PeriodRange(monthStart.atStartOfDay(), null);
+                yield new PeriodRange(toUtc(monthStart), null);
             }
-            default -> new PeriodRange(refDate.atStartOfDay(), null);
+            default -> new PeriodRange(toUtc(refDate), null);
         };
     }
 
     /** 时间范围记录 */
     private record PeriodRange(LocalDateTime since, LocalDateTime end) {}
+
+    /** 将上海时区的 LocalDate 起始时刻转换为 UTC LocalDateTime，用于 SQL WHERE */
+    private LocalDateTime toUtc(LocalDate shanghaiDate) {
+        return shanghaiDate.atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+    }
 
     /**
      * 从聚合查询结果中安全转为 long
@@ -217,10 +227,9 @@ public class StatsService {
     public Map<String, Object> getTodayHourlyTrend(String mode, String date) {
         // 使用 Asia/Shanghai 时区计算今日范围，因为 created_at 存储为 UTC
         // 将上海时区的今日起止转换为 UTC 用于 SQL WHERE
-        ZoneId shanghai = ZoneId.of("Asia/Shanghai");
-        LocalDate refDate = date != null && !date.isBlank() ? LocalDate.parse(date) : LocalDate.now(shanghai);
-        LocalDateTime todayStart = refDate.atStartOfDay().atZone(shanghai).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
-        LocalDateTime tomorrowStart = refDate.plusDays(1).atStartOfDay().atZone(shanghai).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+        LocalDate refDate = date != null && !date.isBlank() ? LocalDate.parse(date) : LocalDate.now(SHANGHAI);
+        LocalDateTime todayStart = toUtc(refDate);
+        LocalDateTime tomorrowStart = toUtc(refDate.plusDays(1));
 
         // 预填 144 个时间桶标签 ["00:00", "00:10", ..., "23:50"]
         int bucketCount = 24 * 6; // 144
@@ -527,6 +536,93 @@ public class StatsService {
         result.put("values", values);
         result.put("maxValue", maxValue);
         result.put("totalValue", totalValue);
+        return result;
+    }
+
+    /**
+     * 获取模型管理页所需的各模型统计与趋势数据。
+     * <p>
+     * 返回每个入口模型的：今日请求数、成功率、平均响应时间、以及今日每10分钟请求数趋势。
+     * 只有今日有请求的模型才会返回 stats；所有已知模型的 trend 都会补齐（无数据填 0）。
+     * </p>
+     *
+     * @param modelNames 所有已知模型名称列表（用于补齐无数据的模型趋势）
+     * @param date       参考日期（yyyy-MM-dd，可选，null 表示今天）
+     * @return Map: {
+     *   stats: List[{ modelName, requests, successRate, avgResponseTime }],
+     *   trends: Map<modelName, List[requests]>
+     * }
+     */
+    public Map<String, Object> getModelListStats(List<String> modelNames, String date) {
+        LocalDate refDate = date != null && !date.isBlank() ? LocalDate.parse(date) : LocalDate.now(SHANGHAI);
+        LocalDateTime todayStart = toUtc(refDate);
+        LocalDateTime todayEnd = toUtc(refDate.plusDays(1));
+
+        // 1. 今日各模型统计
+        List<Map<String, Object>> modelStatsRows = requestLogMapper.selectTodayModelStats(todayStart);
+        Map<String, Map<String, Object>> statsMap = new LinkedHashMap<>();
+        for (Map<String, Object> row : modelStatsRows) {
+            String name = (String) row.get("model_name");
+            if (name == null || name.isEmpty()) continue;
+            long requests = toLong(row.get("requests"));
+            long success = toLong(row.get("success"));
+            double avgResponse = row.get("avg_response_time") != null
+                    ? ((Number) row.get("avg_response_time")).doubleValue() : 0.0;
+            double successRate = requests > 0 ? (double) success / requests * 100 : 0.0;
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("modelName", name);
+            item.put("requests", requests);
+            item.put("successRate", Math.round(successRate * 10) / 10.0);
+            item.put("avgResponseTime", Math.round(avgResponse));
+            statsMap.put(name, item);
+        }
+
+        // 2. 今日每10分钟趋势（按模型分组）
+        List<Map<String, Object>> trendRows = requestLogMapper.selectTodayModelBucketTrend(todayStart, todayEnd);
+        // 预生成 bucket 列表（00:00 ~ 23:50，每10分钟）
+        List<String> buckets = new ArrayList<>();
+        for (int h = 0; h < 24; h++) {
+            for (int m = 0; m < 60; m += 10) {
+                buckets.add(String.format("%02d:%02d", h, m));
+            }
+        }
+        Map<String, Integer> bucketIndex = new HashMap<>();
+        for (int i = 0; i < buckets.size(); i++) bucketIndex.put(buckets.get(i), i);
+
+        // 按模型收集趋势数据
+        Map<String, long[]> modelTrendArrays = new LinkedHashMap<>();
+        for (Map<String, Object> row : trendRows) {
+            String name = (String) row.get("model_name");
+            String bucket = (String) row.get("bucket");
+            if (name == null || name.isEmpty() || bucket == null) continue;
+            Integer idx = bucketIndex.get(bucket);
+            if (idx == null) continue;
+            long[] arr = modelTrendArrays.computeIfAbsent(name, k -> new long[buckets.size()]);
+            arr[idx] = toLong(row.get("requests"));
+        }
+
+        // 3. 补齐所有已知模型的 trend（无数据填 0）
+        Map<String, List<Long>> trends = new LinkedHashMap<>();
+        for (String name : modelNames) {
+            long[] arr = modelTrendArrays.get(name);
+            if (arr == null) arr = new long[buckets.size()];
+            List<Long> list = new ArrayList<>(buckets.size());
+            for (long v : arr) list.add(v);
+            trends.put(name, list);
+        }
+        // 也包含不在 modelNames 中但有数据的模型
+        for (Map.Entry<String, long[]> entry : modelTrendArrays.entrySet()) {
+            if (!trends.containsKey(entry.getKey())) {
+                List<Long> list = new ArrayList<>(buckets.size());
+                for (long v : entry.getValue()) list.add(v);
+                trends.put(entry.getKey(), list);
+            }
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("stats", new ArrayList<>(statsMap.values()));
+        result.put("trends", trends);
+        result.put("buckets", buckets);
         return result;
     }
 
