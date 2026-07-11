@@ -206,8 +206,7 @@ public class RelayService {
         java.util.concurrent.atomic.AtomicBoolean finalStateLogged = new java.util.concurrent.atomic.AtomicBoolean(false);
         // 注册资源清理回调：无论正常完成、超时还是客户端断开，都清理 StreamContentManager 和 streamUsageMap
         emitter.onCompletion(() -> {
-            if (!finalStateLogged.get()) {
-                // 客户端断开导致 completion，但 subscribe 的 onError/onComplete 未触发，补记终态
+            if (finalStateLogged.compareAndSet(false, true)) {
                 requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
                         "fail", "interrupted", "客户端断开连接", 0, 0);
             }
@@ -218,7 +217,6 @@ public class RelayService {
         });
         emitter.onTimeout(() -> {
             log.warn("SSE stream timeout, cleaning up resources - traceId={}", traceId);
-            // 由 onCompletion 统一处理 cleanupStreamResources + Disposable.dispose()
             emitter.complete();
         });
         disposableRef[0] = Mono.fromCallable(() -> {
@@ -228,7 +226,7 @@ public class RelayService {
                     return req;
                 })
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .flatMapMany(req -> executeStreamRelay(traceId, authHeader, gatewayApiKeyId, req, "openai", internalClient))
+                .flatMapMany(req -> executeStreamRelay(traceId, authHeader, gatewayApiKeyId, req, "openai", internalClient, finalStateLogged))
                 // publishOn(prefetch=1)：每处理完一个事件再请求下一个，让 SSE 发送之间有空隙，
                 // 确保 Tomcat flush 能真正将数据推送到 TCP 栈，避免多个事件被合并发送
                 .publishOn(reactor.core.scheduler.Schedulers.boundedElastic(), 1)
@@ -269,8 +267,7 @@ public class RelayService {
         java.util.concurrent.atomic.AtomicBoolean finalStateLogged = new java.util.concurrent.atomic.AtomicBoolean(false);
         // 注册资源清理回调：无论正常完成、超时还是客户端断开，都清理 StreamContentManager 和 streamUsageMap
         emitter.onCompletion(() -> {
-            if (!finalStateLogged.get()) {
-                // 客户端断开导致 completion，但 subscribe 的 onError/onComplete 未触发，补记终态
+            if (finalStateLogged.compareAndSet(false, true)) {
                 requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
                         "fail", "interrupted", "客户端断开连接", 0, 0);
             }
@@ -281,7 +278,6 @@ public class RelayService {
         });
         emitter.onTimeout(() -> {
             log.warn("SSE stream timeout, cleaning up resources - traceId={}", traceId);
-            // 由 onCompletion 统一处理 cleanupStreamResources + Disposable.dispose()
             emitter.complete();
         });
         disposableRef[0] = Mono.fromCallable(() -> {
@@ -291,7 +287,7 @@ public class RelayService {
                     return req;
                 })
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .flatMapMany(req -> executeStreamRelay(traceId, apiKeyHeader, gatewayApiKeyId, req, "anthropic", internalClient))
+                .flatMapMany(req -> executeStreamRelay(traceId, apiKeyHeader, gatewayApiKeyId, req, "anthropic", internalClient, finalStateLogged))
                 // publishOn(prefetch=1)：同 OpenAI 流式，确保事件逐个发送
                 .publishOn(reactor.core.scheduler.Schedulers.boundedElastic(), 1)
                 .subscribe(
@@ -542,7 +538,8 @@ public class RelayService {
      * @param internalClient 是否为内部客户端，true 时发送路由进度等自定义 SSE 事件
      */
     private Flux<SseEvent> executeStreamRelay(String traceId, String authHeader, Long gatewayApiKeyId,
-                                            InternalRequest req, String provider, boolean internalClient) {
+                                            InternalRequest req, String provider, boolean internalClient,
+                                            java.util.concurrent.atomic.AtomicBoolean finalStateLogged) {
         long startTime = System.currentTimeMillis();
         // 一次性解析模型路由配置，避免 tryStreamCandidates 每次递归重复查 DB
         RoutingContext ctx = resolveModelRouting(req.getModel());
@@ -554,7 +551,7 @@ public class RelayService {
             return Flux.error(new RuntimeException("没有可用的路由候选"));
         }
 
-        return tryStreamCandidates(traceId, new ArrayList<>(candidates), authHeader, gatewayApiKeyId, req, provider, 0, startTime, internalClient, ctx, null);
+        return tryStreamCandidates(traceId, new ArrayList<>(candidates), authHeader, gatewayApiKeyId, req, provider, 0, startTime, internalClient, ctx, null, finalStateLogged);
     }
 
     /**
@@ -566,9 +563,10 @@ public class RelayService {
     Flux<SseEvent> tryStreamCandidates(String traceId, List<RoutingCandidate> remaining,
                                                 String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                                 String provider, int retryIndex, long startTime,
-                                                boolean internalClient) {
+                                                boolean internalClient,
+                                                java.util.concurrent.atomic.AtomicBoolean finalStateLogged) {
         RoutingContext ctx = resolveModelRouting(req.getModel());
-        return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex, startTime, internalClient, ctx, null);
+        return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex, startTime, internalClient, ctx, null, finalStateLogged);
     }
 
     /**
@@ -579,7 +577,8 @@ public class RelayService {
     private Flux<SseEvent> tryStreamCandidates(String traceId, List<RoutingCandidate> remaining,
                                                 String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                                 String provider, int retryIndex, long startTime,
-                                                boolean internalClient, RoutingContext ctx, String lastErrorMsg) {
+                                                boolean internalClient, RoutingContext ctx, String lastErrorMsg,
+                                                java.util.concurrent.atomic.AtomicBoolean finalStateLogged) {
         if (remaining.isEmpty()) {
             // 清理流式内容累积
             streamContentManager.clearContent(traceId);
@@ -589,6 +588,12 @@ public class RelayService {
                     "fail", "error", failMsg, System.currentTimeMillis() - startTime, retryIndex);
             log.warn("所有流式候选均失败 - traceId={}{}, lastError={}", traceId, extraInfo, lastErrorMsg);
             return Flux.error(new RuntimeException(failMsg));
+        }
+
+        // 客户端已断开，立即停止放弃后续候选
+        if (finalStateLogged.get()) {
+            streamContentManager.clearContent(traceId);
+            return Flux.error(new RuntimeException("Client disconnected from SSE stream"));
         }
 
         // 使用缓存的模型路由配置，避免每次递归查 DB
@@ -609,13 +614,13 @@ public class RelayService {
             logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
                     "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
-            return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, ctx, lastErrorMsg);
+            return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, ctx, lastErrorMsg, finalStateLogged);
         }
 
         // 请求含媒体类型但候选不支持 -> 按关联顺序跳过，记录跳过原因后继续尝试下一个候选
         if (skipIfMediaTypeUnsupported(traceId, gatewayApiKeyId, candidate, req, retryIndex)) {
             remaining.remove(candidate);
-            return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, ctx, lastErrorMsg);
+            return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, ctx, lastErrorMsg, finalStateLogged);
         }
 
         log.info("流式路由决策 - traceId={} retryIndex={} 选中候选: channel={} model={} key={} (剩余{}个候选){}",
@@ -637,7 +642,7 @@ public class RelayService {
                 ? Flux.just(new SseEvent(null, buildRoutingProgressJson("trying", candidate, retryIndex, null)))
                 : Flux.empty();
         return Flux.concat(routingStart,
-                invokeStreamCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, req, candidate, actualProvider, retryIndex, 1, maxAttempts, internalClient))
+                invokeStreamCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, req, candidate, actualProvider, retryIndex, 1, maxAttempts, internalClient, finalStateLogged))
                 .doOnNext(event -> {
                     int[] usage = extractUsageFromSseData(event.data());
                     if (usage != null) {
@@ -691,6 +696,11 @@ public class RelayService {
                     return Flux.error(new RuntimeException("流式候选返回空响应"));
                 }))
                 .onErrorResume(err -> {
+                    // 客户端已断开，跳过剩余候选，直接终止
+                    if (finalStateLogged.get()) {
+                        log.info("客户端已断开，跳过后续流式候选 - traceId={}", traceId);
+                        return Flux.error(new RuntimeException("Client disconnected from SSE stream"));
+                    }
                     // 400 不触发熔断，不移除消息也不修复请求体，直接重路由到下一个候选
                     if (err instanceof NonRetryableProviderException) {
                         log.warn("流式候选返回400，不触发熔断，直接重路由 channel={} model={} key={}",
@@ -702,7 +712,7 @@ public class RelayService {
                         logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
                                 "400错误跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName() + " 原因: " + err.getMessage(), retryIndex);
                         return Flux.concat(
-                                tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, ctx, err.getMessage()));
+                                tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider, retryIndex + 1, startTime, internalClient, ctx, err.getMessage(), finalStateLogged));
                     }
                     // 非 400 错误（超时、5xx、429 等）：触发熔断，重路由到下一候选
                     log.warn("流式候选失败（重试耗尽）channel={} key={} model={} (已重试{}次): {}",
@@ -745,7 +755,7 @@ public class RelayService {
                                 "switching", candidate, retryIndex + 1, failReason)));
                     }
                     return Flux.concat(routingSwitch,
-                            tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, contextReq, provider, retryIndex + 1, startTime, internalClient, ctx, err.getMessage()));
+                            tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, contextReq, provider, retryIndex + 1, startTime, internalClient, ctx, err.getMessage(), finalStateLogged));
                 });
     }
 
@@ -757,7 +767,8 @@ public class RelayService {
     private Flux<SseEvent> invokeStreamCandidateWithRetries(String traceId, String authHeader, Long gatewayApiKeyId, InternalRequest req,
                                                               RoutingCandidate candidate, String provider,
                                                               int retryIndex, int attempt, int maxAttempts,
-                                                              boolean internalClient) {
+                                                              boolean internalClient,
+                                                              java.util.concurrent.atomic.AtomicBoolean finalStateLogged) {
         long attemptStartTime = System.currentTimeMillis();
         long timeoutMs = latencyTracker.getTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId());
         log.info("开始调用流式候选 - traceId={} attempt={}/{} channel={} model={} key={} timeout={}ms",
@@ -784,6 +795,10 @@ public class RelayService {
                             err.getMessage());
                 })
                 .onErrorResume(err -> {
+                    // 客户端已断开，立即停止重试，不再浪费上游计费
+                    if (finalStateLogged.get()) {
+                        return Flux.error(new RuntimeException("Client disconnected from SSE stream"));
+                    }
                     long attemptDurationMs = System.currentTimeMillis() - attemptStartTime;
                     // 400 不修复请求体，不重试同一候选，直接抛给上层重路由
                     if (err instanceof NonRetryableProviderException nre && nre.getHttpStatus() == 400) {
@@ -810,7 +825,7 @@ public class RelayService {
                                 : Flux.empty();
                         return Flux.concat(routingRetry,
                                 invokeStreamCandidateWithRetries(traceId, authHeader, gatewayApiKeyId, retryReq, candidate, provider,
-                                        retryIndex, attempt + 1, maxAttempts, internalClient));
+                                        retryIndex, attempt + 1, maxAttempts, internalClient, finalStateLogged));
                     }
                     return Flux.error(err);
                 });
@@ -2165,24 +2180,17 @@ public class RelayService {
                                              java.util.concurrent.atomic.AtomicBoolean finalStateLogged) {
         log.error("Stream relay failed - traceId={}", traceId, err);
         cleanupStreamResources(traceId);
-        // 客户端断开时补记终态日志（上游错误已由 tryStreamCandidates 记录，不重复）
         String msg = err.getMessage() != null ? err.getMessage() : "";
-        if (msg.contains("Client disconnected")) {
+        if (msg.contains("Client disconnected") && finalStateLogged.compareAndSet(false, true)) {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
                     "fail", "interrupted", "客户端断开连接", 0, 0);
-            finalStateLogged.set(true);
-            // 客户端已断开，sendSseError 大概率失败，但仍尝试（内部已处理异常）
             try {
                 emitter.completeWithError(err);
             } catch (Exception ignored) {
             }
-        } else {
-            // 非客户端断开的错误（如 parseRequest 阶段异常、executeStreamRelay 前的错误）：
-            // tryStreamCandidates 的 onErrorResume 已记录终态，但 parseRequest 阶段抛出的错误
-            // 不经过 onErrorResume，请求日志会停留在"请求开始"状态，此处补记终态
+        } else if (finalStateLogged.compareAndSet(false, true)) {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
                     "fail", "error", msg.isEmpty() ? "流式请求失败" : msg, 0, 0);
-            finalStateLogged.set(true);
             sendSseError(emitter, msg);
         }
     }
