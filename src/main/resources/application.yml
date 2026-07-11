@@ -11,6 +11,14 @@ server:
       buffer: 1024
 
 spring:
+  mvc:
+    async:
+      # 禁用 Spring MVC 异步请求超时，改由 RelayService 业务层超时管控：
+      # - 非流式：MAX_TOTAL_TIMEOUT_MS（600s）总超时兜底
+      # - 流式：SseEmitter(0L) 无墙钟超时 + STREAM_IDLE_TIMEOUT_MS（60s 空闲超时）
+      # 若不显式禁用，Tomcat 默认异步超时会强制关闭长请求（AsyncRequestTimeoutException），
+      # 导致客户端收到不完整 HTTP 响应（hyper::Error(IncompleteMessage)）。
+      request-timeout: -1
   application:
     name: my-ai-gateway
   servlet:

@@ -45,7 +45,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>重试策略：对每个候选会先按熔断配置中的 {@code retryCount} 进行候选内重试；
  * 全部重试失败后才会触发熔断，并将该候选从列表中移除，继续尝试下一个候选。</p>
  *
- * <p>熔断粒度：
+ * <p>熔断粒度：1112222
  * <ul>
  *   <li>模型级：按 {@code (channelModelId, channelApiKeyId)} 组合熔断，只影响该 API Key 下的该模型。</li>
  *   <li>渠道级（按 API Key）：按 {@code (channelId, channelApiKeyId)} 组合熔断，
