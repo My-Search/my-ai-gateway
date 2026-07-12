@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="chat-playground" :class="{ compact }">
     <button v-if="!compact" class="mobile-sidebar-toggle" @click="showSidebar = !showSidebar">
       <SvgIcon name="settings" :size="14" />
@@ -186,8 +186,7 @@ import { uploadApi } from '@/api/upload'
 import { marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
-import 'github-markdown-css/github-markdown-dark.css'
-import 'highlight.js/styles/github-dark.min.css'
+
 import { useI18n } from '@/composables/useI18n'
 
 /* 高亮模式下不再注入行号，如有 CSS 干扰则清除 */
@@ -708,7 +707,11 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
 function renderMarkdown(text: string): string {
   if (!text) return ''
   try {
-    return (marked.parse(text, { async: false }) as string).trimEnd()
+    // 压缩列表项之间的多余空行，避免 marked 生成 li>p 导致过大间距
+    let processed = text
+      .replace(/((?:^|\n)[ \t]*[-*+][ \t]+[^\n]+)\n\n(?=[ \t]*[-*+][ \t]+)/g, '$1\n')
+      .replace(/((?:^|\n)[ \t]*\d+\.[ \t]+[^\n]+)\n\n(?=[ \t]*\d+\.[ \t]+)/g, '$1\n')
+    return (marked.parse(processed, { async: false }) as string).trimEnd()
   } catch {
     return text
   }
@@ -718,7 +721,11 @@ function renderMarkdown(text: string): string {
 function renderReasoningMarkdown(text: string): string {
   if (!text) return ''
   try {
-    return (marked.parse(text, { async: false, breaks: true }) as string).trimEnd()
+    // 压缩列表项之间的多余空行，避免 marked 生成 li>p 导致过大间距
+    let processed = text
+      .replace(/((?:^|\n)[ \t]*[-*+][ \t]+[^\n]+)\n\n(?=[ \t]*[-*+][ \t]+)/g, '$1\n')
+      .replace(/((?:^|\n)[ \t]*\d+\.[ \t]+[^\n]+)\n\n(?=[ \t]*\d+\.[ \t]+)/g, '$1\n')
+    return (marked.parse(processed, { async: false, breaks: true }) as string).trimEnd()
   } catch {
     return text
   }
@@ -1235,16 +1242,21 @@ function renderReasoningMarkdown(text: string): string {
 .chat-playground .markdown-body {
   background-color: transparent !important;
   color: var(--text-primary);
-  white-space: normal;
+  white-space: normal !important;
   font-size: 14px !important;
   line-height: 1.3 !important;
 }
 .chat-playground .markdown-body *,
 .chat-playground .markdown-body {
   line-height: 1.3 !important;
+  white-space: normal !important;
+}
+.chat-playground .markdown-body pre,
+.chat-playground .markdown-body pre * {
+  white-space: pre !important;
 }
 .chat-playground .thinking-content.markdown-body {
-  white-space: normal;
+  white-space: normal !important;
 }
 
 /* ── 垂直间距压缩 ── */
