@@ -145,7 +145,7 @@
       </Teleport>
 
       <div v-if="!compact" class="chat-quick-actions">
-        <button class="btn btn-secondary btn-quick" :disabled="streaming || !selectedModel" @click="quickSend('hello')"><SvgIcon name="hello" :size="14" /> hello</button>
+        <button class="btn btn-secondary btn-quick" :disabled="streaming || !selectedModel" @click="quickSend('Hello')"><SvgIcon name="hello" :size="14" /> Hello</button>
       </div>
 
       <div class="chat-input-area">

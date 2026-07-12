@@ -118,47 +118,44 @@ public class RelayService {
      * OpenAI 兼容：非流式聊天补全
      */
     public Mono<String> chatCompletions(String authHeader, String requestBody) {
-        String traceId = requestLogService.startTrace();
-        Long gatewayApiKeyId = relayLogger.logOriginalRequest(traceId, authHeader,
+        return relayNonStream("openai", authHeader,
                 relayLogger.buildOpenaiHeadersJson(authHeader), requestBody);
-        if (gatewayApiKeyId == null) {
-            requestLogService.logComplete(traceId, null, null, null, null, null,
-                    "fail", "auth", "无效或缺失的 API Key", 0, 0);
-            return Mono.just(messageTransformer.buildErrorResponse(
-                    "openai", "无效或缺失的 API Key", "authentication_error", 401));
-        }
-        return Mono.fromCallable(() -> {
-                    InternalRequest req = requestPreprocessor.parseRequest(requestBody, "openai");
-                    requestPreprocessor.applyPromptInjections(req);
-                    requestPreprocessor.preprocessMediaInvalidation(req);
-                    return req;
-                })
-                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .flatMap(req -> candidateRouter.executeRelay(traceId, authHeader, gatewayApiKeyId, req, "openai",
-                        this::callProviderNonStream));
     }
 
     /**
      * Anthropic 兼容：非流式消息
      */
     public Mono<String> messages(String apiKeyHeader, String requestBody, String anthropicVersion) {
-        String traceId = requestLogService.startTrace();
-        Long gatewayApiKeyId = relayLogger.logOriginalRequest(traceId, apiKeyHeader,
+        return relayNonStream("anthropic", apiKeyHeader,
                 relayLogger.buildAnthropicHeadersJson(apiKeyHeader, anthropicVersion), requestBody);
+    }
+
+    /**
+     * 非流式中继内部实现（统一 OpenAI / Anthropic 协议入口）
+     * <p>主流程：记录原始请求 -> 鉴权 -> 解析请求 -> 委托 CandidateRouter 执行路由</p>
+     *
+     * @param protocol    协议类型："openai" 或 "anthropic"
+     * @param authHeader  鉴权头原值（透传给下游 CandidateRouter）
+     * @param headersJson 记录日志用的脱敏请求头 JSON
+     * @param requestBody 原始请求体
+     */
+    private Mono<String> relayNonStream(String protocol, String authHeader, String headersJson, String requestBody) {
+        String traceId = requestLogService.startTrace();
+        Long gatewayApiKeyId = relayLogger.logOriginalRequest(traceId, authHeader, headersJson, requestBody);
         if (gatewayApiKeyId == null) {
             requestLogService.logComplete(traceId, null, null, null, null, null,
                     "fail", "auth", "无效或缺失的 API Key", 0, 0);
             return Mono.just(messageTransformer.buildErrorResponse(
-                    "anthropic", "无效或缺失的 API Key", "authentication_error", 401));
+                    protocol, "无效或缺失的 API Key", "authentication_error", 401));
         }
         return Mono.fromCallable(() -> {
-                    InternalRequest req = requestPreprocessor.parseRequest(requestBody, "anthropic");
+                    InternalRequest req = requestPreprocessor.parseRequest(requestBody, protocol);
                     requestPreprocessor.applyPromptInjections(req);
                     requestPreprocessor.preprocessMediaInvalidation(req);
                     return req;
                 })
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .flatMap(req -> candidateRouter.executeRelay(traceId, apiKeyHeader, gatewayApiKeyId, req, "anthropic",
+                .flatMap(req -> candidateRouter.executeRelay(traceId, authHeader, gatewayApiKeyId, req, protocol,
                         this::callProviderNonStream));
     }
 
@@ -168,74 +165,34 @@ public class RelayService {
      * OpenAI 兼容：流式聊天补全
      */
     public SseEmitter chatCompletionsStream(String authHeader, String requestBody, boolean internalClient) {
-        SseEmitter emitter = new SseEmitter(0L);
-        String traceId = requestLogService.startTrace();
-        Long gatewayApiKeyId = relayLogger.logOriginalRequest(traceId, authHeader,
-                relayLogger.buildOpenaiHeadersJson(authHeader), requestBody);
-        if (gatewayApiKeyId == null) {
-            requestLogService.logComplete(traceId, null, null, null, null, null,
-                    "fail", "auth", "无效或缺失的 API Key", 0, 0);
-            sseHandler.sendSseError(emitter, "无效或缺失的 API Key");
-            return emitter;
-        }
-
-        Disposable[] disposableRef = new Disposable[1];
-        AtomicBoolean finalStateLogged = new AtomicBoolean(false);
-
-        emitter.onCompletion(() -> {
-            if (finalStateLogged.compareAndSet(false, true)) {
-                requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
-                        "fail", "interrupted", "客户端断开连接", 0, 0);
-            }
-            sseHandler.cleanupStreamResources(traceId);
-            if (disposableRef[0] != null && !disposableRef[0].isDisposed()) {
-                disposableRef[0].dispose();
-            }
-        });
-        emitter.onTimeout(() -> {
-            log.warn("SSE stream timeout, cleaning up resources - traceId={}", traceId);
-            emitter.complete();
-        });
-
-        disposableRef[0] = Mono.fromCallable(() -> {
-                    InternalRequest req = requestPreprocessor.parseRequest(requestBody, "openai");
-                    requestPreprocessor.applyPromptInjections(req);
-                    requestPreprocessor.preprocessMediaInvalidation(req);
-                    return req;
-                })
-                .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .flatMapMany(req -> candidateRouter.executeStreamRelay(traceId, authHeader, gatewayApiKeyId,
-                        req, "openai", internalClient, finalStateLogged, new ProviderInvoker() {
-                            @Override
-                            public Mono<String> invokeNonStream(String h, InternalRequest r, RoutingCandidate c, String p) {
-                                throw new UnsupportedOperationException("Non-stream not supported in stream relay");
-                            }
-                            @Override
-                            public Flux<SseEvent> invokeStream(String h, InternalRequest r, RoutingCandidate c, String p, boolean ic, String t) {
-                                return callProviderStream(h, r, c, p, ic, t);
-                            }
-                        }))
-                .publishOn(reactor.core.scheduler.Schedulers.boundedElastic(), 1)
-                .subscribe(
-                        event -> sseHandler.sendSseEvent(emitter, event),
-                        err -> sseHandler.handleStreamSubscribeError(traceId, gatewayApiKeyId, emitter, err, finalStateLogged),
-                        () -> {
-                            finalStateLogged.set(true);
-                            sseHandler.cleanupStreamResources(traceId);
-                            emitter.complete();
-                        }
-                );
-        return emitter;
+        return relayStream("openai", authHeader,
+                relayLogger.buildOpenaiHeadersJson(authHeader), requestBody, internalClient);
     }
 
     /**
      * Anthropic 兼容：流式消息
      */
     public SseEmitter messagesStream(String apiKeyHeader, String requestBody, String anthropicVersion, boolean internalClient) {
+        return relayStream("anthropic", apiKeyHeader,
+                relayLogger.buildAnthropicHeadersJson(apiKeyHeader, anthropicVersion), requestBody, internalClient);
+    }
+
+    /**
+     * 流式中继内部实现（统一 OpenAI / Anthropic 协议入口）
+     * <p>主流程：记录原始请求 -> 鉴权 -> 创建 SseEmitter -> 解析请求 -> 委托 CandidateRouter 执行流式路由</p>
+     * <p>资源管理：emitter 完成/超时时自动清理 Disposable 和流状态</p>
+     *
+     * @param protocol      协议类型："openai" 或 "anthropic"
+     * @param authHeader    鉴权头原值（透传给下游 CandidateRouter）
+     * @param headersJson   记录日志用的脱敏请求头 JSON
+     * @param requestBody   原始请求体
+     * @param internalClient 是否为内部客户端调用
+     */
+    private SseEmitter relayStream(String protocol, String authHeader, String headersJson,
+                                   String requestBody, boolean internalClient) {
         SseEmitter emitter = new SseEmitter(0L);
         String traceId = requestLogService.startTrace();
-        Long gatewayApiKeyId = relayLogger.logOriginalRequest(traceId, apiKeyHeader,
-                relayLogger.buildAnthropicHeadersJson(apiKeyHeader, anthropicVersion), requestBody);
+        Long gatewayApiKeyId = relayLogger.logOriginalRequest(traceId, authHeader, headersJson, requestBody);
         if (gatewayApiKeyId == null) {
             requestLogService.logComplete(traceId, null, null, null, null, null,
                     "fail", "auth", "无效或缺失的 API Key", 0, 0);
@@ -262,14 +219,14 @@ public class RelayService {
         });
 
         disposableRef[0] = Mono.fromCallable(() -> {
-                    InternalRequest req = requestPreprocessor.parseRequest(requestBody, "anthropic");
+                    InternalRequest req = requestPreprocessor.parseRequest(requestBody, protocol);
                     requestPreprocessor.applyPromptInjections(req);
                     requestPreprocessor.preprocessMediaInvalidation(req);
                     return req;
                 })
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .flatMapMany(req -> candidateRouter.executeStreamRelay(traceId, apiKeyHeader, gatewayApiKeyId,
-                        req, "anthropic", internalClient, finalStateLogged, new ProviderInvoker() {
+                .flatMapMany(req -> candidateRouter.executeStreamRelay(traceId, authHeader, gatewayApiKeyId,
+                        req, protocol, internalClient, finalStateLogged, new ProviderInvoker() {
                             @Override
                             public Mono<String> invokeNonStream(String h, InternalRequest r, RoutingCandidate c, String p) {
                                 throw new UnsupportedOperationException("Non-stream not supported in stream relay");

@@ -95,6 +95,7 @@ public class OpenAiToAnthropicTranslator implements ProtocolTranslator {
                         try {
                             toolUse.set("input", objectMapper.readTree(func.get("arguments").asText()));
                         } catch (Exception e) {
+                            log.warn("解析 tool_call arguments 失败，设为空对象: args={}", func.get("arguments"), e);
                             toolUse.putObject("input");
                         }
                     }

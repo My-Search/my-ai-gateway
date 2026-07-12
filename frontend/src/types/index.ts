@@ -6,6 +6,19 @@ export interface ApiResponse<T = unknown> {
   message?: string
 }
 
+// Auth Types
+export interface AuthCheckResponse {
+  authenticated: boolean
+  hasAdminAccount: boolean
+}
+
+export interface AuthLoginResponse {
+  success: boolean
+  username?: string
+  token?: string
+  error?: string
+}
+
 // Channel Types
 export interface Channel {
   id?: number

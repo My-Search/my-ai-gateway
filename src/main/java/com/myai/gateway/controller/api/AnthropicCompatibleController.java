@@ -139,7 +139,9 @@ public class AnthropicCompatibleController {
                     default -> 500;
                 };
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.warn("提取 Anthropic 错误码失败，返回默认500: body={}", body, e);
+        }
         return 500;
     }
 

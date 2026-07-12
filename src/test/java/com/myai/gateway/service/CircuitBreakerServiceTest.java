@@ -66,7 +66,7 @@ class CircuitBreakerServiceTest {
     void isModelCircuitBroken_whenOpenRecordExists_returnsTrue() {
         when(stateMapper.selectCount(any())).thenReturn(1L);
 
-        boolean result = service.isModelCircuitBroken(10L);
+        boolean result = service.isModelCircuitBroken(10L, 2L);
 
         assertThat(result).isTrue();
     }

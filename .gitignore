@@ -64,6 +64,17 @@ data/
 tmpcookie.txt
 *.tmp
 
+### Test artifacts ###
+test-spacing-*.png
+frontend/test-*.html
+
+### Vite temp files ###
+frontend/*.timestamp-*.mjs
+
+### Dev scratch files ###
+/FILE
+/_check_md5.ps1
+
 ### OpenCode / Agent workspace ###
 .omo/
 .agentswork/

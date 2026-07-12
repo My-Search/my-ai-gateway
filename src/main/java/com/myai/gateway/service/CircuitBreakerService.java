@@ -75,20 +75,6 @@ public class CircuitBreakerService {
     }
 
     /**
-     * 检查 API Key 是否被熔断（API Key 级，过时）
-     * @deprecated 请使用 {@link #isChannelCircuitBroken(Long, Long)}
-     */
-    @Deprecated
-    public boolean isApiKeyCircuitBroken(Long channelApiKeyId) {
-        if (channelApiKeyId == null) return false;
-        LambdaQueryWrapper<CircuitBreakerState> wrapper = new LambdaQueryWrapper<CircuitBreakerState>()
-                .eq(CircuitBreakerState::getChannelApiKeyId, channelApiKeyId)
-                .eq(CircuitBreakerState::getIsOpen, 1)
-                .gt(CircuitBreakerState::getExpireAt, LocalDateTime.now());
-        return stateMapper.selectCount(wrapper) > 0;
-    }
-
-    /**
      * 检查指定渠道模型是否被熔断（模型级）
      * <p>按 {@code (channelModelId, channelApiKeyId)} 组合判断。为兼容旧数据，若存在
      * 仅有 {@code channelModelId} 的旧熔断记录（{@code channelApiKeyId IS NULL}），
@@ -106,22 +92,6 @@ public class CircuitBreakerService {
                 .and(w -> w.eq(CircuitBreakerState::getChannelApiKeyId, channelApiKeyId)
                         .or()
                         .isNull(CircuitBreakerState::getChannelApiKeyId))
-                .eq(CircuitBreakerState::getIsOpen, 1)
-                .gt(CircuitBreakerState::getExpireAt, LocalDateTime.now());
-        return stateMapper.selectCount(wrapper) > 0;
-    }
-
-    /**
-     * 检查指定渠道模型是否被熔断（模型级，兼容旧调用）
-     * @deprecated 请使用 {@link #isModelCircuitBroken(Long, Long)}
-     */
-    @Deprecated
-    public boolean isModelCircuitBroken(Long channelModelId) {
-        if (channelModelId == null) {
-            return false;
-        }
-        LambdaQueryWrapper<CircuitBreakerState> wrapper = new LambdaQueryWrapper<CircuitBreakerState>()
-                .eq(CircuitBreakerState::getChannelModelId, channelModelId)
                 .eq(CircuitBreakerState::getIsOpen, 1)
                 .gt(CircuitBreakerState::getExpireAt, LocalDateTime.now());
         return stateMapper.selectCount(wrapper) > 0;
@@ -191,15 +161,6 @@ public class CircuitBreakerService {
                     channelId, channelApiKeyId, channelModelId, config.getCircuitBreakDuration());
             triggerModelCircuitBreak(channelId, channelApiKeyId, channelModelId, now, expireAt);
         }
-    }
-
-    /**
-     * 触发渠道级熔断（全渠道，过时）
-     * @deprecated 请使用 {@link #triggerChannelCircuitBreak(Long, Long, LocalDateTime, LocalDateTime)}
-     */
-    @Deprecated
-    private void triggerChannelCircuitBreak(Long channelId, LocalDateTime now, LocalDateTime expireAt) {
-        triggerChannelCircuitBreak(channelId, null, now, expireAt);
     }
 
     /**

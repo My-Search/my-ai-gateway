@@ -140,8 +140,8 @@ export function subscribeLogStream(callbacks: LogSseCallbacks): LogSseSubscripti
       try {
         const log: RequestLog = JSON.parse(event.data)
         callbacks.onLog(log)
-      } catch (e) {
-        console.error('[LogSSE] 解析日志事件失败:', e)
+      } catch {
+        // SSE 事件解析失败，跳过该事件继续处理后续数据
       }
     })
 

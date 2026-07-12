@@ -320,7 +320,7 @@ async function loadUsageChart() {
     })
     usageChartData.value = res.data
   } catch (e) {
-    console.error('Failed to load usage chart:', e)
+    console.warn('Failed to load usage chart:', e)
     // 失败时保留旧数据，图表不闪烁
   }
 }
@@ -534,7 +534,7 @@ async function openRequestView(traceId: string) {
       requestDataExpired.value = true
     }
   } catch (e) {
-    console.error('Failed to load request data:', e)
+    console.warn('Failed to load request data:', e)
     requestDataExpired.value = true
   } finally {
     requestDataLoading.value = false
@@ -852,8 +852,8 @@ async function loadMoreLogs() {
     hasMore.value = res.data.hasMore
     // offset 按 backend 返回总数递增（与后端分页语义对齐）
     offset.value += newTraces.length
-  } catch (e: any) {
-    console.error('Failed to load more logs:', e)
+  } catch (e) {
+    console.warn('Failed to load more logs:', e)
   } finally {
     loadingMore.value = false
   }

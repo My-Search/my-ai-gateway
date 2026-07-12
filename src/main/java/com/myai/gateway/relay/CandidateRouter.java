@@ -662,7 +662,9 @@ public class CandidateRouter {
                         }
                         if (errorNode.isTextual()) return errorNode.asText();
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    log.warn("解析 Provider 错误响应体失败，使用原始文本: body={}", body, e);
+                }
                 String statusPart = errorMsg.substring("Provider error:".length(), bodyIdx).trim();
                 return statusPart + " " + body;
             }

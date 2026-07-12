@@ -435,7 +435,7 @@ public class MessageTransformer {
                         toolUse.put("name", (String) func.get("name"));
                         String args = (String) func.get("arguments");
                         try { toolUse.set("input", objectMapper.readTree(args)); }
-                        catch (Exception e) { toolUse.putObject("input"); }
+                        catch (Exception e) { log.warn("解析 tool_call arguments 失败，设为空对象: args={}", args, e); toolUse.putObject("input"); }
                     }
                 }
             }
@@ -598,7 +598,7 @@ public class MessageTransformer {
                 return objectMapper.writeValueAsString(obj);
             }
             return json.toString();
-        } catch (Exception e) { return json.toString(); }
+        } catch (Exception e) { log.warn("replaceModelInJson 失败，返回原始JSON", e); return json.toString(); }
     }
 
     private String replaceModelInRawJson(String rawJson, String originalModel) {
@@ -610,7 +610,7 @@ public class MessageTransformer {
                 return objectMapper.writeValueAsString(obj);
             }
             return rawJson;
-        } catch (Exception e) { return rawJson; }
+        } catch (Exception e) { log.warn("replaceModelInRawJson 失败，返回原始JSON", e); return rawJson; }
     }
 
     private String mapStatusToOpenAiErrorType(int statusCode) {

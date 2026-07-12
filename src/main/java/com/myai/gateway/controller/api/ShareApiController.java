@@ -48,7 +48,6 @@ public class ShareApiController {
      * GET /api/share/{code}
      *
      * 返回：密钥名称、密钥值、Base URL、可用模型列表
-     * @deprecated 使用 /api/share/by-key/{keyValue} 替代
      */
     @GetMapping(value = "/{code}", produces = "application/json;charset=UTF-8")
     public ResponseEntity<?> getShareInfo(@PathVariable String code) {

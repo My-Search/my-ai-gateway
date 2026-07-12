@@ -190,7 +190,7 @@ async function loadRules() {
   try {
     const res = await multimodalApi.list()
     rules.value = res.data
-  } catch (e: any) {
+  } catch (e) {
     console.warn('加载多模态规则失败', e)
   } finally {
     loading.value = false

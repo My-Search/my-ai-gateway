@@ -165,7 +165,9 @@ public class OpenAiCompatibleController {
             if (json.has("error") && json.get("error").has("code")) {
                 return json.get("error").get("code").asInt(500);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            log.warn("提取错误码失败，返回默认500: body={}", body, e);
+        }
         return 500;
     }
 }
