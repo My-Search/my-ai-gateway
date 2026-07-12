@@ -1133,10 +1133,9 @@ public class AdminApiController {
      */
     @GetMapping(value = "/logs/stream", produces = "text/event-stream;charset=UTF-8")
     public SseEmitter streamLogs() {
-        // SSE 超时设为 5 分钟，防止低流量时连接长期挂起。
-        // 前端 EventSource 有 onReconnecting/onReconnected 自动重连回调，
-        // 超时后前端会自动恢复连接，不会造成功能中断。
-        SseEmitter emitter = new SseEmitter(300_000L);
+        // 禁用墙钟超时，避免有数据输出时仍被强制断开。
+        // 连接关闭完全由客户端断开（onCompletion）或异常（onError）驱动。
+        SseEmitter emitter = new SseEmitter(0L);
 
         LogSseService.SubscriberQueue sq = logSseService.subscribe();
 
