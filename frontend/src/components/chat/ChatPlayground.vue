@@ -1033,10 +1033,12 @@ function renderReasoningMarkdown(text: string): string {
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 8px;
+  max-width: 100%;
 }
 .chat-image {
-  max-width: 240px;
-  max-height: 240px;
+  max-width: 100%;
+  height: auto;
+  max-height: 400px;
   border-radius: 8px;
   border: 1px solid var(--border-color);
   cursor: zoom-in;
