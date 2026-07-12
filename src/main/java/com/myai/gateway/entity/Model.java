@@ -52,6 +52,9 @@ public class Model {
     /** 音频失效会话数：0=关闭；同上 */
     private Integer audioInvalidateCount = 0;
 
+    /** 强制覆盖思考强度：1=忽略请求中的 reasoning_effort，使用关联配置的默认值；0=不覆盖（默认） */
+    private Integer forceOverrideReasoningEffort = 0;
+
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
     private LocalDateTime createdAt;
 
@@ -110,6 +113,9 @@ public class Model {
 
     public Integer getAudioInvalidateCount() { return audioInvalidateCount; }
     public void setAudioInvalidateCount(Integer audioInvalidateCount) { this.audioInvalidateCount = audioInvalidateCount != null ? audioInvalidateCount : 0; }
+
+    public Integer getForceOverrideReasoningEffort() { return forceOverrideReasoningEffort; }
+    public void setForceOverrideReasoningEffort(Integer forceOverrideReasoningEffort) { this.forceOverrideReasoningEffort = forceOverrideReasoningEffort != null ? forceOverrideReasoningEffort : 0; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

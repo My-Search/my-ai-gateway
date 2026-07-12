@@ -363,6 +363,8 @@ export default {
   'model.advanced.promptInjection': 'Prompt Injection',
   'model.advanced.promptInjectionHint': 'Configure prompt injection rules to inject custom system instructions, user messages, or assistant replies into requests.',
   'model.advanced.managePromptInjection': 'Manage Prompt Injection',
+  'model.advanced.forceOverrideReasoningEffort': 'Force Override Thinking Intensity',
+  'model.advanced.forceOverrideReasoningEffortHint': 'When enabled, ignores the reasoning_effort parameter from client requests and forces the use of the default thinking intensity configured in the channel association.',
   'model.advanced.saveSuccess': 'Advanced config saved',
   'model.advanced.saveFailed': 'Save failed',
   'model.list.advanced': 'Advanced',

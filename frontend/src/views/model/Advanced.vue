@@ -71,6 +71,18 @@
       </div>
 
       <div class="form-section">
+        <div class="section-title">{{ t('model.advanced.forceOverrideReasoningEffort') }}</div>
+        <div class="section-desc">{{ t('model.advanced.forceOverrideReasoningEffortHint') }}</div>
+        <div class="switch-group">
+          <ToggleSwitch
+            v-model="forceOverrideEnabled"
+            :active-label="t('common.on')"
+            :inactive-label="t('common.off')"
+          />
+        </div>
+      </div>
+
+      <div class="form-section">
         <div class="section-title">{{ t('model.advanced.promptInjection') }}</div>
         <div class="section-desc">{{ t('model.advanced.promptInjectionHint') }}</div>
         <router-link :to="`/admin/model/prompt-injections/${route.params.id}`" class="btn btn-secondary">
@@ -120,6 +132,7 @@ const form = ref({
 const imageEnabled = ref(false)
 const videoEnabled = ref(false)
 const audioEnabled = ref(false)
+const forceOverrideEnabled = ref(false)
 
 function onImageToggle() {
   if (!imageEnabled.value) {
@@ -156,6 +169,7 @@ onMounted(async () => {
     imageEnabled.value = form.value.imageInvalidateCount > 0
     videoEnabled.value = form.value.videoInvalidateCount > 0
     audioEnabled.value = form.value.audioInvalidateCount > 0
+    forceOverrideEnabled.value = (res.data.forceOverrideReasoningEffort ?? 0) === 1
   } catch (e: any) {
     openDialog({ title: t('error.loadFailed'), message: e.message })
     router.push('/admin/model/list')
@@ -168,7 +182,8 @@ async function handleSave() {
     await modelApi.update(Number(route.params.id), {
       imageInvalidateCount: form.value.imageInvalidateCount,
       videoInvalidateCount: form.value.videoInvalidateCount,
-      audioInvalidateCount: form.value.audioInvalidateCount
+      audioInvalidateCount: form.value.audioInvalidateCount,
+      forceOverrideReasoningEffort: forceOverrideEnabled.value ? 1 : 0
     })
     openDialog({ title: t('common.success'), message: t('model.advanced.saveSuccess'), onConfirm: () => router.push('/admin/model/list') })
   } catch (e: any) {

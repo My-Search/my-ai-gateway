@@ -142,6 +142,30 @@ public class RequestPreprocessor {
         if (audioN > 0) preprocessMediaInvalidationForType(req, "audio", audioN, MEDIA_REPLACE_TEXT_AUDIO);
     }
 
+    /**
+     * 强制覆盖思考强度
+     * <p>当入口模型启用了 force_override_reasoning_effort 时，清除客户端请求中携带的
+     * reasoning_effort，使其在后续 buildProviderRequestBody 中回退到关联关系配置的默认值。</p>
+     * <p>处理流程：解析模型ID → 查询模型配置 → 判断是否启用强制覆盖 → 清除 reasoningEffort</p>
+     *
+     * @param req 内部统一请求
+     */
+    public void applyReasoningEffortOverride(InternalRequest req) {
+        if (req.getReasoningEffort() == null || req.getReasoningEffort().isEmpty()) return;
+
+        Long customModelId = routeResolver.resolveModelId(req.getModel());
+        if (customModelId == null) return;
+
+        Model model = modelService.getById(customModelId);
+        if (model == null) return;
+
+        if (model.getForceOverrideReasoningEffort() != null && model.getForceOverrideReasoningEffort() == 1) {
+            log.info("强制覆盖思考强度: 清除客户端请求的 reasoning_effort={}, 将使用关联配置的默认值 - model={}",
+                    req.getReasoningEffort(), req.getModel());
+            req.setReasoningEffort(null);
+        }
+    }
+
     private void preprocessMediaInvalidationForType(InternalRequest req, String mediaTypePrefix,
                                                      int invalidateCount, String replaceText) {
         List<InternalMessage> messages = req.getMessages();

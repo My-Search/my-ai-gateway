@@ -22,6 +22,8 @@ export interface CustomModel {
   videoInvalidateCount?: number
   /** 音频失效会话数：0=关闭 */
   audioInvalidateCount?: number
+  /** 强制覆盖思考强度：1=忽略请求中的 reasoning_effort，使用关联配置的默认值 */
+  forceOverrideReasoningEffort?: number
 }
 
 export interface ModelChannelRel {

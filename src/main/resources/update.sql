@@ -443,4 +443,14 @@ INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUE
 -- info=全部保存, warn=仅重试/错误时保存, error=仅失败时保存
 -- ========================================
 
-INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('request_data_save_level', 'info', '原始请求数据保存级别：info=全部保存，warn=重试/错误时保存，error=仅失败时保存'); 
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('request_data_save_level', 'info', '原始请求数据保存级别：info=全部保存，warn=重试/错误时保存，error=仅失败时保存');
+
+-- ========================================
+-- VERSION:v1.27.0
+-- 入口模型添加 force_override_reasoning_effort（强制覆盖思考强度）字段
+-- force_override_reasoning_effort=1 时，忽略客户端请求中携带的 reasoning_effort，
+-- 强制使用关联关系中配置的默认思考强度
+-- ========================================
+
+ALTER TABLE models ADD COLUMN force_override_reasoning_effort INTEGER DEFAULT 0;
+UPDATE models SET force_override_reasoning_effort = 0 WHERE force_override_reasoning_effort IS NULL;

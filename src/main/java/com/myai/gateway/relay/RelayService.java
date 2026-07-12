@@ -152,6 +152,7 @@ public class RelayService {
                     InternalRequest req = requestPreprocessor.parseRequest(requestBody, protocol);
                     requestPreprocessor.applyPromptInjections(req);
                     requestPreprocessor.preprocessMediaInvalidation(req);
+                    requestPreprocessor.applyReasoningEffortOverride(req);
                     return req;
                 })
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
@@ -222,6 +223,7 @@ public class RelayService {
                     InternalRequest req = requestPreprocessor.parseRequest(requestBody, protocol);
                     requestPreprocessor.applyPromptInjections(req);
                     requestPreprocessor.preprocessMediaInvalidation(req);
+                    requestPreprocessor.applyReasoningEffortOverride(req);
                     return req;
                 })
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
