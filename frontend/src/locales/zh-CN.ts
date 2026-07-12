@@ -523,7 +523,10 @@ export default {
 'playground.thinking': '思考中...',
 'playground.thinkingClick': '点击展开详情',
 'playground.thinkingCollapse': '思考过程',
-'playground.uploadImage': '上传图片',
+  'playground.uploadImage': '上传图片',
+  'playground.modelSettings': '模型设置',
+  'playground.send': '发送',
+  'playground.codeMode': '代码模式',
 
   /* ========== Share ========== */
   'share.loading': '加载中...',

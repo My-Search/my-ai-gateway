@@ -65,11 +65,16 @@
           <span class="chat-header-title">{{ t('playground.title') }}</span>
         </div>
         <div class="chat-header-right">
-          <template v-if="selectedModel">
-            <span class="current-model-label">{{ t('playground.currentModel') }}: <code>{{ selectedModel }}</code></span>
-          </template>
-          <button type="button" class="btn-config-toggle" @click="toggleSidebar()" :title="sidebarCollapsed ? t('playground.showConfig') : t('playground.toggleConfig')">
+          <div class="model-selector-bar">
+            <span class="model-selector-label">{{ t('playground.currentModel') }}:</span>
+            <select v-model="selectedModel" class="model-selector-select">
+              <option value="">{{ t('playground.selectModelPlaceholder') }}</option>
+              <option v-for="m in models" :key="m.modelName" :value="m.modelName">{{ m.modelName }}</option>
+            </select>
+          </div>
+          <button type="button" class="btn-model-settings" @click="toggleSidebar()" :title="sidebarCollapsed ? t('playground.showConfig') : t('playground.toggleConfig')">
             <SvgIcon name="settings" :size="14" />
+            {{ t('playground.modelSettings') }}
           </button>
         </div>
       </div>
@@ -145,7 +150,9 @@
       </Teleport>
 
       <div v-if="!compact" class="chat-quick-actions">
-        <button class="btn btn-secondary btn-quick" :disabled="streaming || !selectedModel" @click="quickSend('Hello')"><SvgIcon name="hello" :size="14" /> Hello</button>
+        <button class="btn-quick-hint" :disabled="streaming || !selectedModel" @click="quickSend('Hello, My AI Gateway!')">
+          <SvgIcon name="send" :size="14" /> Hello, My AI Gateway!
+        </button>
       </div>
 
       <div class="chat-input-area">
@@ -153,24 +160,33 @@
           <input ref="fileInputRef" type="file" accept="image/*" multiple class="hidden-file-input" @change="handleFileSelect" />
           <textarea v-model="userInput" class="form-control chat-textarea" :placeholder="t('playground.inputPlaceholder')"
                     :rows="compact ? 2 : 3" @keydown="handleKeydown" @paste="handlePaste"></textarea>
-          <div class="chat-input-footer">
-            <button class="btn-image-upload" :disabled="streaming || !selectedModel" @click="triggerFileSelect" :title="t('playground.uploadImage')">
-              <SvgIcon name="image" :size="16" />
-            </button>
-            <div v-if="pastedImages.length" class="pasted-images">
-              <div v-for="img in pastedImages" :key="img.id" class="pasted-image-item" :class="{ uploading: img.uploading }">
-                <img :src="img.dataUrl" class="pasted-image-preview" alt="pasted image" />
-                <div v-if="img.uploading" class="pasted-image-overlay">
-                  <span class="upload-spinner"></span>
-                </div>
-                <div v-else-if="img.error" class="pasted-image-overlay error">
-                  <SvgIcon name="x" :size="14" />
-                </div>
-                <button v-if="!img.uploading" class="pasted-image-remove" @click="removePastedImage(img.id)" :title="t('common.delete')">
-                  <SvgIcon name="x" :size="12" />
-                </button>
+          <div v-if="pastedImages.length" class="pasted-images">
+            <div v-for="img in pastedImages" :key="img.id" class="pasted-image-item" :class="{ uploading: img.uploading }">
+              <img :src="img.dataUrl" class="pasted-image-preview" alt="pasted image" />
+              <div v-if="img.uploading" class="pasted-image-overlay">
+                <span class="upload-spinner"></span>
               </div>
+              <div v-else-if="img.error" class="pasted-image-overlay error">
+                <SvgIcon name="x" :size="14" />
+              </div>
+              <button v-if="!img.uploading" class="pasted-image-remove" @click="removePastedImage(img.id)" :title="t('common.delete')">
+                <SvgIcon name="x" :size="12" />
+              </button>
             </div>
+          </div>
+          <div class="chat-input-footer">
+            <div class="chat-input-tools">
+              <button class="btn-image-upload" :disabled="streaming || !selectedModel" @click="triggerFileSelect" :title="t('playground.uploadImage')">
+                <SvgIcon name="image" :size="16" />
+              </button>
+              <button class="btn-code-mode" :class="{ active: codeMode }" @click="codeMode = !codeMode" :title="t('playground.codeMode')">
+                <SvgIcon name="code" :size="16" />
+              </button>
+            </div>
+            <button class="btn-send" :disabled="streaming || !selectedModel || (!userInput.trim() && pastedImages.length === 0)" @click="sendMessage">
+              <SvgIcon name="send" :size="16" />
+              {{ t('playground.send') }}
+            </button>
           </div>
         </div>
       </div>
@@ -258,6 +274,8 @@ const routingProgress = ref<{ phase: string; channel: string; channel_model: str
 const showSidebar = ref(false)
 /** 每条消息的推理内容展开状态 */
 const expandedThinking = ref<Record<number, boolean>>({})
+/** 是否启用代码模式（发送内容自动包裹为代码块） */
+const codeMode = ref(false)
 
 /* ========== 粘贴图片 ========== */
 /** 待发送的粘贴图片列表 */
@@ -559,7 +577,7 @@ function buildRequestBody() {
 }
 
 async function sendMessage() {
-  const content = userInput.value.trim()
+  let content = userInput.value.trim()
   const pendingImages = pastedImages.value.filter(i => !i.error && !i.uploading)
   if (!content && pendingImages.length === 0) return
   if (streaming.value) return
@@ -567,6 +585,11 @@ async function sendMessage() {
   if (!selectedModel.value) {
     addMessage('system-msg', t('playground.selectModelFirst'))
     return
+  }
+
+  // 代码模式下自动包裹为代码块
+  if (codeMode.value && content) {
+    content = '```\n' + content + '\n```'
   }
 
   // 收集已上传完成的图片 URL（优先服务器 URL，上传失败时回退 data URI）
@@ -892,17 +915,37 @@ function renderReasoningMarkdown(text: string): string {
 }
 .chat-quick-actions {
   display: flex; gap: 8px; padding: 8px 0;
-  border-top: 1px solid var(--border-color);
+}
+.btn-quick-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-quick-hint:hover:not(:disabled) {
+  border-color: var(--accent-purple);
+  color: var(--accent-purple);
+}
+.btn-quick-hint:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 .chat-input-area { margin-top: 4px; }
 .chat-input-wrapper {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 0;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 4px;
+  border-radius: 12px;
+  padding: 10px 12px;
 }
 .chat-input-wrapper:focus-within {
   border-color: var(--accent-blue);
@@ -913,18 +956,25 @@ function renderReasoningMarkdown(text: string): string {
   border: none !important;
   background: transparent !important;
   resize: none;
-  padding: 6px 8px;
+  padding: 4px 2px;
   font-size: 14px;
   outline: none;
-  min-height: 40px;
+  min-height: 56px;
   box-shadow: none !important;
   margin-bottom: 0;
 }
 .chat-input-footer {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
+  margin-top: 8px;
   min-height: 0;
+}
+.chat-input-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .btn-image-upload {
   display: flex;
@@ -933,7 +983,7 @@ function renderReasoningMarkdown(text: string): string {
   width: 32px;
   height: 32px;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -948,13 +998,54 @@ function renderReasoningMarkdown(text: string): string {
   opacity: 0.3;
   cursor: not-allowed;
 }
+.btn-code-mode {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s;
+  font-family: monospace;
+  font-weight: 600;
+}
+.btn-code-mode:hover:not(:disabled) {
+  background: var(--bg-tertiary);
+  color: var(--accent-blue);
+}
+.btn-code-mode.active {
+  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+  color: var(--accent-blue);
+}
+.btn-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent-purple);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.btn-send:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+.btn-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 .hidden-file-input {
   display: none;
-}
-
-.btn-quick {
-  font-size: 12px; padding: 4px 12px;
-  font-weight: 600; letter-spacing: 0.5px;
 }
 
 /* ===== 粘贴图片预览 ===== */
@@ -1167,46 +1258,62 @@ function renderReasoningMarkdown(text: string): string {
 }
 /* 思考/推理内容的 white-space 在全局块中设置（见下文），此处不再重复 */
 
-/* ===== 配置切换按钮（右上角） ===== */
-.btn-config-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: all 0.15s;
-  flex-shrink: 0;
-  z-index: 10;
-}
-.btn-config-toggle:hover {
-  background: var(--bg-tertiary);
-  color: var(--accent-purple);
-  border-color: var(--accent-purple);
-}
+/* ===== 右上角模型选择 + 设置 ===== */
 .chat-header-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-shrink: 0;
   position: relative;
   z-index: 10;
 }
-.chat-header-right .current-model-label {
-  font-size: 12px;
+.model-selector-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+.model-selector-label {
   color: var(--text-muted);
   white-space: nowrap;
 }
-.chat-header-right code {
-  background: var(--bg-tertiary);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 12px;
+.model-selector-select {
+  background: transparent;
+  border: none;
   color: var(--accent-purple);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  padding-right: 4px;
+  max-width: 120px;
+}
+.model-selector-select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+.btn-model-settings {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.btn-model-settings:hover {
+  background: var(--bg-tertiary);
+  color: var(--accent-purple);
+  border-color: var(--accent-purple);
 }
 
 /* 移动端配置栏切换按钮 - 默认隐藏 */

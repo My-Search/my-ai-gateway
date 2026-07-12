@@ -523,7 +523,10 @@ export default {
 'playground.thinking': 'Thinking...',
 'playground.thinkingClick': 'Click to expand',
 'playground.thinkingCollapse': 'Thinking process',
-'playground.uploadImage': 'Upload image',
+  'playground.uploadImage': 'Upload image',
+  'playground.modelSettings': 'Model Settings',
+  'playground.send': 'Send',
+  'playground.codeMode': 'Code Mode',
 
   /* ========== Share ========== */
   'share.loading': 'Loading...',
