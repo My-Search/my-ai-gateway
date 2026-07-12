@@ -58,11 +58,13 @@
     <div class="playground-main">
       <div v-if="!compact" class="chat-header">
         <div class="chat-header-left">
-          <span class="test-status-icon" :class="streaming ? 'testing' : 'idle'">
-            <SvgIcon v-if="streaming" name="zap" :size="16" />
-            <SvgIcon v-else name="check" :size="16" />
-          </span>
-          <span class="chat-header-title">{{ t('playground.title') }}</span>
+          <div class="header-icon-wrapper">
+            <SvgIcon name="ai-chat" :size="20" />
+          </div>
+          <div class="header-text">
+            <span class="chat-header-title">{{ t('playground.title') }}</span>
+            <span class="chat-header-subtitle">{{ t('playground.welcomeDesc') }}</span>
+          </div>
         </div>
         <div class="chat-header-right">
           <div class="model-selector-bar">
@@ -73,8 +75,8 @@
             </select>
           </div>
           <button type="button" class="btn-model-settings" @click="toggleSidebar()" :title="sidebarCollapsed ? t('playground.showConfig') : t('playground.toggleConfig')">
-            <SvgIcon name="settings" :size="14" />
-            {{ t('playground.modelSettings') }}
+            <SvgIcon name="settings" :size="16" />
+            <span class="settings-text">{{ t('playground.modelSettings') }}</span>
           </button>
         </div>
       </div>
@@ -847,7 +849,26 @@ function renderReasoningMarkdown(text: string): string {
   border-radius: 8px 8px 0 0;
   border-bottom: none;
 }
-.chat-header-left { display: flex; align-items: center; gap: 8px; }
+.chat-header-left { display: flex; align-items: center; gap: 12px; }
+.header-icon-wrapper {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-purple), #7c3aed);
+  display: flex; align-items: center; justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+}
+.header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.chat-header-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.chat-header-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: none;
+}
 .test-status-icon {
   width: 24px; height: 24px;
   display: flex; align-items: center; justify-content: center;
@@ -855,7 +876,6 @@ function renderReasoningMarkdown(text: string): string {
 }
 .test-status-icon.testing { animation: pulse 1.5s ease-in-out infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
-.chat-header-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
 
 .chat-messages {
   flex: 1;
@@ -1314,6 +1334,41 @@ function renderReasoningMarkdown(text: string): string {
   background: var(--bg-tertiary);
   color: var(--accent-purple);
   border-color: var(--accent-purple);
+}
+
+/* Mobile header overrides */
+@media (max-width: 768px) {
+  .chat-header {
+    border-radius: 12px;
+    margin: 8px 8px 0;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+  }
+  .chat-header-subtitle {
+    display: block;
+  }
+  .model-selector-bar {
+    padding: 4px 8px;
+    gap: 4px;
+  }
+  .model-selector-label {
+    display: none;
+  }
+  .model-selector-select {
+    max-width: 80px;
+    font-size: 12px;
+    padding-right: 2px;
+  }
+  .settings-text {
+    display: none;
+  }
+  .btn-model-settings {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 10px;
+  }
 }
 
 /* 移动端配置栏切换按钮 - 默认隐藏 */
