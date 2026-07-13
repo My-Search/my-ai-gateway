@@ -1,6 +1,7 @@
 package com.myai.gateway.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.myai.gateway.entity.*;
 import com.myai.gateway.mapper.*;
 import org.slf4j.Logger;
@@ -479,18 +480,24 @@ public class ModelService {
     /**
      * 更新渠道模型的最后使用时间（用于轮询 LRU 排序）
      *
+     * <p>非关键路径操作，失败时仅记录日志不抛出异常，避免影响主请求流程。
+     * 使用单字段 UPDATE 替代先 SELECT 再全字段 UPDATE，缩短锁持有时间，
+     * 缓解 SQLite 单写者模型下的 SQLITE_BUSY 竞争。</p>
+     *
      * @param channelModelId 渠道模型 ID
      */
-    @Transactional
     public void updateChannelModelLastUsed(Long channelModelId) {
         if (channelModelId == null) {
             return;
         }
-        ChannelModel cm = channelModelMapper.selectById(channelModelId);
-        if (cm != null) {
-            cm.setLastUsedAt(LocalDateTime.now());
-            channelModelMapper.updateById(cm);
+        try {
+            LambdaUpdateWrapper<ChannelModel> wrapper = new LambdaUpdateWrapper<ChannelModel>()
+                    .eq(ChannelModel::getId, channelModelId)
+                    .set(ChannelModel::getLastUsedAt, LocalDateTime.now());
+            channelModelMapper.update(null, wrapper);
             log.debug("渠道模型 {} 最后使用时间已更新", channelModelId);
+        } catch (Exception e) {
+            log.warn("更新渠道模型 {} 最后使用时间失败: {}", channelModelId, e.getMessage());
         }
     }
 }
