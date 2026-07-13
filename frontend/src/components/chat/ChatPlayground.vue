@@ -30,6 +30,14 @@
         </div>
 
         <div class="form-group">
+          <label>{{ t('playground.protocol') }}</label>
+          <select v-model="protocol" class="form-control">
+            <option value="openai">{{ t('playground.protocolOpenai') }}</option>
+            <option value="anthropic">{{ t('playground.protocolAnthropic') }}</option>
+          </select>
+        </div>
+
+        <div class="form-group">
           <label>Temperature</label>
           <input v-model.number="temperature" type="number" class="form-control" min="0" max="2" step="0.1" />
         </div>
@@ -267,6 +275,7 @@ const selectedModel = ref('')
 const selectedApiKey = ref(0)
 const temperature = ref(0.7)
 const maxTokens = ref(65536)
+const protocol = ref('openai')
 const userInput = ref('')
 // 使用 shallowRef 避免深层响应式追踪，配合 triggerRef 实现精确控制的流式渲染
 const messages = shallowRef<ChatMessage[]>([])
@@ -394,6 +403,15 @@ const isFullyConfigured = computed(() => {
   return !!selectedModel.value
 })
 
+/** 从选中的 API Key ID 解析出明文 key value，用于 /v1/* 认证头 */
+const selectedApiKeyValue = computed(() => {
+  if (selectedApiKey.value === 0 && apiKeys.value.length > 0) {
+    return apiKeys.value[0].keyValue
+  }
+  const key = apiKeys.value.find(k => k.id === selectedApiKey.value)
+  return key?.keyValue || ''
+})
+
 /** 侧栏折叠状态（默认折叠，onMounted 中根据配置状态决定是否展开） */
 const sidebarCollapsed = ref(true)
 
@@ -431,6 +449,7 @@ function saveConfig() {
   const config = {
     selectedModel: selectedModel.value,
     selectedApiKey: selectedApiKey.value,
+    protocol: protocol.value,
     temperature: temperature.value,
     maxTokens: maxTokens.value,
   }
@@ -452,6 +471,9 @@ function restoreConfig() {
     if (config.selectedApiKey) {
       selectedApiKey.value = config.selectedApiKey
     }
+    if (config.protocol === 'openai' || config.protocol === 'anthropic') {
+      protocol.value = config.protocol
+    }
     if (typeof config.temperature === 'number' && config.temperature >= 0 && config.temperature <= 2) {
       temperature.value = config.temperature
     }
@@ -464,7 +486,7 @@ function restoreConfig() {
 }
 
 /** 任一配置字段变化时自动保存 */
-watch([selectedModel, selectedApiKey, temperature, maxTokens], () => {
+watch([selectedModel, selectedApiKey, protocol, temperature, maxTokens], () => {
   saveConfig()
 }, { deep: false })
 
@@ -568,12 +590,9 @@ function buildRequestBody() {
       }
       return { role: 'user', content: m.content }
     }),
+    stream: true,
     temperature: temperature.value,
     max_tokens: maxTokens.value
-  }
-  // 管理端模式：在 body 中传 api_key_id
-  if (!isShareMode.value) {
-    body.api_key_id = selectedApiKey.value
   }
   return body
 }
@@ -626,7 +645,9 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
   const response = await chatStream(
     buildRequestBody(),
     isShareMode.value,
-    props.fixedShareCode
+    props.fixedShareCode,
+    protocol.value as 'openai' | 'anthropic',
+    selectedApiKeyValue.value
   )
 
   if (!response.ok) {
@@ -706,6 +727,44 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
             if (choice.finish_reason === 'length') {
               targetMsg.truncated = true
               hasNewContent = true
+            }
+          } else if (json.type) {
+            // Anthropic SSE 格式处理（protocol='anthropic' 时后端翻译为此格式）
+            if (json.type === 'content_block_delta' && json.delta) {
+              if (json.delta.type === 'text_delta' && json.delta.text) {
+                fullContent += json.delta.text
+                tokenNum++
+                targetMsg.content = fullContent
+                hasNewContent = true
+              }
+              // Anthropic 思考/推理过程（thinking_delta）
+              if (json.delta.type === 'thinking_delta' && json.delta.thinking) {
+                if (!targetMsg.reasoningContent) {
+                  targetMsg.reasoningContent = ''
+                  const msgIdx = messages.value.indexOf(targetMsg)
+                  if (msgIdx >= 0) {
+                    expandedThinking.value = { ...expandedThinking.value, [msgIdx]: true }
+                  }
+                }
+                targetMsg.reasoningContent += json.delta.thinking
+                hasNewContent = true
+              }
+            }
+            // content_block_start 中可能携带初始文本
+            if (json.type === 'content_block_start' && json.content_block) {
+              if (json.content_block.type === 'text' && json.content_block.text) {
+                fullContent += json.content_block.text
+                tokenNum++
+                targetMsg.content = fullContent
+                hasNewContent = true
+              }
+            }
+            // message_delta 中的截断信息
+            if (json.type === 'message_delta' && json.delta) {
+              if (json.delta.stop_reason === 'max_tokens') {
+                targetMsg.truncated = true
+                hasNewContent = true
+              }
             }
           }
         } catch { /* ignore parse errors */ }

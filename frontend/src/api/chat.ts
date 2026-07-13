@@ -2,7 +2,8 @@ import http from './index'
 
 /**
  * 流式聊天（SSE）
- * - 管理端：自动附加 JWT Token（与 http 拦截器同源）
+ * - 管理端 Playground：根据协议调用实际的 API 端点（/v1/chat/completions 或 /v1/messages），
+ *   使用 API Key 值进行认证（模拟真实客户端调用）
  * - 分享模式：URL 携带 shareCode 鉴权
  *
  * 返回 fetch Response，调用方自行解析 SSE 事件流
@@ -10,19 +11,31 @@ import http from './index'
 export function chatStream(
   body: unknown,
   isShareMode: boolean,
-  shareCode?: string
+  shareCode?: string,
+  /** 管理端 Playground：API 协议类型 */
+  protocol?: 'openai' | 'anthropic',
+  /** 管理端 Playground：API Key 明文值（用于认证头） */
+  apiKeyValue?: string
 ): Promise<Response> {
-  const url = isShareMode
-    ? `/api/share/chat/stream?shareCode=${shareCode}`
-    : '/admin/api/chat/stream'
-
+  let url: string
   const headers: Record<string, string> = {
     'Content-Type': 'application/json; charset=utf-8'
   }
-  if (!isShareMode) {
-    const token = localStorage.getItem('admin_token')
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`
+
+  if (isShareMode) {
+    url = `/api/share/chat/stream?shareCode=${shareCode}`
+  } else if (protocol === 'anthropic') {
+    // Anthropic 兼容端点
+    url = '/v1/messages'
+    if (apiKeyValue) {
+      headers['x-api-key'] = apiKeyValue
+    }
+    headers['anthropic-version'] = '2023-06-01'
+  } else {
+    // OpenAI 兼容端点（默认）
+    url = '/v1/chat/completions'
+    if (apiKeyValue) {
+      headers['Authorization'] = `Bearer ${apiKeyValue}`
     }
   }
 

@@ -527,6 +527,9 @@ export default {
   'playground.modelSettings': '模型设置',
   'playground.send': '发送',
   'playground.codeMode': '代码模式',
+  'playground.protocol': 'API 协议',
+  'playground.protocolOpenai': 'OpenAI',
+  'playground.protocolAnthropic': 'Anthropic',
 
   /* ========== Share ========== */
   'share.loading': '加载中...',

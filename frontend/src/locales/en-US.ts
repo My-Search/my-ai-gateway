@@ -527,6 +527,9 @@ export default {
   'playground.modelSettings': 'Model Settings',
   'playground.send': 'Send',
   'playground.codeMode': 'Code Mode',
+  'playground.protocol': 'API Protocol',
+  'playground.protocolOpenai': 'OpenAI',
+  'playground.protocolAnthropic': 'Anthropic',
 
   /* ========== Share ========== */
   'share.loading': 'Loading...',
