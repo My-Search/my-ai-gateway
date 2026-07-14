@@ -429,6 +429,13 @@ export default {
   'apikey.list.shareLinkCopyFailed': '分享链接复制失败',
   'apikey.list.enableShareFailed': '开启分享失败',
   'apikey.list.manualCopyFailed': '复制失败，请手动复制',
+  'apikey.list.tokenUsage': 'Token 用量',
+  'apikey.list.requests': '请求次数',
+  'apikey.list.today': '今日',
+  'apikey.list.week': '本周',
+  'apikey.list.month': '本月',
+  'apikey.list.showTokens': 'Token',
+  'apikey.list.showRequests': '次数',
 
   /* ========== API Key Form ========== */
   'apikey.form.editTitle': '编辑密钥',

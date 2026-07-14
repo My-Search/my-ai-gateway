@@ -346,6 +346,25 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
                                                                 @Param("gatewayApiKeyId") Long gatewayApiKeyId,
                                                                 @Param("apiKeyName") String apiKeyName);
 
+    // ==================== API Key 用量统计（日/周/月） ====================
+
+    /**
+     * 按 gateway_api_key_id 聚合成功请求的 token 用量和请求次数
+     * 用于 API Key 列表页展示日/周/月统计
+     *
+     * @param since 起始时间（含），调用方应传入已转换为 UTC 的时间
+     * @return 每行包含 gateway_api_key_id, request_count, total_tokens
+     */
+    @Select("SELECT gateway_api_key_id, " +
+            "COUNT(*) as request_count, " +
+            "COALESCE(SUM(COALESCE(total_tokens, 0)), 0) as total_tokens " +
+            "FROM request_logs " +
+            "WHERE phase = 'success' " +
+            "AND created_at >= #{since} " +
+            "AND gateway_api_key_id IS NOT NULL " +
+            "GROUP BY gateway_api_key_id")
+    List<Map<String, Object>> selectApiKeyUsageStats(@Param("since") LocalDateTime since);
+
     // ==================== 模型管理页统计 ====================
 
     /**

@@ -896,20 +896,33 @@ onUnmounted(() => {
   }
 
   .mgr-filter-bar {
-    flex-direction: column;
-    align-items: stretch;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
   }
 
+  /* Row 1: 搜索框独占整行 */
   .filter-search {
     max-width: none;
+    grid-column: 1 / -1;
   }
 
+  /* Row 2 左列：两个下拉筛选并排 */
   .filter-selects {
-    flex-wrap: wrap;
+    display: flex;
+    flex-direction: row;
+    gap: 8px;
+    min-width: 0;
   }
 
+  .filter-select {
+    width: auto;
+    flex: none;
+  }
+
+  /* Row 2 右列：视图切换按钮 */
   .filter-view {
-    align-self: flex-end;
+    align-self: center;
   }
 
   /* List view not suitable on mobile, stick to cards */

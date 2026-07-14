@@ -959,6 +959,14 @@ public class AdminApiController {
         return ResponseEntity.ok(result);
     }
 
+    /**
+     * 获取所有 API Key 的日/周/月 Token 用量与请求次数统计
+     */
+    @GetMapping(value = "/api-keys/usage-stats", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<Long, Map<String, Map<String, Object>>>> getApiKeyUsageStats() {
+        return ResponseEntity.ok(statsService.getApiKeyUsageStats());
+    }
+
     // ==================== Logs ====================
 
     @GetMapping(value = "/logs", produces = "application/json;charset=UTF-8")

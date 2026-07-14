@@ -429,6 +429,13 @@ export default {
   'apikey.list.shareLinkCopyFailed': 'Failed to copy share link',
   'apikey.list.enableShareFailed': 'Failed to enable sharing',
   'apikey.list.manualCopyFailed': 'Copy failed. Please copy manually.',
+  'apikey.list.tokenUsage': 'Token Usage',
+  'apikey.list.requests': 'Requests',
+  'apikey.list.today': 'Today',
+  'apikey.list.week': 'This Week',
+  'apikey.list.month': 'This Month',
+  'apikey.list.showTokens': 'Tokens',
+  'apikey.list.showRequests': 'Count',
 
   /* ========== API Key Form ========== */
   'apikey.form.editTitle': 'Edit Key',

@@ -16,6 +16,18 @@
             <th>{{ t('apikey.list.status') }}</th>
             <th>{{ t('apikey.list.share') }}</th>
             <th>{{ t('apikey.list.lastUsed') }}</th>
+            <th style="min-width:160px;">
+              <div style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                <span>{{ t('apikey.list.today') }}</span>
+                <span style="font-weight:400;font-size:11px;cursor:pointer;user-select:none;" @click.stop="showToken = !showToken">
+                  [ <span :style="{color: showToken ? 'var(--accent-blue)' : 'var(--text-muted)'}">{{ t('apikey.list.showTokens') }}</span>
+                  /
+                  <span :style="{color: showToken ? 'var(--text-muted)' : 'var(--accent-blue)'}">{{ t('apikey.list.showRequests') }}</span> ]
+                </span>
+              </div>
+            </th>
+            <th>{{ t('apikey.list.week') }}</th>
+            <th>{{ t('apikey.list.month') }}</th>
             <th>{{ t('apikey.list.createdAt') }}</th>
             <th>{{ t('apikey.list.actions') }}</th>
           </tr>
@@ -42,6 +54,15 @@
               <span v-else class="share-badge off">{{ t('apikey.list.notShared') }}</span>
             </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ key.lastUsedAt ? formatLocalDateTimeFull(key.lastUsedAt) : t('apikey.list.neverUsed') }}</td>
+            <td style="font-size:12px;font-variant-numeric:tabular-nums;">
+              {{ formatUsageValue(getPeriodStats(key.id, 'day')) }}
+            </td>
+            <td style="font-size:12px;font-variant-numeric:tabular-nums;">
+              {{ formatUsageValue(getPeriodStats(key.id, 'week')) }}
+            </td>
+            <td style="font-size:12px;font-variant-numeric:tabular-nums;">
+              {{ formatUsageValue(getPeriodStats(key.id, 'month')) }}
+            </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(key.createdAt) }}</td>
             <td>
               <div style="display:flex;gap:6px;align-items:center;">
@@ -54,7 +75,7 @@
             </td>
           </tr>
           <tr v-if="!apiKeys.length">
-            <td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;">
+            <td colspan="10" style="text-align:center;color:var(--text-muted);padding:40px;">
               {{ t('apikey.list.empty') }}
             </td>
           </tr>
@@ -83,6 +104,18 @@
         <div class="mobile-card-row">
           <span class="mobile-card-label">{{ t('apikey.list.lastUsed') }}</span>
           <span class="mobile-card-value">{{ key.lastUsedAt ? formatLocalDateTimeFull(key.lastUsedAt) : t('apikey.list.neverUsed') }}</span>
+        </div>
+        <div class="mobile-card-row">
+          <span class="mobile-card-label">{{ t('apikey.list.today') }}</span>
+          <span class="mobile-card-value">{{ formatUsageValue(getPeriodStats(key.id, 'day')) }}</span>
+        </div>
+        <div class="mobile-card-row">
+          <span class="mobile-card-label">{{ t('apikey.list.week') }}</span>
+          <span class="mobile-card-value">{{ formatUsageValue(getPeriodStats(key.id, 'week')) }}</span>
+        </div>
+        <div class="mobile-card-row">
+          <span class="mobile-card-label">{{ t('apikey.list.month') }}</span>
+          <span class="mobile-card-value">{{ formatUsageValue(getPeriodStats(key.id, 'month')) }}</span>
         </div>
         <div class="mobile-card-row">
           <span class="mobile-card-label">{{ t('apikey.list.createdAt') }}</span>
@@ -149,7 +182,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { apikeyApi, type ApiKey } from '@/api/apikey'
+import { apikeyApi, type ApiKey, type ApiKeyUsageStats, type ApiKeyPeriodStats } from '@/api/apikey'
 import { shareApi } from '@/api/share'
 import Dialog from '@/components/common/Dialog.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
@@ -165,6 +198,36 @@ const { showToast } = useToast()
 const router = useRouter()
 
 const apiKeys = ref<ApiKey[]>([])
+const usageStats = ref<Record<number, ApiKeyUsageStats>>({})
+const showToken = ref(true) // true=显示Token, false=显示请求次数
+
+/** 获取某 API Key 的指定周期统计 */
+function getPeriodStats(id: number | undefined, period: 'day' | 'week' | 'month'): ApiKeyPeriodStats | undefined {
+  if (id == null) return undefined
+  return usageStats.value[id]?.[period]
+}
+
+/** 格式化用量值：根据 showToken 显示 Token 或次数 */
+function formatUsageValue(stats: ApiKeyPeriodStats | undefined): string {
+  if (!stats) return '-'
+  if (showToken.value) {
+    return formatTokens(stats.totalTokens)
+  } else {
+    return formatNumber(stats.requestCount)
+  }
+}
+
+function formatTokens(n: number | undefined | null): string {
+  if (n == null || n === 0) return '0'
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
+  return n.toLocaleString()
+}
+
+function formatNumber(n: number | undefined | null): string {
+  if (n == null) return '0'
+  return n.toLocaleString()
+}
 
 /* ---------- Form Dialog state ---------- */
 const formDialogVisible = ref(false)
@@ -324,8 +387,12 @@ function confirmDelete(key: ApiKey) {
 
 async function loadKeys() {
   try {
-    const res = await apikeyApi.list()
-    apiKeys.value = res.data
+    const [keysRes, statsRes] = await Promise.all([
+      apikeyApi.list(),
+      apikeyApi.usageStats()
+    ])
+    apiKeys.value = keysRes.data
+    usageStats.value = statsRes.data
   } catch (e: any) {
     open({ title: t('error.loadFailed'), message: e.message })
   }
@@ -344,6 +411,17 @@ onMounted(loadKeys)
 }
 
 /* Share status badge */
+.usage-toggle {
+  cursor: pointer;
+  user-select: none;
+  font-weight: 400;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+.usage-toggle .active { color: var(--accent-blue); }
+.usage-toggle .inactive { color: var(--text-muted); }
 .share-badge {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 11px; padding: 2px 8px; border-radius: 4px;
