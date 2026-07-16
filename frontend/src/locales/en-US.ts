@@ -149,8 +149,10 @@ export default {
   'channel.list.refresh': 'Refresh',
   'channel.list.empty': 'No channels yet. Click "Add Channel" to start.',
   'channel.list.quickTest': 'Quick Test',
-  'channel.list.testModel': 'Test Model',
+  'channel.list.testModel': 'Channel Model',
   'channel.list.testMessage': 'Test Message',
+  'channel.list.testApiKey': 'Channel API Key',
+  'channel.list.noApiKeys': 'No API keys available',
   'channel.list.testSuccess': 'Test succeeded',
   'channel.list.testFail': 'Test failed',
   'channel.list.sendTest': 'Send Test',
@@ -502,7 +504,7 @@ export default {
   'log.chart.totalRequests': 'Requests',
 
   /* ========== Playground ========== */
-  'playground.title': 'Model Test',
+  'playground.title': 'Entry Model Test',
   'playground.toggleConfig': 'Hide Config',
   'playground.showConfig': 'Show Config',
   'playground.testConfig': 'Test Config',
@@ -518,6 +520,7 @@ export default {
   'playground.welcomeTitle': 'Model Playground',
   'playground.welcomeDesc': 'Select a model and enter a message to start testing',
   'playground.trying': 'Trying {channel} / {channelModel}',
+  'playground.tryingShort': 'Trying',
   'playground.retrying': 'Retrying {channel} / {channelModel} ({msg})',
   'playground.switching': 'Switching candidate: {msg}, trying next channel...',
   'playground.truncated': '⚠ Output truncated due to token limit',

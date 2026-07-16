@@ -57,6 +57,7 @@ public class OpenAiCompatibleController {
     @PostMapping(value = "/chat/completions", consumes = MediaType.APPLICATION_JSON_VALUE, produces = {"application/json;charset=UTF-8", "text/event-stream;charset=UTF-8"})
     public Object chatCompletions(
             @RequestHeader("Authorization") String authHeader,
+            @RequestHeader(value = "X-Internal-Client", required = false) String internalClientHeader,
             @RequestBody String requestBody,
             HttpServletResponse response) {
 
@@ -65,7 +66,9 @@ public class OpenAiCompatibleController {
             // 显式设置响应头，确保浏览器使用 UTF-8 解码 SSE 流
             response.setContentType("text/event-stream;charset=UTF-8");
             response.setCharacterEncoding("UTF-8");
-            return relayService.chatCompletionsStream(authHeader, requestBody, false);
+            // Playground 等内部客户端调用时，发送 _gateway_meta 和 _routing_progress 事件
+            boolean internalClient = "playground".equals(internalClientHeader);
+            return relayService.chatCompletionsStream(authHeader, requestBody, internalClient);
         }
 
         // 非流式

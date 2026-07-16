@@ -146,7 +146,10 @@ public class RouteResolver {
     public List<ChannelApiKey> getApiKeysForCandidate(Long channelId, Long specifiedKeyId) {
         if (specifiedKeyId != null) {
             ChannelApiKey key = channelApiKeyService.getById(specifiedKeyId);
-            return key != null ? List.of(key) : Collections.emptyList();
+            if (key != null && key.getEnabled() != null && key.getEnabled() == 1) {
+                return List.of(key);
+            }
+            return Collections.emptyList();
         }
         List<ChannelApiKey> keys = channelApiKeyService.getAvailableApiKeys(channelId);
         return keys != null ? keys : Collections.emptyList();

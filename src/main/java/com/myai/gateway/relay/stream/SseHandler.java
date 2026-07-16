@@ -63,13 +63,14 @@ public class SseHandler {
     // ========== 事件构建 ==========
 
     /**
-     * 构建 _gateway_meta SSE 事件，包含渠道类型、渠道名、模型名等信息
+     * 构建 _gateway_meta SSE 事件，包含渠道类型、渠道名、API Key 名、模型名等信息
      */
     public SseEvent buildGatewayMetaEvent(RoutingCandidate candidate) {
         ObjectNode gatewayMeta = objectMapper.createObjectNode();
         gatewayMeta.put("_gateway_meta", true);
         gatewayMeta.put("channel_type", candidate.getChannel().getChannelType());
         gatewayMeta.put("channel", candidate.getChannel().getName());
+        gatewayMeta.put("api_key_name", candidate.getChannelApiKey().getKeyName());
         gatewayMeta.put("channel_model", candidate.getChannelModel().getModelName());
         return new SseEvent(null, gatewayMeta.toString());
     }
@@ -89,6 +90,7 @@ public class SseHandler {
         node.put("phase", phase);
         node.put("channel_type", candidate.getChannel().getChannelType());
         node.put("channel", candidate.getChannel().getName());
+        node.put("api_key_name", candidate.getChannelApiKey().getKeyName());
         node.put("channel_model", candidate.getChannelModel().getModelName());
         node.put("retry_index", retryIndex);
         if (extraMsg != null) {

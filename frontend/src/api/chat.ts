@@ -31,12 +31,16 @@ export function chatStream(
       headers['x-api-key'] = apiKeyValue
     }
     headers['anthropic-version'] = '2023-06-01'
+    // Playground 内部调用标记，后端据此发送 _gateway_meta 等内部事件
+    headers['X-Internal-Client'] = 'playground'
   } else {
     // OpenAI 兼容端点（默认）
     url = '/v1/chat/completions'
     if (apiKeyValue) {
       headers['Authorization'] = `Bearer ${apiKeyValue}`
     }
+    // Playground 内部调用标记，后端据此发送 _gateway_meta 等内部事件
+    headers['X-Internal-Client'] = 'playground'
   }
 
   return fetch(url, {

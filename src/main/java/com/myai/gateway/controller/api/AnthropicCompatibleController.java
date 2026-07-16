@@ -61,6 +61,7 @@ public class AnthropicCompatibleController {
             @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestHeader(value = "anthropic-version", defaultValue = "2023-06-01") String anthropicVersion,
             @RequestHeader(value = "anthropic-beta", required = false) String anthropicBeta,
+            @RequestHeader(value = "X-Internal-Client", required = false) String internalClientHeader,
             @RequestBody String requestBody,
             HttpServletResponse response) {
 
@@ -81,7 +82,9 @@ public class AnthropicCompatibleController {
             // 显式设置响应头，确保浏览器使用 UTF-8 解码 SSE 流
             response.setContentType("text/event-stream;charset=UTF-8");
             response.setCharacterEncoding("UTF-8");
-            return relayService.messagesStream(apiKey, requestBody, anthropicVersion, false);
+            // Playground 等内部客户端调用时，发送 _gateway_meta 和 _routing_progress 事件
+            boolean internalClient = "playground".equals(internalClientHeader);
+            return relayService.messagesStream(apiKey, requestBody, anthropicVersion, internalClient);
         }
 
         // 非流式

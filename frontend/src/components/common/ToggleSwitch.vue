@@ -1,5 +1,6 @@
 <template>
   <button
+    type="button"
     class="toggle-btn"
     :class="[modelValue ? 'active' : 'inactive', size === 'sm' ? 'toggle-btn-sm' : '']"
     @click="$emit('update:modelValue', !modelValue)"

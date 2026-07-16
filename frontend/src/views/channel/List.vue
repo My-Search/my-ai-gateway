@@ -168,6 +168,17 @@
           </div>
         </div>
         <div class="form-group">
+          <label>{{ t('channel.list.testApiKey') }}</label>
+          <select v-if="testApiKeys.length" v-model="selectedApiKeyId" class="form-control">
+            <option v-for="opt in apiKeySelectOptions" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
+          <div v-else style="font-size:12px;color:var(--text-muted);">
+            {{ t('channel.list.noApiKeys') }}
+          </div>
+        </div>
+        <div class="form-group">
           <label>{{ t('channel.list.testMessage') }}</label>
           <textarea v-model="testMessage" class="form-control" rows="3"></textarea>
         </div>
@@ -211,7 +222,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
-import { channelApi, type Channel, type ChannelModel } from '@/api/channel'
+import { channelApi, type Channel, type ChannelModel, type ChannelApiKey } from '@/api/channel'
 import { formatLocalDateTimeFull } from '@/utils/date'
 import Dialog from '@/components/common/Dialog.vue'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
@@ -231,11 +242,16 @@ const testMessage = ref('Hello, this is a test message.')
 const testResult = ref<{ success: boolean; response?: string; responseTime?: number; error?: string } | null>(null)
 const testLoading = ref(false)
 const testModels = ref<ChannelModel[]>([])
+const testApiKeys = ref<ChannelApiKey[]>([])
 const selectedModelId = ref(0)
+const selectedApiKeyId = ref<number | undefined>(undefined)
 const showMultiModalRule = ref(false)
 const toggleLoading = ref<number | null>(null)
 const modelSelectOptions = computed(() =>
   testModels.value.map(m => ({ value: m.id, label: m.displayName || m.modelName }))
+)
+const apiKeySelectOptions = computed(() =>
+  testApiKeys.value.map(k => ({ value: k.id!, label: k.keyName }))
 )
 
 async function loadChannels() {
@@ -255,15 +271,26 @@ async function quickTest(ch: Channel) {
   testMessage.value = 'Hello, this is a test message.'
   testResult.value = null
   selectedModelId.value = 0
+  selectedApiKeyId.value = undefined
   testModels.value = []
+  testApiKeys.value = []
   showTestModal.value = true
-  // 加载渠道的模型列表供选择
+  // 并发加载渠道的模型列表和 API Keys
   if (ch.id) {
     try {
-      const res = await channelApi.getModels(ch.id)
-      testModels.value = res.data.models
+      const [modelsRes, channelRes] = await Promise.all([
+        channelApi.getModels(ch.id),
+        channelApi.get(ch.id)
+      ])
+      testModels.value = modelsRes.data.models
       if (testModels.value.length > 0) {
         selectedModelId.value = testModels.value[0].id
+      }
+      // 加载 API Keys，默认选中第一个
+      const keys = channelRes.data.apiKeys || []
+      testApiKeys.value = keys
+      if (keys.length > 0) {
+        selectedApiKeyId.value = keys[0].id
       }
     } catch {
       // 忽略加载失败，使用空列表
@@ -283,7 +310,7 @@ async function sendTestRequest() {
     // 根据选中的 model id 查找对应的 modelName
     const selected = testModels.value.find(m => m.id === selectedModelId.value)
     const modelName = selected?.modelName || undefined
-    const res = await channelApi.quickTest(testChannel.value.id, testMessage.value, modelName)
+    const res = await channelApi.quickTest(testChannel.value.id, testMessage.value, modelName, selectedApiKeyId.value)
     testResult.value = res.data
   } catch (e: any) {
     testResult.value = { success: false, error: e.message }

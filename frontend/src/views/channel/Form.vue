@@ -34,9 +34,16 @@
         <label>{{ t('channel.form.apiKeys') }}</label>
         <div class="form-hint">{{ t('channel.form.apiKeysHint') }}</div>
         <div class="api-keys-list">
-          <div v-for="(ak, idx) in apiKeys" :key="idx" class="api-key-item">
+          <div v-for="(ak, idx) in apiKeys" :key="idx" class="api-key-item" :class="{ '_disabled': ak.enabled !== 1 }">
             <span class="api-key-left"><strong>{{ ak.keyName }}</strong><code class="api-key-masked">{{ maskKey(ak.apiKey) }}</code></span>
             <span class="api-key-actions">
+              <ToggleSwitch
+                :model-value="ak.enabled === 1"
+                @update:modelValue="(v: boolean) => ak.enabled = v ? 1 : 0"
+                :active-label="t('common.enabled')"
+                :inactive-label="t('common.disabled')"
+                size="sm"
+              />
               <CopyButton :text="ak.apiKey" :title="t('common.copy')" />
               <button type="button" class="btn btn-sm btn-danger" @click="removeApiKey(idx)"><SvgIcon name="trash" :size="14" /> {{ t('common.delete') }}</button>
             </span>
@@ -159,6 +166,7 @@ import { useDialog } from '@/composables/useDialog'
 import { channelApi, type Channel, type ChannelApiKey, type ChannelModel } from '@/api/channel'
 import Dialog from '@/components/common/Dialog.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -424,6 +432,10 @@ async function handleSave() {
 .api-key-item {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
   border: 1px solid var(--border-color); border-radius: 6px;
+}
+.api-key-item._disabled {
+  opacity: 0.55;
+  background: var(--bg-secondary);
 }
 .api-key-left {
   flex: 1; display: inline-flex; align-items: center; gap: 8px;

@@ -97,6 +97,7 @@ function isSelected(value: number): boolean {
 }
 
 // 同步外部 modelValue 变化到输入框显示（如父组件重置为 0 时清空）
+// immediate: true 确保组件通过 v-if 条件挂载时也能同步初始选中值的显示
 watch(() => props.modelValue, (newVal) => {
   if (props.multiple) {
     // 多选模式：清空搜索框
@@ -111,7 +112,7 @@ watch(() => props.modelValue, (newVal) => {
       if (match) searchText.value = match.label
     }
   }
-})
+}, { immediate: true })
 
 function onSearchInput(e: Event) {
   const target = e.target as HTMLInputElement

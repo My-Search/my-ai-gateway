@@ -482,8 +482,34 @@ public class AdminApiController {
                 return ResponseEntity.ok(result);
             }
 
-            // 获取渠道的第一个可用 API Key（优先从 channel_api_keys 表获取）
-            ChannelApiKey availableKey = channelApiKeyService.getAvailableApiKey(channel.getId());
+            // 获取渠道的可用 API Key（优先从 channel_api_keys 表获取）
+            // 支持前端传入 apiKeyId 来指定测试使用的 API Key
+            ChannelApiKey availableKey = null;
+            Object apiKeyIdObj = body.get("apiKeyId");
+            if (apiKeyIdObj != null) {
+                Long apiKeyId;
+                try {
+                    apiKeyId = Long.parseLong(apiKeyIdObj.toString());
+                } catch (NumberFormatException e) {
+                    result.put("success", false);
+                    result.put("error", "apiKeyId 必须为数字");
+                    return ResponseEntity.ok(result);
+                }
+                availableKey = channelApiKeyService.getById(apiKeyId);
+                if (availableKey == null || !availableKey.getChannelId().equals(channel.getId())) {
+                    result.put("success", false);
+                    result.put("error", "指定的 API Key 不存在或不属于该渠道");
+                    return ResponseEntity.ok(result);
+                }
+                if (availableKey.getEnabled() == null || availableKey.getEnabled() != 1) {
+                    result.put("success", false);
+                    result.put("error", "指定的 API Key 已被禁用");
+                    return ResponseEntity.ok(result);
+                }
+            }
+            if (availableKey == null) {
+                availableKey = channelApiKeyService.getAvailableApiKey(channel.getId());
+            }
             if (availableKey == null) {
                 result.put("success", false);
                 result.put("error", "渠道没有可用的 API Key，请先添加 API Key");

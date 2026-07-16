@@ -78,9 +78,10 @@ export const channelApi = {
   deleteAllModels(channelId: number) {
     return http.delete<{ success: boolean; count: number }>(`/channels/${channelId}/models`)
   },
-  quickTest(id: number, message: string, modelName?: string) {
+  quickTest(id: number, message: string, modelName?: string, apiKeyId?: number) {
     const payload: any = { message }
     if (modelName) payload.modelName = modelName
+    if (apiKeyId != null) payload.apiKeyId = apiKeyId
     return http.post<{ success: boolean; response?: string; responseTime?: number; model?: string; error?: string }>(
       `/channels/${id}/quick-test`, payload
     )

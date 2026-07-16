@@ -67,11 +67,10 @@
       <div v-if="!compact" class="chat-header">
         <div class="chat-header-left">
           <div class="header-icon-wrapper">
-            <SvgIcon name="ai-chat" :size="20" />
+            <SvgIcon name="check" :size="20" />
           </div>
           <div class="header-text">
             <span class="chat-header-title">{{ t('playground.title') }}</span>
-            <span class="chat-header-subtitle">{{ t('playground.welcomeDesc') }}</span>
           </div>
         </div>
         <div class="chat-header-right">
@@ -111,11 +110,24 @@
             <SvgIcon v-else name="info" :size="18" />
           </div>
           <div style="min-width:0;flex:1;">
-            <div v-if="msg.channelInfo" class="chat-channel-info">
-              <span class="channel-badge" :class="msg.channelInfo.channel_type">{{ msg.channelInfo.channel_type }}</span>
-              <span class="channel-name">{{ msg.channelInfo.channel }}</span>
-              <span class="channel-arrow">→</span>
-              <span class="channel-model-name">{{ msg.channelInfo.channel_model }}</span>
+            <!-- 当前消息使用的模型/渠道信息：已确认或实时尝试中 -->
+            <div v-if="msg.role === 'assistant' && (msg.channelInfo || (idx === messages.length - 1 && streaming && routingProgress))" class="chat-channel-info">
+              <template v-if="msg.channelInfo">
+                <span class="channel-badge" :class="msg.channelInfo.channel_type">{{ msg.channelInfo.channel_type }}</span>
+                <span class="channel-name">{{ msg.channelInfo.channel }}</span>
+                <span class="channel-arrow">/</span>
+                <span class="channel-name">{{ msg.channelInfo.api_key_name }}</span>
+                <span class="channel-arrow">/</span>
+                <span class="channel-model-name">{{ msg.channelInfo.channel_model }}</span>
+              </template>
+              <template v-else-if="idx === messages.length - 1 && streaming && routingProgress">
+                <span class="channel-badge trying">{{ t('playground.tryingShort') }}</span>
+                <span class="channel-name">{{ routingProgress.channel }}</span>
+                <span class="channel-arrow">/</span>
+                <span class="channel-name">{{ routingProgress.api_key_name }}</span>
+                <span class="channel-arrow">/</span>
+                <span class="channel-model-name">{{ routingProgress.channel_model }}</span>
+              </template>
             </div>
             <div v-if="idx === messages.length - 1 && routingProgress" class="chat-routing-progress">
               <span class="routing-dot"></span>
@@ -281,7 +293,9 @@ const userInput = ref('')
 const messages = shallowRef<ChatMessage[]>([])
 const streaming = ref(false)
 const tokenUsage = ref('')
-const routingProgress = ref<{ phase: string; channel: string; channel_model: string; message?: string } | null>(null)
+const routingProgress = ref<{ phase: string; channel: string; api_key_name: string; channel_model: string; message?: string } | null>(null)
+/** 最近一次确认使用的渠道/模型（从 _gateway_meta 获取，用于顶部实时展示） */
+const lastChannelInfo = ref<{ channel: string; apiKeyName: string; channelModel: string } | null>(null)
 const showSidebar = ref(false)
 /** 每条消息的推理内容展开状态 */
 const expandedThinking = ref<Record<number, boolean>>({})
@@ -550,6 +564,7 @@ function handleKeydown(e: KeyboardEvent) {
 function clearChat() {
   messages.value = []
   tokenUsage.value = ''
+  lastChannelInfo.value = null
 }
 
 function quickSend(text: string) {
@@ -607,6 +622,9 @@ async function sendMessage() {
     addMessage('system-msg', t('playground.selectModelFirst'))
     return
   }
+
+  // 清空上次的渠道信息，等待新一轮路由结果
+  lastChannelInfo.value = null
 
   // 代码模式下自动包裹为代码块
   if (codeMode.value && content) {
@@ -685,12 +703,14 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
           const json = JSON.parse(data)
           if (json._gateway_meta) {
             targetMsg.channelInfo = json
+            lastChannelInfo.value = { channel: json.channel, apiKeyName: json.api_key_name, channelModel: json.channel_model }
             continue
           }
           if (json._routing_progress) {
             routingProgress.value = {
               phase: json.phase,
               channel: json.channel,
+              api_key_name: json.api_key_name,
               channel_model: json.channel_model,
               message: json.message
             }
@@ -910,11 +930,8 @@ function renderReasoningMarkdown(text: string): string {
 }
 .chat-header-left { display: flex; align-items: center; gap: 12px; }
 .header-icon-wrapper {
-  width: 40px; height: 40px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--accent-purple), #7c3aed);
   display: flex; align-items: center; justify-content: center;
-  color: #fff;
+  color: #22c55e;
   flex-shrink: 0;
 }
 .header-text {
@@ -1267,6 +1284,7 @@ function renderReasoningMarkdown(text: string): string {
 .channel-badge { padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
 .channel-badge.openai { background: rgba(16, 163, 127, 0.15); color: #10a37f; border: 1px solid rgba(16, 163, 127, 0.3); }
 .channel-badge.anthropic { background: rgba(204, 146, 80, 0.15); color: #cc9250; border: 1px solid rgba(204, 146, 80, 0.3); }
+.channel-badge.trying { background: rgba(139, 92, 246, 0.15); color: var(--accent-purple); border: 1px solid rgba(139, 92, 246, 0.3); }
 .channel-name { color: var(--text-muted); font-weight: 500; }
 .channel-arrow { color: var(--text-muted); opacity: 0.5; }
 .channel-model-name { color: var(--accent-purple); font-weight: 500; }

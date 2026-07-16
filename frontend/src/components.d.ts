@@ -23,6 +23,7 @@ declare module 'vue' {
     Sidebar: typeof import('./components/layout/Sidebar.vue')['default']
     SvgIcon: typeof import('./components/common/SvgIcon.vue')['default']
     TabSwitch: typeof import('./components/common/TabSwitch.vue')['default']
+    TestBadge: typeof import('./components/dashboard/TestBadge.vue')['default']
     TodayTrendChart: typeof import('./components/dashboard/TodayTrendChart.vue')['default']
     ToggleSwitch: typeof import('./components/common/ToggleSwitch.vue')['default']
   }
