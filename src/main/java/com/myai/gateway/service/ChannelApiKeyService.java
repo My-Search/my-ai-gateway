@@ -171,6 +171,9 @@ public class ChannelApiKeyService {
      * - 删除已在页面移除的
      * - 新增页面新添加的
      * - 更新已存在的
+     * <p>
+     * 空 API Key 用于免费模型，每个渠道仅允许保留一个：
+     * 如果提交列表中包含多个空 API Key，仅保留第一个，其余会被丢弃。
      */
     @Transactional
     public void syncApiKeys(Long channelId, List<ChannelApiKey> submittedKeys) {
@@ -184,6 +187,22 @@ public class ChannelApiKeyService {
             }
             log.info("渠道 {} API Keys 已清空", channelId);
             return;
+        }
+
+        // 1.5 服务端兜底：每个渠道最多保留一个空 API Key（用于免费模型）
+        boolean emptyKeySeen = false;
+        java.util.Iterator<ChannelApiKey> it = submittedKeys.iterator();
+        while (it.hasNext()) {
+            ChannelApiKey k = it.next();
+            String v = k.getApiKey();
+            if (v == null || v.trim().isEmpty()) {
+                if (emptyKeySeen) {
+                    it.remove();
+                    log.warn("渠道 {} 提交了多个空 API Key，已丢弃多余的（keyName={}）", channelId, k.getKeyName());
+                } else {
+                    emptyKeySeen = true;
+                }
+            }
         }
 
         // 2. 构建页面提交的 keyName 集合

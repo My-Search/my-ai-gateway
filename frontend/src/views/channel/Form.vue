@@ -210,12 +210,18 @@ function confirmAddApiKey() {
     open({ title: t('common.prompt'), message: t('channel.form.inputKeyName') })
     return
   }
-  if (!apiKey) {
-    open({ title: t('common.prompt'), message: t('channel.form.inputKeyValue') })
-    return
-  }
   if (apiKeys.value.some(k => k.keyName === keyName)) {
     open({ title: t('common.prompt'), message: t('channel.form.keyNameExists') })
+    return
+  }
+  if (!apiKey) {
+    // 空 API Key 用于免费模型，每个渠道仅允许一个
+    if (apiKeys.value.some(k => !k.apiKey || !k.apiKey.trim())) {
+      open({ title: t('common.prompt'), message: t('channel.form.emptyKeyExists') })
+      return
+    }
+  } else if (apiKeys.value.some(k => k.apiKey && k.apiKey.trim() === apiKey)) {
+    open({ title: t('common.prompt'), message: t('channel.form.keyValueExists') })
     return
   }
   apiKeys.value.push({
