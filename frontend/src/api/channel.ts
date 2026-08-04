@@ -32,6 +32,13 @@ export interface ChannelApiKey {
   sortOrder: number
 }
 
+export interface PeriodStat {
+  requestCount: number
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+}
+
 export interface ModelUsageStat {
   modelName: string
   requestCount: number
@@ -40,6 +47,9 @@ export interface ModelUsageStat {
   totalTokens: number
   /** 最近30次请求的平均响应时间（毫秒） */
   avgResponseTimeRecent30: number
+  today: PeriodStat
+  week: PeriodStat
+  month: PeriodStat
 }
 
 export const channelApi = {

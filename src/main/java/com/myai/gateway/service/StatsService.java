@@ -343,9 +343,10 @@ public class StatsService {
      * 获取指定渠道下各模型的用量统计（用于渠道模型详情页展示）
      * 按 channel_model_name 聚合成功请求的 token 用量和请求次数
      * 同时计算每个模型最近30次请求的平均响应时间，以及渠道整体最近30次的平均响应时间
+     * 额外返回今日/本周/本月的请求次数和 Token 用量（按 Asia/Shanghai 时区计算）
      *
      * @param channelName 渠道名称
-     * @return Map: { modelStats: List[{ modelName, requestCount, promptTokens, completionTokens, totalTokens, avgResponseTimeRecent30 }],
+     * @return Map: { modelStats: List[{ modelName, requestCount, promptTokens, completionTokens, totalTokens, avgResponseTimeRecent30, today, week, month }],
      *                channelAvgResponseTimeRecent30: long }
      */
     public Map<String, Object> getChannelModelUsageStats(String channelName) {
@@ -368,17 +369,35 @@ public class StatsService {
                         .gt(RequestLog::getResponseTimeMs, 0)
                         .orderByDesc(RequestLog::getCreatedAt));
 
-        Map<String, Long> requestCounts = successLogs.stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelModelName, Collectors.counting()));
-        Map<String, Long> promptSums = successLogs.stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
-                        Collectors.summingLong(l -> l.getPromptTokens() != null ? l.getPromptTokens() : 0)));
-        Map<String, Long> completionSums = successLogs.stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
-                        Collectors.summingLong(l -> l.getCompletionTokens() != null ? l.getCompletionTokens() : 0)));
-        Map<String, Long> totalSums = successLogs.stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
-                        Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
+        // 计算时间段边界（上海时区 -> UTC，created_at 存储为 UTC）
+        LocalDate nowSh = LocalDate.now(SHANGHAI);
+        LocalDateTime todayStartUtc = nowSh.atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+        LocalDateTime weekStartUtc = nowSh.with(DayOfWeek.MONDAY).atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+        LocalDateTime monthStartUtc = nowSh.withDayOfMonth(1).atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+
+        // 全量统计
+        Map<String, Long> requestCounts = aggregateRequestCounts(successLogs, null);
+        Map<String, Long> promptSums = aggregatePromptTokens(successLogs, null);
+        Map<String, Long> completionSums = aggregateCompletionTokens(successLogs, null);
+        Map<String, Long> totalSums = aggregateTotalTokens(successLogs, null);
+
+        // 今日统计
+        Map<String, Long> todayRequestCounts = aggregateRequestCounts(successLogs, todayStartUtc);
+        Map<String, Long> todayPromptSums = aggregatePromptTokens(successLogs, todayStartUtc);
+        Map<String, Long> todayCompletionSums = aggregateCompletionTokens(successLogs, todayStartUtc);
+        Map<String, Long> todayTotalSums = aggregateTotalTokens(successLogs, todayStartUtc);
+
+        // 本周统计
+        Map<String, Long> weekRequestCounts = aggregateRequestCounts(successLogs, weekStartUtc);
+        Map<String, Long> weekPromptSums = aggregatePromptTokens(successLogs, weekStartUtc);
+        Map<String, Long> weekCompletionSums = aggregateCompletionTokens(successLogs, weekStartUtc);
+        Map<String, Long> weekTotalSums = aggregateTotalTokens(successLogs, weekStartUtc);
+
+        // 本月统计
+        Map<String, Long> monthRequestCounts = aggregateRequestCounts(successLogs, monthStartUtc);
+        Map<String, Long> monthPromptSums = aggregatePromptTokens(successLogs, monthStartUtc);
+        Map<String, Long> monthCompletionSums = aggregateCompletionTokens(successLogs, monthStartUtc);
+        Map<String, Long> monthTotalSums = aggregateTotalTokens(successLogs, monthStartUtc);
 
         // 按模型分组（已按时间倒序），每组取最近 30 条计算平均响应时间
         Map<String, List<RequestLog>> logsByModel = responseTimeLogs.stream()
@@ -402,16 +421,41 @@ public class StatsService {
                         .average()
                         .orElse(0.0));
 
-        List<Map<String, Object>> modelStatsList = requestCounts.entrySet().stream()
-                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
-                .map(e -> {
+        Set<String> allModels = new LinkedHashSet<>();
+        allModels.addAll(requestCounts.keySet());
+        allModels.addAll(todayRequestCounts.keySet());
+        allModels.addAll(weekRequestCounts.keySet());
+        allModels.addAll(monthRequestCounts.keySet());
+
+        List<Map<String, Object>> modelStatsList = allModels.stream()
+                .sorted((a, b) -> Long.compare(
+                        requestCounts.getOrDefault(b, 0L),
+                        requestCounts.getOrDefault(a, 0L)))
+                .map(modelName -> {
                     Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("modelName", e.getKey());
-                    item.put("requestCount", e.getValue());
-                    item.put("promptTokens", promptSums.getOrDefault(e.getKey(), 0L));
-                    item.put("completionTokens", completionSums.getOrDefault(e.getKey(), 0L));
-                    item.put("totalTokens", totalSums.getOrDefault(e.getKey(), 0L));
-                    item.put("avgResponseTimeRecent30", modelAvgResponseTimeRecent30.getOrDefault(e.getKey(), 0L));
+                    item.put("modelName", modelName);
+                    item.put("requestCount", requestCounts.getOrDefault(modelName, 0L));
+                    item.put("promptTokens", promptSums.getOrDefault(modelName, 0L));
+                    item.put("completionTokens", completionSums.getOrDefault(modelName, 0L));
+                    item.put("totalTokens", totalSums.getOrDefault(modelName, 0L));
+                    item.put("avgResponseTimeRecent30", modelAvgResponseTimeRecent30.getOrDefault(modelName, 0L));
+
+                    item.put("today", buildPeriodMap(
+                            todayRequestCounts.getOrDefault(modelName, 0L),
+                            todayPromptSums.getOrDefault(modelName, 0L),
+                            todayCompletionSums.getOrDefault(modelName, 0L),
+                            todayTotalSums.getOrDefault(modelName, 0L)));
+                    item.put("week", buildPeriodMap(
+                            weekRequestCounts.getOrDefault(modelName, 0L),
+                            weekPromptSums.getOrDefault(modelName, 0L),
+                            weekCompletionSums.getOrDefault(modelName, 0L),
+                            weekTotalSums.getOrDefault(modelName, 0L)));
+                    item.put("month", buildPeriodMap(
+                            monthRequestCounts.getOrDefault(modelName, 0L),
+                            monthPromptSums.getOrDefault(modelName, 0L),
+                            monthCompletionSums.getOrDefault(modelName, 0L),
+                            monthTotalSums.getOrDefault(modelName, 0L)));
+
                     return item;
                 })
                 .collect(Collectors.toList());
@@ -420,6 +464,45 @@ public class StatsService {
         result.put("modelStats", modelStatsList);
         result.put("channelAvgResponseTimeRecent30", channelAvgResponseTimeRecent30);
         return result;
+    }
+
+    private List<RequestLog> filterSince(List<RequestLog> logs, LocalDateTime since) {
+        if (since == null) return logs;
+        return logs.stream()
+                .filter(l -> l.getCreatedAt() != null && !l.getCreatedAt().isBefore(since))
+                .collect(Collectors.toList());
+    }
+
+    private Map<String, Long> aggregateRequestCounts(List<RequestLog> logs, LocalDateTime since) {
+        return filterSince(logs, since).stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelModelName, Collectors.counting()));
+    }
+
+    private Map<String, Long> aggregatePromptTokens(List<RequestLog> logs, LocalDateTime since) {
+        return filterSince(logs, since).stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
+                        Collectors.summingLong(l -> l.getPromptTokens() != null ? l.getPromptTokens() : 0)));
+    }
+
+    private Map<String, Long> aggregateCompletionTokens(List<RequestLog> logs, LocalDateTime since) {
+        return filterSince(logs, since).stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
+                        Collectors.summingLong(l -> l.getCompletionTokens() != null ? l.getCompletionTokens() : 0)));
+    }
+
+    private Map<String, Long> aggregateTotalTokens(List<RequestLog> logs, LocalDateTime since) {
+        return filterSince(logs, since).stream()
+                .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
+                        Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
+    }
+
+    private Map<String, Object> buildPeriodMap(long requestCount, long promptTokens, long completionTokens, long totalTokens) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("requestCount", requestCount);
+        map.put("promptTokens", promptTokens);
+        map.put("completionTokens", completionTokens);
+        map.put("totalTokens", totalTokens);
+        return map;
     }
 
     /**

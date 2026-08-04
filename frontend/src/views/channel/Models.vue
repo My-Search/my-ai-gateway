@@ -2,7 +2,20 @@
   <div class="card">
     <div class="card-header">
       <div class="card-title">{{ t('channel.models.title').replace('{name}', channel?.name || '') }}</div>
-      <router-link to="/admin/channel/list" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
+      <div style="display:flex;gap:12px;align-items:center;">
+        <TabSwitch
+          v-if="models.length"
+          v-model="period"
+          variant="period"
+          :tabs="[
+            { value: 'all', label: t('dashboard.trendAll') },
+            { value: 'today', label: t('dashboard.periodToday') },
+            { value: 'week', label: t('dashboard.periodWeek') },
+            { value: 'month', label: t('dashboard.periodMonth') },
+          ]"
+        />
+        <router-link to="/admin/channel/list" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
+      </div>
     </div>
 
     <div v-if="loading" class="page-loading">
@@ -34,7 +47,7 @@
       </div>
     </div>
 
-    <div v-if="!models.length" class="empty-state">{{ t('channel.models.noData') }}</div>
+    <div v-if="!sortedModels.length" class="empty-state">{{ t('channel.models.noData') }}</div>
     <div class="table-container" v-else>
       <!-- Desktop table view -->
       <table class="desktop-table">
@@ -50,7 +63,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="m in models" :key="m.id">
+          <tr v-for="m in sortedModels" :key="m.id">
             <td><code class="model-tag">{{ m.modelName }}</code></td>
             <td>{{ m.displayName || m.modelName }}</td>
             <td>
@@ -61,16 +74,16 @@
             </td>
             <td style="white-space:nowrap;"><span class="badge badge-success">{{ t('channel.models.linked') }}</span></td>
             <td style="text-align:right;font-variant-numeric:tabular-nums;">
-              <span style="font-weight:600;">{{ formatNumber(getModelStat(m.modelName)?.requestCount) }}</span>
+              <span style="font-weight:600;">{{ formatNumber(getDisplayStat(getModelStat(m.modelName)).requestCount) }}</span>
             </td>
             <td style="font-size:12px;font-variant-numeric:tabular-nums;">
-              <template v-if="getModelStat(m.modelName)?.totalTokens">
+              <template v-if="getDisplayStat(getModelStat(m.modelName)).totalTokens">
                 <div style="display:flex;flex-direction:column;gap:2px;">
-                  <span :title="t('channel.models.inputTokens') + ': ' + formatNumber(getModelStat(m.modelName)?.promptTokens) + ' | ' + t('channel.models.outputTokens') + ': ' + formatNumber(getModelStat(m.modelName)?.completionTokens)">
-                    {{ formatTokens(getModelStat(m.modelName)?.totalTokens) }}
+                  <span :title="t('channel.models.inputTokens') + ': ' + formatNumber(getDisplayStat(getModelStat(m.modelName)).promptTokens) + ' | ' + t('channel.models.outputTokens') + ': ' + formatNumber(getDisplayStat(getModelStat(m.modelName)).completionTokens)">
+                    {{ formatTokens(getDisplayStat(getModelStat(m.modelName)).totalTokens) }}
                   </span>
                   <span style="color:var(--text-muted);font-size:11px;">
-                    {{ t('channel.models.inputTokens') }} {{ formatTokens(getModelStat(m.modelName)?.promptTokens) }} / {{ t('channel.models.outputTokens') }} {{ formatTokens(getModelStat(m.modelName)?.completionTokens) }}
+                    {{ t('channel.models.inputTokens') }} {{ formatTokens(getDisplayStat(getModelStat(m.modelName)).promptTokens) }} / {{ t('channel.models.outputTokens') }} {{ formatTokens(getDisplayStat(getModelStat(m.modelName)).completionTokens) }}
                   </span>
                 </div>
               </template>
@@ -88,7 +101,7 @@
 
       <!-- Mobile card list view -->
       <div class="mobile-card-list">
-        <div v-for="m in models" :key="m.id" class="mobile-model-card">
+        <div v-for="m in sortedModels" :key="m.id" class="mobile-model-card">
           <div class="mobile-card-header">
             <span class="mobile-card-title">{{ m.displayName || m.modelName }}</span>
             <span class="badge badge-success">{{ t('channel.models.linked') }}</span>
@@ -107,11 +120,11 @@
           <div class="mobile-card-stats">
             <div class="mobile-stat">
               <span class="mobile-stat-label">{{ t('channel.models.requestCount') }}</span>
-              <span class="mobile-stat-value">{{ formatNumber(getModelStat(m.modelName)?.requestCount) }}</span>
+              <span class="mobile-stat-value">{{ formatNumber(getDisplayStat(getModelStat(m.modelName)).requestCount) }}</span>
             </div>
             <div class="mobile-stat">
               <span class="mobile-stat-label">{{ t('channel.models.tokenUsage') }}</span>
-              <span class="mobile-stat-value">{{ formatTokens(getModelStat(m.modelName)?.totalTokens) }}</span>
+              <span class="mobile-stat-value">{{ formatTokens(getDisplayStat(getModelStat(m.modelName)).totalTokens) }}</span>
             </div>
             <div class="mobile-stat">
               <span class="mobile-stat-label">{{ t('channel.models.avgResponseShort') }}</span>
@@ -144,6 +157,7 @@ import { useDialog } from '@/composables/useDialog'
 import { channelApi, type Channel, type ChannelModel, type ModelUsageStat } from '@/api/channel'
 import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import TabSwitch from '@/components/common/TabSwitch.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -160,21 +174,47 @@ function getModelStat(modelName: string): ModelUsageStat | undefined {
   return modelStats.value.find(s => s.modelName === modelName)
 }
 
-/** Total request count */
+type Period = 'all' | 'today' | 'week' | 'month'
+const period = ref<Period>('all')
+
+/** Get display stats for the currently selected period */
+function getDisplayStat(stat: ModelUsageStat | undefined) {
+  if (!stat) return { requestCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+  if (period.value === 'today') return stat.today
+  if (period.value === 'week') return stat.week
+  if (period.value === 'month') return stat.month
+  return {
+    requestCount: stat.requestCount,
+    promptTokens: stat.promptTokens,
+    completionTokens: stat.completionTokens,
+    totalTokens: stat.totalTokens
+  }
+}
+
+/** Models sorted by request count descending for the selected period */
+const sortedModels = computed(() => {
+  return [...models.value].sort((a, b) => {
+    const countA = getDisplayStat(getModelStat(a.modelName)).requestCount
+    const countB = getDisplayStat(getModelStat(b.modelName)).requestCount
+    return countB - countA
+  })
+})
+
+/** Total request count for selected period */
 const totalRequestCount = computed(() =>
-  modelStats.value.reduce((sum, s) => sum + s.requestCount, 0)
+  modelStats.value.reduce((sum, s) => sum + getDisplayStat(s).requestCount, 0)
 )
-/** Total tokens */
+/** Total tokens for selected period */
 const totalTokens = computed(() =>
-  modelStats.value.reduce((sum, s) => sum + s.totalTokens, 0)
+  modelStats.value.reduce((sum, s) => sum + getDisplayStat(s).totalTokens, 0)
 )
-/** Total input tokens */
+/** Total input tokens for selected period */
 const totalPromptTokens = computed(() =>
-  modelStats.value.reduce((sum, s) => sum + s.promptTokens, 0)
+  modelStats.value.reduce((sum, s) => sum + getDisplayStat(s).promptTokens, 0)
 )
-/** Total output tokens */
+/** Total output tokens for selected period */
 const totalCompletionTokens = computed(() =>
-  modelStats.value.reduce((sum, s) => sum + s.completionTokens, 0)
+  modelStats.value.reduce((sum, s) => sum + getDisplayStat(s).completionTokens, 0)
 )
 
 /** Format number with thousands separator */

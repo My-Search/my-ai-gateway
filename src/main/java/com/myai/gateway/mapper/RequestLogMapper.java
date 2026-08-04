@@ -181,8 +181,8 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "SELECT channel_name as name, " +
             "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
             "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
-            "AVG(CASE WHEN response_time_ms > 0 THEN response_time_ms ELSE NULL END) as avg_time, " +
-            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as total_tokens " +
+            "AVG(CASE WHEN response_time_ms > 0 THEN response_time_ms ELSE NULL END) as avgTime, " +
+            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as totalTokens " +
             "FROM request_logs WHERE created_at &gt;= #{since} " +
             "<if test='end != null'>AND created_at &lt; #{end}</if> " +
             "AND channel_name IS NOT NULL AND channel_name != '' " +
@@ -197,7 +197,7 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "SELECT model_name as name, " +
             "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
             "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
-            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as total_tokens " +
+            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as totalTokens " +
             "FROM request_logs WHERE created_at &gt;= #{since} " +
             "<if test='end != null'>AND created_at &lt; #{end}</if> " +
             "AND model_name IS NOT NULL AND model_name != '' " +
@@ -212,7 +212,7 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "SELECT channel_name, channel_model_name as name, " +
             "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
             "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
-            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as total_tokens " +
+            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as totalTokens " +
             "FROM request_logs WHERE created_at &gt;= #{since} " +
             "<if test='end != null'>AND created_at &lt; #{end}</if> " +
             "AND channel_model_name IS NOT NULL AND channel_model_name != '' " +

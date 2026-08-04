@@ -211,7 +211,7 @@
                 <span>{{ ch.requests }} {{ t('dashboard.requests') }}</span>
                 <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ ch.success }}</span>
                 <span v-if="ch.avgTime > 0" class="rank-meta-time">{{ ch.avgTime }}ms</span>
-                <span v-if="ch.totalTokens > 0" class="rank-meta-tokens">{{ formatTokens(ch.totalTokens) }} tokens</span>
+                <span class="rank-meta-tokens"><SvgIcon name="token" :size="10" /> {{ formatTokens(ch.totalTokens) }} tokens</span>
               </div>
             </div>
             <div class="rank-bar-bg">
@@ -254,7 +254,7 @@
               <div class="rank-meta">
                 <span>{{ m.requests }} {{ t('dashboard.requests') }}</span>
                 <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ m.success }}</span>
-                <span v-if="m.totalTokens > 0" class="rank-meta-tokens">{{ formatTokens(m.totalTokens) }} tokens</span>
+                <span class="rank-meta-tokens"><SvgIcon name="token" :size="10" /> {{ formatTokens(m.totalTokens) }} tokens</span>
               </div>
             </div>
           </div>
