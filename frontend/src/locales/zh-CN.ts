@@ -223,6 +223,7 @@ export default {
   'channel.form.createSuccess': '渠道创建成功',
   'channel.form.saveFailed': '保存失败',
   'channel.form.addedModels': '获取到 {count} 个模型，新增 {added} 个',
+  'channel.form.dragSort': '拖拽排序',
 
   /* ========== Channel Models ========== */
   'channel.models.title': '渠道模型 - {name}',

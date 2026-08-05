@@ -33,8 +33,9 @@
       <div class="form-group">
         <label>{{ t('channel.form.apiKeys') }}</label>
         <div class="form-hint">{{ t('channel.form.apiKeysHint') }}</div>
-        <div class="api-keys-list">
-          <div v-for="(ak, idx) in apiKeys" :key="idx" class="api-key-item" :class="{ '_disabled': ak.enabled !== 1 }">
+        <div ref="apiKeysListRef" class="api-keys-list">
+          <div v-for="(ak, idx) in apiKeys" :key="ak.keyName" class="api-key-item" :class="{ '_disabled': ak.enabled !== 1 }">
+            <span class="drag-handle" :title="t('channel.form.dragSort')">≡</span>
             <span class="api-key-left"><strong>{{ ak.keyName }}</strong><code class="api-key-masked">{{ maskKey(ak.apiKey) }}</code></span>
             <span class="api-key-actions">
               <ToggleSwitch
@@ -167,6 +168,7 @@ import { channelApi, type Channel, type ChannelApiKey, type ChannelModel } from 
 import Dialog from '@/components/common/Dialog.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import Sortable from 'sortablejs'
 
 const route = useRoute()
 const router = useRouter()
@@ -179,6 +181,8 @@ const fetchLoading = ref(false)
 const showAddModel = ref(false)
 const newModelName = ref('')
 const newDisplayName = ref('')
+const apiKeysListRef = ref<HTMLElement>()
+let sortableInstance: Sortable | null = null
 
 /* ---------- API Key Dialog state ---------- */
 const apiKeyDialogVisible = ref(false)
@@ -234,6 +238,30 @@ function confirmAddApiKey() {
 }
 /* ------------------------------ */
 
+function initSortable() {
+  if (sortableInstance) {
+    sortableInstance.destroy()
+    sortableInstance = null
+  }
+  const el = apiKeysListRef.value
+  if (!el) return
+  sortableInstance = new Sortable(el, {
+    handle: '.drag-handle',
+    animation: 150,
+    easing: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+    ghostClass: 'sortable-ghost',
+    dragClass: 'sortable-drag',
+    onEnd: (evt: { oldIndex?: number; newIndex?: number }) => {
+      if (evt.oldIndex === undefined || evt.newIndex === undefined || evt.oldIndex === evt.newIndex) return
+      const newKeys = [...apiKeys.value]
+      const [moved] = newKeys.splice(evt.oldIndex, 1)
+      newKeys.splice(evt.newIndex, 0, moved)
+      newKeys.forEach((k, i) => k.sortOrder = i)
+      apiKeys.value = newKeys
+    }
+  })
+}
+
 interface ModelItem {
   id?: number
   modelName: string
@@ -249,6 +277,10 @@ const form = ref<Partial<Channel>>({
 })
 const apiKeys = ref<ChannelApiKey[]>([])
 const models = ref<ModelItem[]>([])
+
+watch(apiKeys, () => {
+  nextTick(() => initSortable())
+}, { deep: true })
 
 onMounted(async () => {
   if (isEdit.value) {
@@ -488,4 +520,27 @@ async function handleSave() {
 .model-tag .tag-remove { display: none; cursor: pointer; opacity: 0.6; margin-left: 4px; }
 .model-tag:hover .tag-remove { display: inline-flex; align-items: center; }
 .model-tag .tag-remove:hover { opacity: 1; color: var(--accent-red); }
+
+.drag-handle {
+  cursor: grab;
+  color: var(--text-muted);
+  user-select: none;
+  font-size: 18px;
+  line-height: 1;
+  touch-action: none;
+  padding-right: 4px;
+}
+.drag-handle:active {
+  cursor: grabbing;
+}
+.sortable-ghost {
+  opacity: 0.35;
+  background-color: color-mix(in srgb, var(--accent-blue) 10%, transparent);
+  border-style: dashed;
+}
+.sortable-drag {
+  opacity: 0.8;
+  background-color: var(--bg-card);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
 </style>

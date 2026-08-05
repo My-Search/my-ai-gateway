@@ -223,6 +223,7 @@ export default {
   'channel.form.createSuccess': 'Channel created',
   'channel.form.saveFailed': 'Save failed',
   'channel.form.addedModels': 'Fetched {count} models, added {added} new',
+  'channel.form.dragSort': 'Drag to sort',
 
   /* ========== Channel Models ========== */
   'channel.models.title': 'Channel Models - {name}',
