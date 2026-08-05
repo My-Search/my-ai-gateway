@@ -543,4 +543,10 @@ async function handleSave() {
   background-color: var(--bg-card);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
+
+@media (max-width: 768px) {
+  .api-key-masked { display: none; }
+  .api-key-left { min-width: 0; overflow: hidden; }
+  .api-key-left strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 </style>
