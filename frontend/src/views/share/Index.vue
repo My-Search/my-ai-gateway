@@ -1,7 +1,7 @@
 <template>
   <div class="share-container">
     <div v-if="loading" class="loading-state">
-      <div class="loading-spinner"></div>
+      <LoadingSpinner :size="40" />
       <p>{{ t('share.loading') }}</p>
     </div>
 
@@ -118,9 +118,6 @@
       </div>
     </div>
 
-    <div v-if="toast.show" class="toast" :class="toast.type">
-      {{ toast.message }}
-    </div>
   </div>
 </template>
 
@@ -129,9 +126,12 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { shareApi, type ShareData } from '@/api/share'
 import ChatPlayground from '@/components/chat/ChatPlayground.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { useI18n } from '@/composables/useI18n'
+import { useToast } from '@/composables/useToast'
 
 const { t } = useI18n()
+const { showToast } = useToast()
 
 const route = useRoute()
 
@@ -154,9 +154,6 @@ const baseUrl = computed(() => shareData.value.baseUrl)
 // 从路由参数获取分享码，作为 fixedShareCode 的保底值
 // 后端 buildShareResponse 已返回 shareCode，但若响应缺失则用路由中的 code 兜底
 const shareCodeFromRoute = computed(() => route.params.code as string)
-
-// Toast
-const toast = ref({ show: false, message: '', type: 'success' })
 
 // 所有模型两种接口格式都可用（网关支持协议互转）
 const filteredModels = computed(() => models.value)
@@ -197,19 +194,12 @@ onMounted(async () => {
 })
 
 // 方法
-function showToast(message: string, type: 'success' | 'error' = 'success') {
-  toast.value = { show: true, message, type }
-  setTimeout(() => {
-    toast.value.show = false
-  }, 2000)
-}
-
 async function copyText(text: string, label: string = '') {
   try {
     await navigator.clipboard.writeText(text)
     showToast(t('share.copied').replace('{label}', label || ''))
   } catch {
-    showToast(t('share.copyFailed'), 'error')
+    showToast(t('share.copyFailed'), { isError: true })
   }
 }
 </script>
@@ -229,19 +219,7 @@ async function copyText(text: string, label: string = '') {
   justify-content: center;
   min-height: 400px;
   text-align: center;
-}
-
-.loading-spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--accent-blue);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
+  gap: 12px;
 }
 
 .error-icon {
@@ -396,12 +374,6 @@ async function copyText(text: string, label: string = '') {
   min-width: 0;
 }
 
-.empty-state {
-  text-align: center;
-  color: var(--text-muted);
-  padding: 24px;
-}
-
 .model-tags {
   display: flex;
   flex-wrap: wrap;
@@ -418,40 +390,6 @@ async function copyText(text: string, label: string = '') {
   font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
-}
-
-/* Toast */
-.toast {
-  position: fixed;
-  bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-size: 14px;
-  z-index: 9999;
-  animation: slideUp 0.3s ease;
-}
-
-.toast.success {
-  background: #10b981;
-  color: white;
-}
-
-.toast.error {
-  background: #ef4444;
-  color: white;
-}
-
-@keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateX(-50%) translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(-50%) translateY(0);
-  }
 }
 
 /* 响应式 */

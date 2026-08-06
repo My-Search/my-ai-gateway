@@ -158,6 +158,7 @@ import { channelApi, type Channel, type ChannelModel, type ModelUsageStat } from
 import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import TabSwitch from '@/components/common/TabSwitch.vue'
+import { formatNumber, formatTokens } from '@/utils/format'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -216,20 +217,6 @@ const totalPromptTokens = computed(() =>
 const totalCompletionTokens = computed(() =>
   modelStats.value.reduce((sum, s) => sum + getDisplayStat(s).completionTokens, 0)
 )
-
-/** Format number with thousands separator */
-function formatNumber(n: number | undefined): string {
-  if (n == null) return '0'
-  return n.toLocaleString()
-}
-
-/** Format token count with K/M abbreviation */
-function formatTokens(n: number | undefined): string {
-  if (n == null || n === 0) return '0'
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
-  return n.toString()
-}
 
 /** Format response time: >=1000ms shows seconds, otherwise ms */
 function formatResponseTime(ms: number | undefined): string {

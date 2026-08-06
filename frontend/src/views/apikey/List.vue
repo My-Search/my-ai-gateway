@@ -190,6 +190,7 @@ import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import { formatLocalDateTimeFull } from '@/utils/date'
+import { formatNumber, formatTokens } from '@/utils/format'
 
 const { t } = useI18n()
 const { visible, title, message, type, confirmClass, confirmText, onConfirm, open } = useDialog()
@@ -215,18 +216,6 @@ function formatUsageValue(stats: ApiKeyPeriodStats | undefined): string {
   } else {
     return formatNumber(stats.requestCount)
   }
-}
-
-function formatTokens(n: number | undefined | null): string {
-  if (n == null || n === 0) return '0'
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
-  return n.toLocaleString()
-}
-
-function formatNumber(n: number | undefined | null): string {
-  if (n == null) return '0'
-  return n.toLocaleString()
 }
 
 /* ---------- Form Dialog state ---------- */

@@ -130,6 +130,7 @@
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
+          <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-primary"><SvgIcon name="list" :size="14" /> {{ t('channel.list.view') }}</router-link>
           <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> {{ t('channel.list.quickTest') }}</button>
           <router-link :to="`/admin/channel/reload/${ch.id}`" class="btn btn-sm btn-secondary"
             @click.prevent="reloadModels(ch.id!)"><SvgIcon name="refresh" :size="14" /> {{ t('channel.list.refresh') }}</router-link>
@@ -224,6 +225,7 @@ import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { channelApi, type Channel, type ChannelModel, type ChannelApiKey } from '@/api/channel'
 import { formatLocalDateTimeFull } from '@/utils/date'
+import { formatNumber, formatTokens } from '@/utils/format'
 import Dialog from '@/components/common/Dialog.vue'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
 import MultiModalRuleDialog from '@/components/channel/MultiModalRuleDialog.vue'
@@ -371,20 +373,6 @@ async function toggleEnabled(ch: Channel) {
       }
     }
   })
-}
-
-/** Format number with thousands separator */
-function formatNumber(n: number | undefined): string {
-  if (n == null) return '0'
-  return n.toLocaleString()
-}
-
-/** 格式化 token 数量，大数字用 K/M 缩写 */
-function formatTokens(n: number | undefined): string {
-  if (n == null || n === 0) return '0'
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
-  return n.toString()
 }
 
 onMounted(loadChannels)

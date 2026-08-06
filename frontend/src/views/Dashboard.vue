@@ -288,6 +288,7 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { dashboardApi, type DashboardStats } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
 import { formatLocalTime } from '@/utils/date'
+import { formatNumber, formatTokens } from '@/utils/format'
 import TodayTrendChart from '@/components/dashboard/TodayTrendChart.vue'
 import PhaseBadge from '@/components/common/PhaseBadge.vue'
 import { sparklinePaths } from '@/utils/sparkline'
@@ -333,18 +334,6 @@ const dailySuccessRates = computed(() => {
 
 function formatTime(dateStr: string) {
   return formatLocalTime(dateStr)
-}
-
-function formatTokens(n: number | undefined | null): string {
-  if (n == null || n === 0) return '0'
-  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
-  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
-  return n.toLocaleString()
-}
-
-function formatNumber(n: number | undefined | null): string {
-  if (n == null) return '0'
-  return n.toLocaleString()
 }
 
 function getChangePercent(key: 'requests' | 'totalTokens' | 'successRate' | 'avgResponseTime' | 'failCount'): string {
