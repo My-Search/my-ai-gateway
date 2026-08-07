@@ -113,7 +113,10 @@
             <!-- 当前消息使用的模型/渠道信息：已确认或实时尝试中 -->
             <div v-if="msg.role === 'assistant' && (msg.channelInfo || (idx === messages.length - 1 && streaming && routingProgress))" class="chat-channel-info">
               <template v-if="msg.channelInfo">
-                <span class="channel-badge" :class="msg.channelInfo.channel_type">{{ msg.channelInfo.channel_type }}</span>
+                <!-- 第一个徽章：客户端实际使用的 API 协议（如选择 anthropic 则显示 anthropic） -->
+                <span class="channel-badge" :class="msg.channelInfo.client_protocol">{{ msg.channelInfo.client_protocol }}</span>
+                <!-- 第二个徽章：渠道本身的类型（与客户端协议不同时显示，说明网关做了协议翻译） -->
+                <span v-if="msg.channelInfo.channel_type && msg.channelInfo.channel_type !== msg.channelInfo.client_protocol" class="channel-badge" :class="msg.channelInfo.channel_type">{{ msg.channelInfo.channel_type }}</span>
                 <span class="channel-name">{{ msg.channelInfo.channel }}</span>
                 <span class="channel-arrow">/</span>
                 <span class="channel-name">{{ msg.channelInfo.api_key_name }}</span>
@@ -258,7 +261,7 @@ const props = withDefaults(defineProps<{
 })
 
 interface ChatMessage {
-  role: 'user' | 'assistant' | 'system-msg'
+  role: 'user' | 'assistant' | 'system' | 'system-msg'
   content: string
   /** 多模态图片 URL 列表（上传后或 data URI），用于用户消息 */
   images?: string[]
@@ -579,11 +582,83 @@ function addMessage(role: ChatMessage['role'], content: string, meta?: string, c
   return messages.value[messages.value.length - 1]
 }
 
-/** 构建请求体 */
+/** 构建 Anthropic 图片 content block 的 source（data URI → base64，普通 URL → url） */
+function buildAnthropicImageSource(url: string): Record<string, any> {
+  if (url.startsWith('data:')) {
+    const comma = url.indexOf(';base64,')
+    if (comma > 0) {
+      return {
+        type: 'base64',
+        media_type: url.substring(5, comma),
+        data: url.substring(comma + 8)
+      }
+    }
+  }
+  return { type: 'url', url }
+}
+
+/** 构建请求体（按所选 API 协议构建对应格式：openai / anthropic） */
 function buildRequestBody() {
+  const validMessages = messages.value
+    .filter(m => m.role !== 'system-msg')
+    .filter(m => m.content.trim() !== '' || (m.images && m.images.length))
+
+  // Anthropic Messages API 格式（POST /v1/messages）
+  if (protocol.value === 'anthropic') {
+    // system 角色消息提取为顶层 system 字段（Anthropic messages 数组不允许 system 角色）
+    const system = validMessages
+      .filter(m => m.role === 'system')
+      .map(m => m.content)
+      .join('\n\n')
+
+    const anthropicMessages = validMessages
+      .filter(m => m.role !== 'system')
+      .map(m => {
+        // 用户消息含图片时构建多模态 content blocks
+        if (m.role === 'user' && m.images && m.images.length > 0) {
+          const content: any[] = []
+          if (m.content.trim()) {
+            content.push({ type: 'text', text: m.content })
+          }
+          for (const imgUrl of m.images) {
+            content.push({ type: 'image', source: buildAnthropicImageSource(imgUrl) })
+          }
+          return { role: 'user', content }
+        }
+        // assistant 消息：思考过程以 thinking 块传回（与网关 openai→anthropic 翻译一致）
+        if (m.role === 'assistant') {
+          const content: any[] = []
+          if (m.reasoningContent) {
+            content.push({ type: 'thinking', thinking: m.reasoningContent })
+          }
+          if (m.content) {
+            content.push({ type: 'text', text: m.content })
+          }
+          return { role: 'assistant', content: content.length ? content : [{ type: 'text', text: '' }] }
+        }
+        return { role: m.role, content: m.content }
+      })
+
+    const body: Record<string, any> = {
+      model: selectedModel.value,
+      messages: anthropicMessages,
+      // Anthropic API 必填字段
+      max_tokens: maxTokens.value,
+      stream: true
+    }
+    if (system.trim()) {
+      body.system = system
+    }
+    if (temperature.value !== undefined) {
+      body.temperature = temperature.value
+    }
+    return body
+  }
+
+  // OpenAI Chat Completions 格式（POST /v1/chat/completions）
   const body: Record<string, any> = {
     model: selectedModel.value,
-    messages: messages.value.filter(m => m.role !== 'system-msg').filter(m => m.content.trim() !== '' || (m.images && m.images.length)).map(m => {
+    messages: validMessages.map(m => {
       // 用户消息含图片时构建多模态 content 数组
       if (m.role === 'user' && m.images && m.images.length > 0) {
         const content: any[] = []
@@ -702,7 +777,8 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
         try {
           const json = JSON.parse(data)
           if (json._gateway_meta) {
-            targetMsg.channelInfo = json
+            // 记录客户端实际使用的协议（分享模式固定为 openai 兼容端点）
+            targetMsg.channelInfo = { ...json, client_protocol: isShareMode.value ? 'openai' : protocol.value }
             lastChannelInfo.value = { channel: json.channel, apiKeyName: json.api_key_name, channelModel: json.channel_model }
             continue
           }
@@ -1416,8 +1492,8 @@ function renderReasoningMarkdown(text: string): string {
 /* Mobile header overrides */
 @media (max-width: 768px) {
   .chat-header {
-    border-radius: 12px;
-    margin: 8px 8px 0;
+    border-radius: 12px 12px 0 0;
+    margin: 8px 0 0;
     border-bottom: 1px solid var(--border-color);
     background: var(--bg-secondary);
   }
@@ -1467,8 +1543,7 @@ function renderReasoningMarkdown(text: string): string {
 .mobile-sidebar-toggle:active {
   background: var(--bg-tertiary);
 }
-
-
+</style>
 
 <style>
 /* github-markdown-css 提供结构排版（字号、间距、边框圆角等），

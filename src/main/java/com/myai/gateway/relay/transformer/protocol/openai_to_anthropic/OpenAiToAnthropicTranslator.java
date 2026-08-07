@@ -177,8 +177,13 @@ public class OpenAiToAnthropicTranslator implements ProtocolTranslator {
             }
 
             // 处理 finish_reason
+            // 注意：部分上游（如 DeepSeek/商汤）在普通内容块中携带空字符串 finish_reason:""，
+            // 只有非空值才视为真正的结束信号，否则所有内容块都会被误丢弃
             String finishReason = choice.has("finish_reason") && !choice.get("finish_reason").isNull()
                     ? choice.get("finish_reason").asText() : null;
+            if (finishReason != null && finishReason.isEmpty()) {
+                finishReason = null;
+            }
 
             if (finishReason != null) {
                 s.finishReasonSeen = true;

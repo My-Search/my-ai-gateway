@@ -244,7 +244,9 @@ public class MessageTransformer {
                     // 后者已由 role=tool + tool_call_id 表达，不能再透传进 OpenAI 的 content 数组，
                     // 否则上游会以 400 拒绝：invalid content.type `tool_use`。
                     // 参考 new-api-main: tool_use 仅入 tool_calls，tool_result 拆为独立 tool 消息。
-                    if ("tool_use".equals(type) || "tool_result".equals(type)) {
+                    // thinking 块同理：OpenAI 的 content 数组不支持该类型，上游（如商汤）会以 400 拒绝；
+                    // DeepSeek 系模型由 applyDeepSeekReasoningContentPatch 提取为 reasoning_content 字段。
+                    if ("tool_use".equals(type) || "tool_result".equals(type) || "thinking".equals(type)) {
                         continue;
                     }
                     ObjectNode partNode = contentArray.addObject();
@@ -690,12 +692,43 @@ public class MessageTransformer {
             return;
         }
 
+        // Anthropic 客户端的 thinking 块：OpenAI 的 content 数组不支持该类型（已在上游请求构建时丢弃），
+        // DeepSeek 系模型提取为 reasoning_content 字段保持多轮思考连续性，其余模型直接忽略
+        String thinkingText = extractThinkingText(msg);
+        if (thinkingText != null) {
+            String model = req.getModel();
+            if (model != null && model.toLowerCase(Locale.ROOT).contains("deepseek")) {
+                msgNode.put("reasoning_content", thinkingText);
+            }
+            return;
+        }
+
         // DeepSeek + reasoning_effort 启用 → 历史 assistant 消息补空串
         String model = req.getModel();
         if (model != null && model.toLowerCase(Locale.ROOT).contains("deepseek")
                 && req.getReasoningEffort() != null && !req.getReasoningEffort().isEmpty()) {
             msgNode.put("reasoning_content", "");
         }
+    }
+
+    /**
+     * 从 Anthropic 客户端消息的 contentParts 中提取 thinking 块文本。
+     *
+     * @return 拼接后的 thinking 文本；无 thinking 块时返回 null
+     */
+    private String extractThinkingText(InternalMessage msg) {
+        if (msg.getContentParts() == null || msg.getContentParts().isEmpty()) return null;
+        StringBuilder sb = null;
+        for (Map<String, Object> part : msg.getContentParts()) {
+            if ("thinking".equals(part.get("type"))) {
+                Object t = part.get("thinking");
+                if (t != null && !t.toString().isEmpty()) {
+                    if (sb == null) sb = new StringBuilder();
+                    sb.append(t);
+                }
+            }
+        }
+        return sb != null ? sb.toString() : null;
     }
 
     private String escapeJson(String s) {
