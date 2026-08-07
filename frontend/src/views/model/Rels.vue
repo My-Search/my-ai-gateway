@@ -104,6 +104,7 @@
             <th>{{ t('model.rels.model') }}</th>
             <th>{{ t('model.rels.inputTypes') }}</th>
             <th>{{ t('model.rels.responseTime') }}</th>
+            <th>{{ t('model.rels.circuitBreaker') }}</th>
             <th>{{ t('model.rels.reasoningEffort') }}</th>
             <th>{{ t('model.rels.actions') }}</th>
           </tr>
@@ -133,6 +134,21 @@
                 <span v-if="rel.sampleCount != null" class="sample-count">({{ rel.sampleCount }})</span>
               </span>
               <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
+            </td>
+            <td>
+              <span v-if="rel.circuitBroken === 1" class="cb-broken">
+                <span class="badge badge-broken">
+                  {{ t('model.rels.broken') }}
+                  <template v-if="rel.circuitBrokenScope === 'channel'">（{{ t('model.rels.brokenChannel') }}）</template>
+                  <template v-else-if="rel.circuitBrokenScope === 'model'">（{{ t('model.rels.brokenModel') }}）</template>
+                  <template v-else-if="rel.circuitBrokenScope === 'both'">（{{ t('model.rels.brokenBoth') }}）</template>
+                </span>
+                <span class="cb-expire">{{ t('model.rels.brokenExpire') }} {{ formatExpire(rel.circuitBrokenExpireAt) }}</span>
+                <button class="btn btn-sm btn-secondary cb-recover-btn" @click="recoverRel(rel)">
+                  <SvgIcon name="check" :size="12" /> {{ t('model.rels.recover') }}
+                </button>
+              </span>
+              <span v-else class="text-muted">{{ t('model.rels.brokenNone') }}</span>
             </td>
             <td>
               <select
@@ -228,6 +244,36 @@ function formatRespTime(ms: number): string {
 
 function effortLabel(value: string): string {
   return value // 直接显示原始值 low/medium/high/xhigh/max
+}
+
+function formatExpire(value?: string | null): string {
+  if (!value) return '--'
+  // 后端返回 ISO 格式，本地时间显示
+  const d = new Date(value)
+  if (isNaN(d.getTime())) return value
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function recoverRel(rel: ModelChannelRel) {
+  openDialog({
+    title: t('model.rels.recoverTitle'),
+    message: t('model.rels.recoverConfirm'),
+    type: 'confirm',
+    confirmClass: 'btn-warning',
+    onConfirm: async () => {
+      try {
+        const res = await modelApi.clearRelCircuitBreaker(rel.id)
+        if (res.data.success) {
+          await loadData()
+        } else {
+          openDialog({ title: t('model.rels.recoverFailed'), message: res.data.error || t('error.unknown') })
+        }
+      } catch (e: any) {
+        openDialog({ title: t('model.rels.recoverFailed'), message: e.message })
+      }
+    }
+  })
 }
 
 /* ---------- Switch-mode confirm dialog ---------- */
@@ -756,5 +802,37 @@ table td {
   color: var(--text-muted);
   font-size: 11px;
   margin-left: 2px;
+}
+
+/* Circuit breaker status */
+.cb-broken {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.badge-broken {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+  background: rgba(248, 81, 73, 0.12);
+  color: #f85149;
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+.cb-expire {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.cb-recover-btn {
+  padding: 1px 8px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 </style>

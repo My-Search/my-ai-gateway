@@ -339,6 +339,17 @@ export default {
   'model.rels.switchModeTitle': 'Switch Link Mode',
   'model.rels.switchToInheritConfirm': 'Switching to Inherit mode will use the source model\'s links and discard this model\'s custom links. Continue?',
   'model.rels.switchToSelfAddConfirm': 'Switching to Self-Add mode will copy the current effective links as the initial list, which you can then freely modify. Continue?',
+  'model.rels.circuitBreaker': 'Circuit Breaker',
+  'model.rels.broken': 'Broken',
+  'model.rels.brokenChannel': 'channel',
+  'model.rels.brokenModel': 'model',
+  'model.rels.brokenBoth': 'channel+model',
+  'model.rels.brokenExpire': 'Next probe',
+  'model.rels.brokenNone': 'Normal',
+  'model.rels.recover': 'Recover',
+  'model.rels.recoverTitle': 'Recover Circuit Breaker',
+  'model.rels.recoverConfirm': 'Recover this link\'s circuit breaker? Channel-level breaker (if any) will also be recovered.',
+  'model.rels.recoverFailed': 'Failed to recover circuit breaker',
 
   /* ========== Circuit Breaker ========== */
   'cb.title': 'Circuit Breaker - {name}',
@@ -591,7 +602,15 @@ export default {
   'systemConfig.timeoutMinHint': 'Lower bound for adaptive timeout. Default 20s. Range 1-600.',
   'systemConfig.timeoutMax': 'Max Timeout (seconds)',
   'systemConfig.timeoutMaxHint': 'Upper bound for adaptive timeout. Default 60s. Range 1-600.',
+  'systemConfig.probeManagement': 'Circuit Breaker Recovery Probe',
+  'systemConfig.probeManagementDesc': 'After a breaker expires, recovery is decided by probing. Successful requests automatically trigger probing of expired gates in that channel; the interval below is for periodic full scans, covering broken records without traffic.',
+  'systemConfig.probeInterval': 'Full Scan Interval (minutes)',
+  'systemConfig.probeIntervalHint': 'Period for probing all expired circuit breaker records. Default 30 minutes. Min 1 minute.',
+  'systemConfig.probeThrottle': 'Trigger Probe Throttle (seconds)',
+  'systemConfig.probeThrottleHint': 'Maximum one probe per channel within the interval, avoiding probing on every request under high traffic. Default 6s. 0 disables throttling.',
+  'systemConfig.probeThrottleInvalid': 'Trigger probe throttle cannot be negative',
   'systemConfig.timeoutInvalid': 'Min timeout cannot exceed max timeout',
+  'systemConfig.probeIntervalInvalid': 'Full scan interval cannot be less than 1 minute',
 
   /* ========== MultiModal Rules ========== */
   'multimodal.title': 'Multi-Modal Rules',

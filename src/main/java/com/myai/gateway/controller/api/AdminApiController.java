@@ -79,6 +79,7 @@ public class AdminApiController {
     private final RequestLogMapper requestLogMapper;
     private final MultiModalRuleService multiModalRuleService;
     private final PromptInjectionService promptInjectionService;
+    private final CircuitBreakerService circuitBreakerService;
 
     public AdminApiController(StatsService statsService, ChannelService channelService,
                               ChannelApiKeyService channelApiKeyService, ModelService modelService,
@@ -89,7 +90,8 @@ public class AdminApiController {
                               LatencyTracker latencyTracker,
                               RequestLogMapper requestLogMapper,
                               MultiModalRuleService multiModalRuleService,
-                              PromptInjectionService promptInjectionService) {
+                              PromptInjectionService promptInjectionService,
+                              CircuitBreakerService circuitBreakerService) {
         this.statsService = statsService;
         this.channelService = channelService;
         this.channelApiKeyService = channelApiKeyService;
@@ -105,6 +107,7 @@ public class AdminApiController {
         this.requestLogMapper = requestLogMapper;
         this.multiModalRuleService = multiModalRuleService;
         this.promptInjectionService = promptInjectionService;
+        this.circuitBreakerService = circuitBreakerService;
     }
 
     @PreDestroy
@@ -700,7 +703,10 @@ public class AdminApiController {
             logsByKey.computeIfAbsent(key, k -> new ArrayList<>()).add(log);
         }
 
-        // 为每个关联模型计算最近 30 条的平均响应时间和样本数
+        // 批量计算全部关联的熔断标记（一次加载渠道模型/熔断记录/API Key，避免逐关联 N+1 查询）
+        Map<Long, CircuitBreakerService.RelBrokenMark> brokenMarks = circuitBreakerService.computeRelBrokenMarks(rels);
+
+        // 为每个关联模型计算最近 30 条的平均响应时间和样本数，并填充熔断状态标记
         for (ModelChannelRel rel : rels) {
             String channelName = rel.getChannelName();
             String channelModelName = rel.getChannelModelName();
@@ -720,6 +726,16 @@ public class AdminApiController {
                     rel.setSampleCount(null);
                 }
             }
+            CircuitBreakerService.RelBrokenMark mark = brokenMarks.get(rel.getId());
+            if (mark == null) {
+                rel.setCircuitBroken(0);
+                rel.setCircuitBrokenScope(null);
+                rel.setCircuitBrokenExpireAt(null);
+            } else {
+                rel.setCircuitBroken(1);
+                rel.setCircuitBrokenScope(mark.scope);
+                rel.setCircuitBrokenExpireAt(mark.expireAt);
+            }
         }
 
         // 解析继承源模型名称（仅在 inherit 模式下有意义）
@@ -737,6 +753,32 @@ public class AdminApiController {
         result.put("rels", rels);
         result.put("availableModels", availableModels);
         result.put("inheritFromModelName", inheritFromModelName);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 手动解除关联的熔断状态（若渠道级熔断存在则一并解除）
+     * DELETE /admin/api/models/rels/{relId}/circuit-breaker
+     */
+    @DeleteMapping(value = "/models/rels/{relId}/circuit-breaker", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> clearRelCircuitBreaker(@PathVariable Long relId) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            ModelChannelRel rel = modelService.getChannelRelById(relId);
+            if (rel == null) {
+                return ResponseEntity.status(404).body(Map.of("error", "关联不存在"));
+            }
+            com.myai.gateway.entity.ChannelModel cm = modelService.getChannelModelById(rel.getChannelModelId());
+            Long keyId = cm != null ? cm.getChannelApiKeyId() : null;
+            Long channelId = cm != null ? cm.getChannelId() : null;
+            int count = circuitBreakerService.manualRecover(rel.getChannelModelId(), channelId, keyId);
+            result.put("success", true);
+            result.put("recovered", count);
+        } catch (Exception e) {
+            log.warn("手动解除熔断失败: relId={}", relId, e);
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
         return ResponseEntity.ok(result);
     }
 

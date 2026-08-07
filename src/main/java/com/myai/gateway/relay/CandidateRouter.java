@@ -50,6 +50,7 @@ public class CandidateRouter {
     private final RequestPreprocessor requestPreprocessor;
     private final RelayLogger relayLogger;
     private final WebClient webClient;
+    private final CircuitBreakerRecoveryService recoveryService;
     final ConcurrentHashMap<String, int[]> streamUsageMap;
 
     public CandidateRouter(ModelService modelService,
@@ -65,6 +66,7 @@ public class CandidateRouter {
                            RequestPreprocessor requestPreprocessor,
                            RelayLogger relayLogger,
                            WebClient webClient,
+                           CircuitBreakerRecoveryService recoveryService,
                            ConcurrentHashMap<String, int[]> streamUsageMap) {
         this.modelService = modelService;
         this.circuitBreakerService = circuitBreakerService;
@@ -79,6 +81,7 @@ public class CandidateRouter {
         this.requestPreprocessor = requestPreprocessor;
         this.relayLogger = relayLogger;
         this.webClient = webClient;
+        this.recoveryService = recoveryService;
         this.streamUsageMap = streamUsageMap;
     }
 
@@ -91,6 +94,9 @@ public class CandidateRouter {
         RouteResolver.RoutingContext ctx = routeResolver.resolveModelRouting(originalModel);
         List<RoutingCandidate> candidates = routeResolver.getAvailableCandidates(req);
         routeResolver.logSkippedCandidatesFromResult(traceId, gatewayApiKeyId, req, candidates, ctx);
+        // 请求进入即触发各候选渠道的到期熔断探测：异步投递（微秒级），与请求处理并行，
+        // 探测开门后对后续请求生效，不阻塞当前请求
+        triggerProbeForCandidates(candidates);
         if (candidates.isEmpty()) {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, originalModel, null, null,
                     "fail", "error", "没有可用的路由候选", System.currentTimeMillis() - startTime, 0);
@@ -263,6 +269,8 @@ public class CandidateRouter {
         RouteResolver.RoutingContext ctx = routeResolver.resolveModelRouting(req.getModel());
         List<RoutingCandidate> candidates = routeResolver.getAvailableCandidates(req);
         routeResolver.logSkippedCandidatesFromResult(traceId, gatewayApiKeyId, req, candidates, ctx);
+        // 请求进入即触发各候选渠道的到期熔断探测：异步投递（微秒级），与请求处理并行
+        triggerProbeForCandidates(candidates);
         if (candidates.isEmpty()) {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, req.getModel(), null, null,
                     "fail", "error", "没有可用的路由候选", System.currentTimeMillis() - startTime, 0);
@@ -628,6 +636,21 @@ public class CandidateRouter {
         return circuitBreakerService.isChannelCircuitBroken(candidate.getChannel().getId())
                 || circuitBreakerService.isChannelCircuitBroken(candidate.getChannel().getId(), candidate.getChannelApiKey().getId())
                 || circuitBreakerService.isModelCircuitBroken(candidate.getChannelModel().getId(), candidate.getChannelApiKey().getId());
+    }
+
+    /**
+     * 请求进入时触发候选渠道的到期熔断探测（异步投递，不阻塞请求线程）。
+     * <p>每个渠道仅触发一次（按渠道去重）；探测与请求处理并行，
+     * 探测开门后对后续请求生效。</p>
+     */
+    private void triggerProbeForCandidates(List<RoutingCandidate> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return;
+        }
+        candidates.stream()
+                .map(c -> c.getChannel().getId())
+                .distinct()
+                .forEach(recoveryService::triggerProbeByChannel);
     }
 
     private void handleFailure(RoutingCandidate candidate, InternalRequest req) {

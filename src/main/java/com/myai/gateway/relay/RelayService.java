@@ -66,6 +66,7 @@ public class RelayService {
                         ApiKeyService apiKeyService,
                         ModelService modelService,
                         CircuitBreakerService circuitBreakerService,
+                        CircuitBreakerRecoveryService circuitBreakerRecoveryService,
                         RequestLogService requestLogService,
                         com.myai.gateway.relay.balancer.LoadBalancerFactory loadBalancerFactory,
                         ObjectMapper objectMapper,
@@ -109,7 +110,7 @@ public class RelayService {
                 objectMapper, messageTransformer, streamContentManager,
                 latencyTracker, sseHandler,
                 routeResolver, requestPreprocessor, relayLogger,
-                webClient, streamUsageMap);
+                webClient, circuitBreakerRecoveryService, streamUsageMap);
     }
 
     // ========== 非流式入口 ==========

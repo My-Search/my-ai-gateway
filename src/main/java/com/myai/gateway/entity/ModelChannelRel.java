@@ -65,6 +65,19 @@ public class ModelChannelRel {
     @TableField(exist = false)
     private String input;
 
+    /** 是否处于熔断状态：0-正常，1-熔断中（非数据库字段，用于前端标记） */
+    @TableField(exist = false)
+    private Integer circuitBroken;
+
+    /** 熔断级别（非数据库字段）：model-模型级熔断，channel-渠道级熔断，both-两者都有 */
+    @TableField(exist = false)
+    private String circuitBrokenScope;
+
+    /** 熔断到期时间（非数据库字段，取相关熔断记录中最早的到期时间） */
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
+    @TableField(exist = false)
+    private LocalDateTime circuitBrokenExpireAt;
+
     public ModelChannelRel() {}
 
     public ModelChannelRel(Long modelId, Long channelModelId) {
@@ -123,4 +136,13 @@ public class ModelChannelRel {
 
     public String getInput() { return input; }
     public void setInput(String input) { this.input = input; }
+
+    public Integer getCircuitBroken() { return circuitBroken; }
+    public void setCircuitBroken(Integer circuitBroken) { this.circuitBroken = circuitBroken; }
+
+    public String getCircuitBrokenScope() { return circuitBrokenScope; }
+    public void setCircuitBrokenScope(String circuitBrokenScope) { this.circuitBrokenScope = circuitBrokenScope; }
+
+    public LocalDateTime getCircuitBrokenExpireAt() { return circuitBrokenExpireAt; }
+    public void setCircuitBrokenExpireAt(LocalDateTime circuitBrokenExpireAt) { this.circuitBrokenExpireAt = circuitBrokenExpireAt; }
 }

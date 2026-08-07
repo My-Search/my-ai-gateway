@@ -135,6 +135,39 @@
         </div>
       </div>
 
+      <!-- Circuit Breaker Recovery Probe -->
+      <div class="section">
+        <div class="section-header">
+          <SvgIcon name="settings" :size="18" />
+          <span>{{ t('systemConfig.probeManagement') }}</span>
+        </div>
+        <div class="section-desc">{{ t('systemConfig.probeManagementDesc') }}</div>
+
+        <div class="config-row">
+          <div class="config-row-label">
+            <div class="config-label">{{ t('systemConfig.probeInterval') }}</div>
+            <div class="config-hint">{{ t('systemConfig.probeIntervalHint') }}</div>
+          </div>
+          <div class="config-row-control">
+            <input type="number" class="form-control" style="width:120px;"
+                   v-model.number="form.circuit_breaker_probe_interval_minutes"
+                   :min="1" :max="1440" />
+          </div>
+        </div>
+
+        <div class="config-row">
+          <div class="config-row-label">
+            <div class="config-label">{{ t('systemConfig.probeThrottle') }}</div>
+            <div class="config-hint">{{ t('systemConfig.probeThrottleHint') }}</div>
+          </div>
+          <div class="config-row-control">
+            <input type="number" class="form-control" style="width:120px;"
+                   v-model.number="form.circuit_breaker_probe_throttle_seconds"
+                   :min="0" :max="3600" :step="0.1" />
+          </div>
+        </div>
+      </div>
+
       <!-- Save -->
       <div class="section-footer">
         <button class="btn btn-primary" @click="handleSave" :disabled="saving">
@@ -167,7 +200,9 @@ const form = reactive({
   retry_fail_ttl_hours: 48,
   request_data_save_level: 'info',
   timeout_min_seconds: 20,
-  timeout_max_seconds: 60
+  timeout_max_seconds: 60,
+  circuit_breaker_probe_interval_minutes: 30,
+  circuit_breaker_probe_throttle_seconds: 6
 })
 
 /** 表单是否已被修改但未保存 */
@@ -202,6 +237,11 @@ async function loadConfig() {
       form.request_data_save_level = res.data.data.request_data_save_level || 'info'
       form.timeout_min_seconds = parseInt(res.data.data.timeout_min_seconds) || 20
       form.timeout_max_seconds = parseInt(res.data.data.timeout_max_seconds) || 60
+      // 注意：节流配置合法值为 0（不节流），不能用 || 兜底（0 || 6 会把 0 吞掉）
+      const probeInterval = parseInt(res.data.data.circuit_breaker_probe_interval_minutes)
+      form.circuit_breaker_probe_interval_minutes = Number.isNaN(probeInterval) ? 30 : probeInterval
+      const probeThrottle = parseFloat(res.data.data.circuit_breaker_probe_throttle_seconds)
+      form.circuit_breaker_probe_throttle_seconds = Number.isNaN(probeThrottle) ? 6 : probeThrottle
       // 加载完成后记录初始快照
       snapshotForm()
     }
@@ -230,6 +270,16 @@ async function handleSave() {
     return
   }
 
+  if (!form.circuit_breaker_probe_interval_minutes || form.circuit_breaker_probe_interval_minutes < 1) {
+    error.value = t('systemConfig.probeIntervalInvalid')
+    return
+  }
+
+  if (form.circuit_breaker_probe_throttle_seconds < 0) {
+    error.value = t('systemConfig.probeThrottleInvalid')
+    return
+  }
+
   saving.value = true
   error.value = ''
   successMsg.value = ''
@@ -241,7 +291,9 @@ async function handleSave() {
       retry_fail_ttl_hours: String(form.retry_fail_ttl_hours),
       request_data_save_level: form.request_data_save_level,
       timeout_min_seconds: String(form.timeout_min_seconds),
-      timeout_max_seconds: String(form.timeout_max_seconds)
+      timeout_max_seconds: String(form.timeout_max_seconds),
+      circuit_breaker_probe_interval_minutes: String(form.circuit_breaker_probe_interval_minutes),
+      circuit_breaker_probe_throttle_seconds: String(form.circuit_breaker_probe_throttle_seconds)
     })
     if (res.data.success) {
       successMsg.value = t('systemConfig.saveSuccess')

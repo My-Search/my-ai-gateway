@@ -8,7 +8,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * 渠道 API Key 服务
@@ -30,6 +33,30 @@ public class ChannelApiKeyService {
      */
     public List<ChannelApiKey> listEnabledByChannelId(Long channelId) {
         return channelApiKeyMapper.selectEnabledByChannelId(channelId);
+    }
+
+    /**
+     * 批量获取多个渠道下所有启用的 API Keys（按渠道 ID 分组，供熔断展示批量计算）。
+     */
+    public Map<Long, List<ChannelApiKey>> listEnabledByChannelIds(Collection<Long> channelIds) {
+        if (channelIds == null || channelIds.isEmpty()) {
+            return Map.of();
+        }
+        List<ChannelApiKey> keys = channelApiKeyMapper.selectList(
+                new LambdaQueryWrapper<ChannelApiKey>()
+                        .in(ChannelApiKey::getChannelId, channelIds)
+                        .eq(ChannelApiKey::getEnabled, 1));
+        return keys.stream().collect(Collectors.groupingBy(ChannelApiKey::getChannelId));
+    }
+
+    /**
+     * 根据 ID 批量获取 API Keys（含禁用，用于判断绑定 Key 是否为"配置问题"）。
+     */
+    public List<ChannelApiKey> getByIds(Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        return channelApiKeyMapper.selectBatchIds(ids);
     }
 
     /**

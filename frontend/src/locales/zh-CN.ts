@@ -339,6 +339,17 @@ export default {
   'model.rels.switchModeTitle': '切换关联模式',
   'model.rels.switchToInheritConfirm': '切换到继承模式后，将使用源模型的关联，并丢弃当前本模型自定义的关联。确定继续？',
   'model.rels.switchToSelfAddConfirm': '切换到自添加模式后，将以源模型当前的关联作为初始列表，之后可自由修改。确定继续？',
+  'model.rels.circuitBreaker': '熔断状态',
+  'model.rels.broken': '熔断中',
+  'model.rels.brokenChannel': '渠道级',
+  'model.rels.brokenModel': '模型级',
+  'model.rels.brokenBoth': '渠道级+模型级',
+  'model.rels.brokenExpire': '下次探测',
+  'model.rels.brokenNone': '正常',
+  'model.rels.recover': '解除',
+  'model.rels.recoverTitle': '解除熔断',
+  'model.rels.recoverConfirm': '确认解除此关联的熔断状态？若该渠道存在熔断将一并解除。',
+  'model.rels.recoverFailed': '解除熔断失败',
 
   /* ========== Circuit Breaker ========== */
   'cb.title': '熔断配置 - {name}',
@@ -591,7 +602,15 @@ export default {
   'systemConfig.timeoutMinHint': '自适应超时的下限，默认 20 秒。范围 1-600 秒。',
   'systemConfig.timeoutMax': '最大超时（秒）',
   'systemConfig.timeoutMaxHint': '自适应超时的上限，默认 60 秒。范围 1-600 秒。',
+  'systemConfig.probeManagement': '熔断恢复探测',
+  'systemConfig.probeManagementDesc': '熔断到期后由探测决定是否恢复。请求成功时自动触发该渠道的到期探测；以下间隔为周期全量探测，兜底处理无流量的熔断记录。',
+  'systemConfig.probeInterval': '全量探测间隔（分钟）',
+  'systemConfig.probeIntervalHint': '对所有到期熔断记录执行探测的周期，默认 30 分钟。最小 1 分钟。',
+  'systemConfig.probeThrottle': '触发探测节流（秒）',
+  'systemConfig.probeThrottleHint': '同一渠道在间隔内最多实际探测一次，避免高流量下每个请求都触发。默认 6 秒，0 表示不节流。',
+  'systemConfig.probeThrottleInvalid': '触发探测节流不能为负数',
   'systemConfig.timeoutInvalid': '最小超时不能大于最大超时',
+  'systemConfig.probeIntervalInvalid': '全量探测间隔不能小于 1 分钟',
 
   /* ========== MultiModal Rules ========== */
   'multimodal.title': '多模态规则',

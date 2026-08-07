@@ -42,6 +42,7 @@ class RelayServiceTest {
     private StreamContentManager streamContentManager;
     private LatencyTracker latencyTracker;
     private PromptInjectionService promptInjectionService;
+    private CircuitBreakerRecoveryService recoveryService;
 
     private RelayService relayService;
 
@@ -60,13 +61,14 @@ class RelayServiceTest {
         streamContentManager = new StreamContentManager();
         latencyTracker = mock(LatencyTracker.class);
         promptInjectionService = mock(PromptInjectionService.class);
+        recoveryService = mock(CircuitBreakerRecoveryService.class);
         when(latencyTracker.getTimeout(any(), any())).thenReturn(60_000L);
 
         relayService = new RelayService(channelService, channelApiKeyService, apiKeyService,
-                modelService, circuitBreakerService, requestLogService, loadBalancerFactory,
+                modelService, circuitBreakerService, recoveryService,
+                requestLogService, loadBalancerFactory,
                 objectMapper, messageTransformer, translatorRegistry, streamContentManager, latencyTracker,
                 promptInjectionService);
-
         when(loadBalancerFactory.getBalancer(anyString())).thenReturn(new FailoverBalancer());
         when(requestLogService.startTrace()).thenReturn("trace-1");
     }
@@ -1141,5 +1143,111 @@ class RelayServiceTest {
         rel.setEnabled(1);
 
         return new RoutingCandidate(rel, channel, cm, key);
+    }
+
+    /**
+     * 验证：请求进入（候选确定后）即触发各候选渠道的到期熔断探测，
+     * 且触发在请求处理之前（异步投递，不阻塞主请求）。
+     */
+    @Test
+    void executeRelay_triggersProbeByChannelForCandidateChannelsOnEntry() {
+        when(apiKeyService.resolveIdFromAuthHeader("Bearer valid-key")).thenReturn(99L);
+        InternalRequest parsedReq = new InternalRequest();
+        parsedReq.setModel("x");
+        parsedReq.setClientApiFormat("openai");
+        when(messageTransformer.parseOpenAiRequest(any())).thenReturn(parsedReq);
+
+        Model model = new Model();
+        model.setId(1L);
+        model.setModelName("x");
+        when(modelService.getByModelName("x")).thenReturn(model);
+
+        // 渠道 A（候选 a1）与渠道 B（候选 b1），验证跨渠道各触发一次
+        Channel channelA = new Channel();
+        channelA.setId(10L);
+        channelA.setName("A");
+        channelA.setEnabled(1);
+        Channel channelB = new Channel();
+        channelB.setId(20L);
+        channelB.setName("B");
+        channelB.setEnabled(1);
+
+        ChannelModel cmA = new ChannelModel();
+        cmA.setId(100L);
+        cmA.setChannelId(10L);
+        cmA.setModelName("a1");
+        cmA.setEnabled(1);
+        ChannelModel cmB = new ChannelModel();
+        cmB.setId(200L);
+        cmB.setChannelId(20L);
+        cmB.setModelName("b1");
+        cmB.setEnabled(1);
+
+        ModelChannelRel relA = new ModelChannelRel(1L, 100L);
+        relA.setSortOrder(0);
+        relA.setEnabled(1);
+        ModelChannelRel relB = new ModelChannelRel(1L, 200L);
+        relB.setSortOrder(1);
+        relB.setEnabled(1);
+
+        ChannelApiKey keyA = new ChannelApiKey();
+        keyA.setId(1000L);
+        keyA.setChannelId(10L);
+        keyA.setKeyName("ak1");
+        keyA.setEnabled(1);
+        ChannelApiKey keyB = new ChannelApiKey();
+        keyB.setId(2000L);
+        keyB.setChannelId(20L);
+        keyB.setKeyName("bk1");
+        keyB.setEnabled(1);
+
+        when(modelService.getChannelRels(1L)).thenReturn(List.of(relA, relB));
+        when(modelService.getChannelModelById(100L)).thenReturn(cmA);
+        when(modelService.getChannelModelById(200L)).thenReturn(cmB);
+        when(modelService.getChannelById(10L)).thenReturn(channelA);
+        when(modelService.getChannelById(20L)).thenReturn(channelB);
+        when(channelApiKeyService.getAvailableApiKeys(10L)).thenReturn(List.of(keyA));
+        when(channelApiKeyService.getAvailableApiKeys(20L)).thenReturn(List.of(keyB));
+
+        when(loadBalancerFactory.getBalancer(anyString())).thenReturn(new FailoverBalancer());
+        when(latencyTracker.getTimeout(any(), any())).thenReturn(60_000L);
+
+        RelayService spyService = spy(relayService);
+        doReturn(Mono.just("{\"success\":true}")).when(spyService).callProviderNonStream(any(), any(), any(), any());
+        when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
+                .thenReturn("{\"success\":true}");
+
+        String result = spyService.chatCompletions("Bearer valid-key", "{\"model\":\"x\",\"messages\":[]}")
+                .block(Duration.ofSeconds(5));
+
+        assertThat(result).isEqualTo("{\"success\":true}");
+        // 请求进入即触发两个候选渠道的探测（各一次）；触发点早于上游调用
+        verify(recoveryService).triggerProbeByChannel(10L);
+        verify(recoveryService).triggerProbeByChannel(20L);
+    }
+
+    /**
+     * 验证：无可用候选时（候选为空）不触发任何渠道探测。
+     */
+    @Test
+    void executeRelay_noCandidates_doesNotTriggerProbe() {
+        when(apiKeyService.resolveIdFromAuthHeader("Bearer valid-key")).thenReturn(99L);
+        InternalRequest parsedReq = new InternalRequest();
+        parsedReq.setModel("x");
+        parsedReq.setClientApiFormat("openai");
+        when(messageTransformer.parseOpenAiRequest(any())).thenReturn(parsedReq);
+
+        Model model = new Model();
+        model.setId(1L);
+        model.setModelName("x");
+        when(modelService.getByModelName("x")).thenReturn(model);
+        when(modelService.getChannelRels(1L)).thenReturn(List.of());
+        when(messageTransformer.buildErrorResponse(eq("openai"), anyString(), eq("api_error"), eq(503)))
+                .thenReturn("{\"error\":{\"message\":\"no candidates\"}}");
+
+        relayService.chatCompletions("Bearer valid-key", "{\"model\":\"x\",\"messages\":[]}")
+                .block(Duration.ofSeconds(5));
+
+        verify(recoveryService, never()).triggerProbeByChannel(anyLong());
     }
 }

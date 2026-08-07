@@ -44,6 +44,12 @@ export interface ModelChannelRel {
   sampleCount?: number | null
   /** 默认思考强度（reasoning_effort） */
   reasoningEffort?: string | null
+  /** 是否处于熔断状态：1=熔断中（模型级或渠道级） */
+  circuitBroken?: number
+  /** 熔断级别：model=模型级，channel=渠道级，both=两者都有 */
+  circuitBrokenScope?: 'model' | 'channel' | 'both' | null
+  /** 熔断最早到期时间 */
+  circuitBrokenExpireAt?: string | null
 }
 
 export interface CircuitBreakerConfig {
@@ -131,6 +137,12 @@ export const modelApi = {
   },
   updateRelReasoningEffort(relId: number, reasoningEffort: string | null) {
     return http.put<{ success: boolean; error?: string }>(`/models/rels/${relId}/reasoning-effort`, { reasoningEffort })
+  },
+  /**
+   * 手动解除关联的熔断状态（若渠道级熔断存在则一并解除）
+   */
+  clearRelCircuitBreaker(relId: number) {
+    return http.delete<{ success: boolean; recovered?: number; error?: string }>(`/models/rels/${relId}/circuit-breaker`)
   },
   getCircuitBreaker(id: number) {
     return http.get<{ model: CustomModel; config: CircuitBreakerConfig }>(`/models/${id}/circuit-breaker`)

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -328,6 +329,13 @@ public class ModelService {
     }
 
     /**
+     * 根据 ID 查询关联
+     */
+    public ModelChannelRel getChannelRelById(Long relId) {
+        return relMapper.selectById(relId);
+    }
+
+    /**
      * 删除关联
      */
     @Transactional
@@ -469,11 +477,68 @@ public class ModelService {
     }
 
     /**
+     * 根据 ID 批量查询渠道模型
+     */
+    public List<ChannelModel> getChannelModelsByIds(Collection<Long> channelModelIds) {
+        if (channelModelIds == null || channelModelIds.isEmpty()) {
+            return List.of();
+        }
+        return channelModelMapper.selectBatchIds(channelModelIds);
+    }
+
+    /**
+     * 查询指定渠道下第一个启用的渠道模型（熔断探测目标用）。
+     * <p>渠道级门探测时渠道下所有模型共用同一上游，任一启用模型即可代表渠道可达性。</p>
+     */
+    public ChannelModel getFirstEnabledChannelModelByChannelId(Long channelId) {
+        if (channelId == null) {
+            return null;
+        }
+        return channelModelMapper.selectOne(
+                new LambdaQueryWrapper<ChannelModel>()
+                        .eq(ChannelModel::getChannelId, channelId)
+                        .eq(ChannelModel::getEnabled, 1)
+                        .orderByAsc(ChannelModel::getId)
+                        .last("LIMIT 1"));
+    }
+
+    /**
      * 根据 ID 查询渠道
      */
     public Channel getChannelById(Long channelId) {
         return channelMapper.selectById(channelId);
     }
+
+    /**
+     * 根据渠道模型 ID 反查其所属自定义模型的熔断持续时间（秒）。
+     * <p>用于探测失败后的续期时长：{@code channelModelId → model_channel_rels → modelId → 熔断配置}。
+     * 查不到配置或时长无效时返回默认 {@value #DEFAULT_CIRCUIT_BREAK_DURATION_SECONDS} 秒。</p>
+     */
+    public int getCircuitBreakDurationByChannelModelId(Long channelModelId) {
+        if (channelModelId == null) {
+            return DEFAULT_CIRCUIT_BREAK_DURATION_SECONDS;
+        }
+        try {
+            ModelChannelRel rel = relMapper.selectOne(
+                    new LambdaQueryWrapper<ModelChannelRel>()
+                            .eq(ModelChannelRel::getChannelModelId, channelModelId)
+                            .last("LIMIT 1"));
+            if (rel != null && rel.getModelId() != null) {
+                CircuitBreakerConfig config = circuitBreakerConfigMapper.selectOne(
+                        new LambdaQueryWrapper<CircuitBreakerConfig>()
+                                .eq(CircuitBreakerConfig::getModelId, rel.getModelId()));
+                if (config != null && config.getCircuitBreakDuration() != null
+                        && config.getCircuitBreakDuration() > 0) {
+                    return config.getCircuitBreakDuration();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("反查熔断时长失败，使用默认值: channelModelId={}, err={}", channelModelId, e.getMessage());
+        }
+        return DEFAULT_CIRCUIT_BREAK_DURATION_SECONDS;
+    }
+
+    private static final int DEFAULT_CIRCUIT_BREAK_DURATION_SECONDS = 60;
 
     // ==================== 轮询 LRU 支持 ====================
 

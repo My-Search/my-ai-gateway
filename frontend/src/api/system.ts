@@ -8,6 +8,8 @@ export interface SystemConfig {
   request_data_save_level: string
   timeout_min_seconds: string
   timeout_max_seconds: string
+  circuit_breaker_probe_interval_minutes: string
+  circuit_breaker_probe_throttle_seconds: string
 }
 
 export const systemApi = {

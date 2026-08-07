@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.myai.gateway.entity.AdminConfig;
 import com.myai.gateway.mapper.AdminConfigMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,6 +20,8 @@ import java.util.Map;
  */
 @Service
 public class AdminConfigService {
+
+    private static final Logger log = LoggerFactory.getLogger(AdminConfigService.class);
 
     public static final String KEY_USERNAME = "username";
     public static final String KEY_PASSWORD = "password";
@@ -38,6 +42,12 @@ public class AdminConfigService {
     /** 渠道模型请求超时最小/最大时间（秒） */
     public static final String KEY_TIMEOUT_MIN_SECONDS = "timeout_min_seconds";
     public static final String KEY_TIMEOUT_MAX_SECONDS = "timeout_max_seconds";
+
+    /** 熔断到期记录全量探测间隔（分钟），默认 30 */
+    public static final String KEY_CIRCUIT_BREAKER_PROBE_INTERVAL_MINUTES = "circuit_breaker_probe_interval_minutes";
+
+    /** 熔断触发式探测节流（秒），默认 6；0=不节流 */
+    public static final String KEY_CIRCUIT_BREAKER_PROBE_THROTTLE_SECONDS = "circuit_breaker_probe_throttle_seconds";
 
     private final AdminConfigMapper adminConfigMapper;
 
@@ -182,6 +192,8 @@ public class AdminConfigService {
         String timeoutMinSeconds = getValueByKey(KEY_TIMEOUT_MIN_SECONDS);
         String timeoutMaxSeconds = getValueByKey(KEY_TIMEOUT_MAX_SECONDS);
         String requestDataSaveLevel = getValueByKey(KEY_REQUEST_DATA_SAVE_LEVEL);
+        String probeIntervalMinutes = getValueByKey(KEY_CIRCUIT_BREAKER_PROBE_INTERVAL_MINUTES);
+        String probeThrottleSeconds = getValueByKey(KEY_CIRCUIT_BREAKER_PROBE_THROTTLE_SECONDS);
         if (retentionDays == null) retentionDays = "7";
         if (cleanupEnabled == null) cleanupEnabled = "1";
         if (requestBodyTtlHours == null) requestBodyTtlHours = "4";
@@ -189,6 +201,8 @@ public class AdminConfigService {
         if (timeoutMinSeconds == null) timeoutMinSeconds = "20";
         if (timeoutMaxSeconds == null) timeoutMaxSeconds = "60";
         if (requestDataSaveLevel == null) requestDataSaveLevel = "info";
+        if (probeIntervalMinutes == null) probeIntervalMinutes = "30";
+        if (probeThrottleSeconds == null) probeThrottleSeconds = "6";
 
         Map<String, String> config = new LinkedHashMap<>();
         config.put(KEY_LOG_RETENTION_DAYS, retentionDays);
@@ -198,13 +212,52 @@ public class AdminConfigService {
         config.put(KEY_TIMEOUT_MIN_SECONDS, timeoutMinSeconds);
         config.put(KEY_TIMEOUT_MAX_SECONDS, timeoutMaxSeconds);
         config.put(KEY_REQUEST_DATA_SAVE_LEVEL, requestDataSaveLevel);
+        config.put(KEY_CIRCUIT_BREAKER_PROBE_INTERVAL_MINUTES, probeIntervalMinutes);
+        config.put(KEY_CIRCUIT_BREAKER_PROBE_THROTTLE_SECONDS, probeThrottleSeconds);
         return config;
+    }
+
+    /**
+     * 获取熔断触发式探测节流（秒），解析失败或非法时返回默认值 6；0 表示不节流。
+     */
+    public double getCircuitBreakerProbeThrottleSeconds() {
+        String value = getValueByKey(KEY_CIRCUIT_BREAKER_PROBE_THROTTLE_SECONDS);
+        if (value != null) {
+            try {
+                double seconds = Double.parseDouble(value.trim());
+                if (seconds >= 0) {
+                    return seconds;
+                }
+            } catch (NumberFormatException e) {
+                log.warn("熔断探测节流配置非法，使用默认值: {}", value);
+            }
+        }
+        return 6;
+    }
+
+    /**
+     * 获取熔断到期记录全量探测间隔（分钟），解析失败或非法时返回默认值 30。
+     */
+    public int getCircuitBreakerProbeIntervalMinutes() {
+        String value = getValueByKey(KEY_CIRCUIT_BREAKER_PROBE_INTERVAL_MINUTES);
+        if (value != null) {
+            try {
+                int minutes = Integer.parseInt(value.trim());
+                if (minutes >= 1) {
+                    return minutes;
+                }
+            } catch (NumberFormatException e) {
+                log.warn("熔断探测间隔配置非法，使用默认值: {}", value);
+            }
+        }
+        return 30;
     }
 
     /**
      * 更新系统配置项
      * <p>
      * 支持批量更新多个配置项，仅更新传入的 key。
+     * 配置行不存在时执行插入（新配置项首次保存），存在时执行更新。
      * </p>
      *
      * @param config 配置项的 key-value 映射
@@ -216,7 +269,15 @@ public class AdminConfigService {
                     .eq(AdminConfig::getConfigKey, entry.getKey())
                     .set(AdminConfig::getConfigValue, entry.getValue())
                     .set(AdminConfig::getUpdatedAt, LocalDateTime.now());
-            adminConfigMapper.update(null, wrapper);
+            int updated = adminConfigMapper.update(null, wrapper);
+            if (updated == 0) {
+                // 配置行不存在：插入新行（新配置项首次保存）
+                AdminConfig newConfig = new AdminConfig();
+                newConfig.setConfigKey(entry.getKey());
+                newConfig.setConfigValue(entry.getValue());
+                adminConfigMapper.insert(newConfig);
+                log.info("新增系统配置项: {}={}", entry.getKey(), entry.getValue());
+            }
         }
     }
 
