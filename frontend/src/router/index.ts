@@ -79,7 +79,7 @@ const router = createRouter({
           path: 'model/list',
           name: 'model-list',
           component: () => import('@/views/model/List.vue'),
-          meta: { title: '模型管理' }
+          meta: { title: '入口模型' }
         },
         {
           path: 'model/form',

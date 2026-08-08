@@ -4,7 +4,7 @@ export default {
   'nav.dashboard': '仪表盘',
   'nav.resources': '资源管理',
   'nav.channels': '渠道管理',
-  'nav.models': '模型管理',
+  'nav.models': '入口模型',
   'nav.apiKeys': 'API密钥',
   'nav.monitoring': '监控',
   'nav.logs': '请求日志',
