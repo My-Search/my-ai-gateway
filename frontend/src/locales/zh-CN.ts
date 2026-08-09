@@ -607,7 +607,7 @@ export default {
   'systemConfig.probeInterval': '全量探测间隔（分钟）',
   'systemConfig.probeIntervalHint': '对所有到期熔断记录执行探测的周期，默认 30 分钟。最小 1 分钟。',
   'systemConfig.probeThrottle': '触发探测节流（秒）',
-  'systemConfig.probeThrottleHint': '同一渠道在间隔内最多实际探测一次，避免高流量下每个请求都触发。默认 6 秒，0 表示不节流。',
+  'systemConfig.probeThrottleHint': '每次请求会唤醒异步线程对当前入口模型下已经熔断且到期的渠道模型进行探测，为防大量请求进行的频繁检查的节流配置',
   'systemConfig.probeThrottleInvalid': '触发探测节流不能为负数',
   'systemConfig.timeoutInvalid': '最小超时不能大于最大超时',
   'systemConfig.probeIntervalInvalid': '全量探测间隔不能小于 1 分钟',

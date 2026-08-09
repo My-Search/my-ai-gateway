@@ -607,7 +607,7 @@ export default {
   'systemConfig.probeInterval': 'Full Scan Interval (minutes)',
   'systemConfig.probeIntervalHint': 'Period for probing all expired circuit breaker records. Default 30 minutes. Min 1 minute.',
   'systemConfig.probeThrottle': 'Trigger Probe Throttle (seconds)',
-  'systemConfig.probeThrottleHint': 'Maximum one probe per channel within the interval, avoiding probing on every request under high traffic. Default 6s. 0 disables throttling.',
+  'systemConfig.probeThrottleHint': 'Each request wakes an async thread to probe channel models under the current entry model that are circuit-broken and expired, a throttling config to prevent frequent checks under heavy request volume.',
   'systemConfig.probeThrottleInvalid': 'Trigger probe throttle cannot be negative',
   'systemConfig.timeoutInvalid': 'Min timeout cannot exceed max timeout',
   'systemConfig.probeIntervalInvalid': 'Full scan interval cannot be less than 1 minute',
