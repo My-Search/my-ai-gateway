@@ -155,6 +155,8 @@ export default {
   'channel.list.noApiKeys': '暂无可用 API Key',
   'channel.list.testSuccess': '测试成功',
   'channel.list.testFail': '测试失败',
+  'channel.list.testOutputTokens': '输出 {tokens} tokens',
+  'channel.list.testOutputSpeed': '速度 {speed} tokens/s',
   'channel.list.sendTest': '发送测试',
   'channel.list.testing': '测试中...',
   'channel.list.noModels': '暂无可用模型',
@@ -544,6 +546,9 @@ export default {
   'playground.configComplete': '配置已完成',
   'playground.error': '错误',
   'playground.tokenUsage': '本轮: {tokens} tokens / {elapsed}s',
+  'playground.outputTokens': '输出 {tokens} tokens',
+  'playground.outputSpeed': '速度 {speed} tokens/s',
+  'playground.elapsed': '耗时 {elapsed}s',
 'playground.thinking': '思考中...',
 'playground.thinkingClick': '点击展开详情',
   'playground.thinkingCollapse': '思考过程',
@@ -554,6 +559,8 @@ export default {
   'playground.protocol': 'API 协议',
   'playground.protocolOpenai': 'OpenAI',
   'playground.protocolAnthropic': 'Anthropic',
+  'playground.entryProtocol': '入口:',
+  'playground.channelProtocol': '渠道:',
 
   /* ========== Share ========== */
   'share.loading': '加载中...',

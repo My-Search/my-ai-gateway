@@ -114,9 +114,12 @@
             <div v-if="msg.role === 'assistant' && (msg.channelInfo || (idx === messages.length - 1 && streaming && routingProgress))" class="chat-channel-info">
               <template v-if="msg.channelInfo">
                 <!-- 第一个徽章：客户端实际使用的 API 协议（如选择 anthropic 则显示 anthropic） -->
-                <span class="channel-badge" :class="msg.channelInfo.client_protocol">{{ msg.channelInfo.client_protocol }}</span>
+                <span class="channel-badge" :class="msg.channelInfo.client_protocol">
+                  <!-- 与渠道类型不同时加“入口:”前缀，说明网关做了协议翻译 -->
+                  <template v-if="msg.channelInfo.channel_type && msg.channelInfo.channel_type !== msg.channelInfo.client_protocol">{{ t('playground.entryProtocol') }}</template> {{ msg.channelInfo.client_protocol }}
+                </span>
                 <!-- 第二个徽章：渠道本身的类型（与客户端协议不同时显示，说明网关做了协议翻译） -->
-                <span v-if="msg.channelInfo.channel_type && msg.channelInfo.channel_type !== msg.channelInfo.client_protocol" class="channel-badge" :class="msg.channelInfo.channel_type">{{ msg.channelInfo.channel_type }}</span>
+                <span v-if="msg.channelInfo.channel_type && msg.channelInfo.channel_type !== msg.channelInfo.client_protocol" class="channel-badge" :class="msg.channelInfo.channel_type">{{ t('playground.channelProtocol') }} {{ msg.channelInfo.channel_type }}</span>
                 <span class="channel-name">{{ msg.channelInfo.channel }}</span>
                 <span class="channel-arrow">/</span>
                 <span class="channel-name">{{ msg.channelInfo.api_key_name }}</span>
@@ -161,6 +164,14 @@
               <template v-else-if="msg.content">{{ msg.content }}</template>
             </div>
             <div v-if="msg.truncated" class="chat-truncated-hint">{{ t('playground.truncated') }}</div>
+            <div v-if="msg.stats" class="chat-speed">
+              <span>⚡</span>
+              <span>{{ t('playground.outputSpeed', { speed: formatSpeed(msg.stats.speed) }) }}</span>
+              <span class="chat-speed-divider">·</span>
+              <span>{{ t('playground.elapsed', { elapsed: (msg.stats.elapsedMs / 1000).toFixed(1) }) }}</span>
+              <span class="chat-speed-divider">·</span>
+              <span>{{ t('playground.outputTokens', { tokens: msg.stats.tokens }) }}</span>
+            </div>
             <div v-if="msg.meta" class="chat-meta" v-html="msg.meta"></div>
           </div>
         </div>
@@ -271,6 +282,8 @@ interface ChatMessage {
   channelInfo?: any
   /** 回答因 max_tokens 限制被截断 */
   truncated?: boolean
+  /** 流式结束后统计：输出 token 数（优先上游 usage 准确值，缺失时为 chunk 近似值）、总耗时、输出速度 tokens/s */
+  stats?: { tokens: number; elapsedMs: number; speed: number }
 }
 
 /** 粘贴的待发送图片 */
@@ -445,6 +458,12 @@ watch(isFullyConfigured, (configured) => {
 /** 切换推理内容的展开/收起 */
 function toggleThinking(idx: number) {
   expandedThinking.value = { ...expandedThinking.value, [idx]: !expandedThinking.value[idx] }
+}
+
+/** 输出速度格式化：tokens/s 保留 1 位小数，非法值显示 - */
+function formatSpeed(speed?: number): string {
+  if (speed === undefined || speed === null || Number.isNaN(speed)) return '-'
+  return speed.toFixed(1)
 }
 
 /** 加载 API 密钥列表（仅管理端模式） */
@@ -796,6 +815,11 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
             targetMsg.content = t('playground.error') + ': ' + (typeof json.error === 'object' ? json.error.message : json.error)
             continue
           }
+          // OpenAI 格式：流末尾的 usage-only chunk（choices 为空数组）携带准确的 token 统计
+          if (json.usage && json.usage.completion_tokens != null && json.usage.completion_tokens > 0) {
+            tokenNum = json.usage.completion_tokens
+            continue
+          }
           if (json.choices && json.choices[0]) {
             const choice = json.choices[0]
             const delta = choice.delta
@@ -861,6 +885,10 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
                 targetMsg.truncated = true
                 hasNewContent = true
               }
+              // Anthropic 格式：message_delta 携带准确的输出 token 统计
+              if (json.usage && json.usage.output_tokens != null && json.usage.output_tokens > 0) {
+                tokenNum = json.usage.output_tokens
+              }
             }
           }
         } catch { /* ignore parse errors */ }
@@ -878,8 +906,15 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
     }
   }
 
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+  const elapsedMs = Date.now() - startTime
+  const elapsed = (elapsedMs / 1000).toFixed(1)
   targetMsg.content = fullContent
+  // 输出速度 = 输出 token 数 / 总耗时（token 数优先上游 usage 准确值，缺失时为 chunk 近似计数）
+  targetMsg.stats = {
+    tokens: tokenNum,
+    elapsedMs,
+    speed: elapsedMs > 0 ? (tokenNum * 1000) / elapsedMs : 0
+  }
   tokenUsage.value = t('playground.tokenUsage').replace('{tokens}', String(tokenNum)).replace('{elapsed}', elapsed)
 }
 
@@ -1079,6 +1114,16 @@ function renderReasoningMarkdown(text: string): string {
 }
 
 .chat-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+/* 输出速度统计：消息气泡下方 */
+.chat-speed {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.chat-speed-divider { opacity: 0.5; }
 .chat-truncated-hint {
   font-size: 12px; color: var(--accent-yellow); margin-top: 4px;
   padding: 4px 10px; border-radius: 4px;

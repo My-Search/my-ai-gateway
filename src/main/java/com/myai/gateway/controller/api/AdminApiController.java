@@ -546,15 +546,81 @@ public class AdminApiController {
             long responseTime = System.currentTimeMillis() - startTime;
             String content = extractContent(response, channel.getChannelType());
 
+            // 输出速度统计：优先取上游返回的 usage token 数，缺失时按输出文本长度估算
+            long outputTokens = extractOutputTokens(response, channel.getChannelType());
+            double outputSpeed = responseTime > 0 ? outputTokens * 1000.0 / responseTime : 0;
+
             result.put("success", true);
             result.put("response", content);
             result.put("responseTime", responseTime);
             result.put("model", testModel);
+            result.put("outputTokens", outputTokens);
+            result.put("outputSpeed", outputSpeed);
         } catch (Exception e) {
             result.put("success", false);
             result.put("error", e.getMessage());
         }
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 从上游原始响应中提取输出 token 统计：
+     * 优先读取 OpenAI 兼容的 usage.completion_tokens / Anthropic 的 usage.output_tokens；
+     * 上游未返回 usage 时，按响应中的实际输出文本估算（中文按 1 token/字，其余按 4 字符 ≈ 1 token）。
+     */
+    private long extractOutputTokens(String response, String channelType) {
+        // 1. 优先取 usage 字段
+        try {
+            JsonNode json = objectMapper.readTree(response);
+            if (json.has("usage")) {
+                JsonNode usage = json.get("usage");
+                if ("anthropic".equals(channelType) && usage.has("output_tokens")) {
+                    return usage.get("output_tokens").asLong();
+                }
+                if (usage.has("completion_tokens")) {
+                    return usage.get("completion_tokens").asLong();
+                }
+            }
+        } catch (Exception ignored) {
+            // 非 JSON 响应（如纯文本/错误页），直接整段估算
+        }
+        // 2. usage 缺失：从响应中提取实际输出文本再估算
+        String outputText = null;
+        try {
+            JsonNode json = objectMapper.readTree(response);
+            if ("anthropic".equals(channelType) && json.has("content") && json.get("content").isArray() && json.get("content").size() > 0) {
+                outputText = json.get("content").get(0).path("text").asText();
+            } else if (json.has("choices") && json.get("choices").isArray() && json.get("choices").size() > 0) {
+                JsonNode message = json.get("choices").get(0).path("message");
+                if (message.has("content") && !message.get("content").isNull()) {
+                    outputText = message.get("content").asText();
+                } else if (message.has("reasoning")) {
+                    outputText = message.get("reasoning").asText();
+                }
+            }
+        } catch (Exception ignored) {
+            // 解析失败则按整段响应估算
+        }
+        return estimateTokens(outputText != null && !outputText.isBlank() ? outputText : response);
+    }
+
+    /**
+     * 估算文本对应的 token 数：中文（CJK）字符按 1 token 计，其余字符按 4 字符 ≈ 1 token 估算
+     */
+    private long estimateTokens(String text) {
+        if (text == null || text.isEmpty()) {
+            return 0;
+        }
+        long cjk = 0;
+        long other = 0;
+        for (int i = 0; i < text.length(); i++) {
+            if (Character.UnicodeScript.of(text.charAt(i)) == Character.UnicodeScript.HAN) {
+                cjk++;
+            } else {
+                other++;
+            }
+        }
+        return cjk + other / 4;
     }
 
     private String extractContent(String response, String channelType) {

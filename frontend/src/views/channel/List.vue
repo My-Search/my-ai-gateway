@@ -185,7 +185,14 @@
         </div>
         <div v-if="testResult" class="test-result" :class="testResult.success ? 'success' : 'error'">
           <template v-if="testResult.success">
-            <SvgIcon name="check-bold" :size="16" /> {{ t('channel.list.testSuccess') }} ({{ testResult.responseTime }}ms)
+            <div class="test-result-header">
+              <SvgIcon name="check-bold" :size="16" /> {{ t('channel.list.testSuccess') }} ({{ testResult.responseTime }}ms)
+              <span v-if="testResult.outputTokens !== undefined" class="test-result-stats">
+                {{ t('channel.list.testOutputTokens', { tokens: testResult.outputTokens }) }}
+                <span class="test-result-stats-divider">·</span>
+                {{ t('channel.list.testOutputSpeed', { speed: formatSpeed(testResult.outputSpeed) }) }}
+              </span>
+            </div>
             <pre>{{ testResult.response }}</pre>
           </template>
           <template v-else>
@@ -241,7 +248,7 @@ const loading = ref(false)
 const showTestModal = ref(false)
 const testChannel = ref<Channel | null>(null)
 const testMessage = ref('Hello, this is a test message.')
-const testResult = ref<{ success: boolean; response?: string; responseTime?: number; error?: string } | null>(null)
+const testResult = ref<{ success: boolean; response?: string; responseTime?: number; outputTokens?: number; outputSpeed?: number; error?: string } | null>(null)
 const testLoading = ref(false)
 const testModels = ref<ChannelModel[]>([])
 const testApiKeys = ref<ChannelApiKey[]>([])
@@ -255,6 +262,12 @@ const modelSelectOptions = computed(() =>
 const apiKeySelectOptions = computed(() =>
   testApiKeys.value.map(k => ({ value: k.id!, label: k.keyName }))
 )
+
+/* 输出速度格式化：tokens/s 保留 1 位小数 */
+function formatSpeed(speed?: number): string {
+  if (speed === undefined || speed === null || Number.isNaN(speed)) return '-'
+  return speed.toFixed(1)
+}
 
 async function loadChannels() {
   loading.value = true
@@ -409,6 +422,25 @@ onMounted(loadChannels)
 .test-result.success { background: rgba(63,185,80,0.1); color: var(--accent-green); }
 .test-result.error { background: rgba(248,81,73,0.1); color: var(--accent-red); }
 .test-result pre { margin-top: 8px; white-space: pre-wrap; word-break: break-all; font-size: 12px; }
+
+/* 测试成功统计行（输出 tokens / 输出速度） */
+.test-result-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.test-result-stats {
+  margin-left: auto;
+  font-size: 12px;
+  opacity: 0.9;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.test-result-stats-divider {
+  margin: 0 4px;
+  opacity: 0.6;
+}
 
 /* ── Mobile card list ── */
 .mobile-card-list { display: none; }

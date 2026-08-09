@@ -155,6 +155,8 @@ export default {
   'channel.list.noApiKeys': 'No API keys available',
   'channel.list.testSuccess': 'Test succeeded',
   'channel.list.testFail': 'Test failed',
+  'channel.list.testOutputTokens': 'Output {tokens} tokens',
+  'channel.list.testOutputSpeed': 'Speed {speed} tokens/s',
   'channel.list.sendTest': 'Send Test',
   'channel.list.testing': 'Testing...',
   'channel.list.noModels': 'No models available',
@@ -544,6 +546,9 @@ export default {
   'playground.configComplete': 'Config complete',
   'playground.error': 'Error',
   'playground.tokenUsage': 'This turn: {tokens} tokens / {elapsed}s',
+  'playground.outputTokens': 'Output {tokens} tokens',
+  'playground.outputSpeed': 'Speed {speed} tokens/s',
+  'playground.elapsed': 'Time {elapsed}s',
 'playground.thinking': 'Thinking...',
 'playground.thinkingClick': 'Click to expand',
 'playground.thinkingCollapse': 'Thinking process',
@@ -554,6 +559,8 @@ export default {
   'playground.protocol': 'API Protocol',
   'playground.protocolOpenai': 'OpenAI',
   'playground.protocolAnthropic': 'Anthropic',
+  'playground.entryProtocol': 'Entry:',
+  'playground.channelProtocol': 'Channel:',
 
   /* ========== Share ========== */
   'share.loading': 'Loading...',
