@@ -92,7 +92,7 @@ export const channelApi = {
     const payload: any = { message }
     if (modelName) payload.modelName = modelName
     if (apiKeyId != null) payload.apiKeyId = apiKeyId
-    return http.post<{ success: boolean; response?: string; responseTime?: number; outputTokens?: number; outputSpeed?: number; model?: string; error?: string }>(
+    return http.post<{ success: boolean; response?: string; ttfb?: number; outputSpeed?: number; model?: string; error?: string }>(
       `/channels/${id}/quick-test`, payload
     )
   },

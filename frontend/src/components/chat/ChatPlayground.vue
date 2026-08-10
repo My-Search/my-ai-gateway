@@ -166,11 +166,9 @@
             <div v-if="msg.truncated" class="chat-truncated-hint">{{ t('playground.truncated') }}</div>
             <div v-if="msg.stats" class="chat-speed">
               <span>⚡</span>
+              <span>{{ t('playground.ttfb', { ms: formatTtfb(msg.stats.ttfb) }) }}</span>
+              <span class="chat-speed-divider">·</span>
               <span>{{ t('playground.outputSpeed', { speed: formatSpeed(msg.stats.speed) }) }}</span>
-              <span class="chat-speed-divider">·</span>
-              <span>{{ t('playground.elapsed', { elapsed: (msg.stats.elapsedMs / 1000).toFixed(1) }) }}</span>
-              <span class="chat-speed-divider">·</span>
-              <span>{{ t('playground.outputTokens', { tokens: msg.stats.tokens }) }}</span>
             </div>
             <div v-if="msg.meta" class="chat-meta" v-html="msg.meta"></div>
           </div>
@@ -282,8 +280,8 @@ interface ChatMessage {
   channelInfo?: any
   /** 回答因 max_tokens 限制被截断 */
   truncated?: boolean
-  /** 流式结束后统计：输出 token 数（优先上游 usage 准确值，缺失时为 chunk 近似值）、总耗时、输出速度 tokens/s */
-  stats?: { tokens: number; elapsedMs: number; speed: number }
+  /** 流式结束后统计：首字节响应时间（请求发出到收到第一个响应字节）、输出速度 tokens/s */
+  stats?: { tokens: number; elapsedMs: number; ttfb?: number; speed: number }
 }
 
 /** 粘贴的待发送图片 */
@@ -464,6 +462,24 @@ function toggleThinking(idx: number) {
 function formatSpeed(speed?: number): string {
   if (speed === undefined || speed === null || Number.isNaN(speed)) return '-'
   return speed.toFixed(1)
+}
+
+/** 首字节响应时间格式化：秒保留 1 位小数，无效值显示 - */
+function formatTtfb(ms?: number): string {
+  if (ms === undefined || ms === null || ms < 0) return '-'
+  return (ms / 1000).toFixed(1) + 's'
+}
+
+/** 估算文本 token 数：中文（CJK）按 1 token/字，其余按 4 字符 ≈ 1 token（与后端估算口径一致） */
+function estimateTokens(text: string): number {
+  if (!text) return 0
+  let cjk = 0
+  let other = 0
+  for (const ch of text) {
+    if (/[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/.test(ch)) cjk++
+    else other++
+  }
+  return cjk + Math.floor(other / 4)
 }
 
 /** 加载 API 密钥列表（仅管理端模式） */
@@ -754,6 +770,8 @@ async function sendMessage() {
 }
 
 async function sendStreamRequest(targetMsg: ChatMessage) {
+  // 请求发出时间：用于计算首字节响应时间（TTFB）
+  const requestStart = Date.now()
   const response = await chatStream(
     buildRequestBody(),
     isShareMode.value,
@@ -769,6 +787,10 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
   let fullContent = ''
   let startTime = Date.now()
   let tokenNum = 0
+  /** 是否拿到上游的准确 usage（流末尾 usage chunk / anthropic message_delta） */
+  let usageExact = false
+  /** 首个实际响应字节到达时间（排除网关注入的 meta/路由进度事件），null 表示未收到有效内容 */
+  let firstByteAt: number | null = null
   const reader = response.body!.getReader()
   const decoder = new TextDecoder('utf-8')
   let buffer = ''
@@ -811,6 +833,10 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
             }
             continue
           }
+          // 网关注入的 meta/路由进度事件不算响应字节，首个真实数据到达时记录 TTFB
+          if (firstByteAt === null) {
+            firstByteAt = Date.now()
+          }
           if (json.error) {
             targetMsg.content = t('playground.error') + ': ' + (typeof json.error === 'object' ? json.error.message : json.error)
             continue
@@ -818,6 +844,7 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
           // OpenAI 格式：流末尾的 usage-only chunk（choices 为空数组）携带准确的 token 统计
           if (json.usage && json.usage.completion_tokens != null && json.usage.completion_tokens > 0) {
             tokenNum = json.usage.completion_tokens
+            usageExact = true
             continue
           }
           if (json.choices && json.choices[0]) {
@@ -825,7 +852,6 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
             const delta = choice.delta
             if (delta?.content) {
               fullContent += delta.content
-              tokenNum++
               targetMsg.content = fullContent
               hasNewContent = true
             }
@@ -853,7 +879,6 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
             if (json.type === 'content_block_delta' && json.delta) {
               if (json.delta.type === 'text_delta' && json.delta.text) {
                 fullContent += json.delta.text
-                tokenNum++
                 targetMsg.content = fullContent
                 hasNewContent = true
               }
@@ -874,7 +899,6 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
             if (json.type === 'content_block_start' && json.content_block) {
               if (json.content_block.type === 'text' && json.content_block.text) {
                 fullContent += json.content_block.text
-                tokenNum++
                 targetMsg.content = fullContent
                 hasNewContent = true
               }
@@ -888,6 +912,7 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
               // Anthropic 格式：message_delta 携带准确的输出 token 统计
               if (json.usage && json.usage.output_tokens != null && json.usage.output_tokens > 0) {
                 tokenNum = json.usage.output_tokens
+                usageExact = true
               }
             }
           }
@@ -898,6 +923,19 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
     // 本轮 read 有新内容 → 等待 Vue 渲染后再处理下一批数据
     // 关键：让出主线程让浏览器有机会渲染这一帧，避免批量合并更新
     if (hasNewContent) {
+      // 输出过程中实时刷新首字节响应时间与输出速度（首个响应字节到达后即显示）
+      // 速度用文本估算 token 数（每 chunk 一个 delta 可能含多个 token，不能按 chunk 计）
+      if (firstByteAt !== null) {
+        const now = Date.now()
+        const elapsedSoFar = now - startTime
+        const estTokens = estimateTokens(fullContent)
+        targetMsg.stats = {
+          tokens: estTokens,
+          elapsedMs: elapsedSoFar,
+          ttfb: firstByteAt - requestStart,
+          speed: elapsedSoFar > 0 ? (estTokens * 1000) / elapsedSoFar : 0
+        }
+      }
       // 手动触发 shallowRef 更新
       triggerRef(messages)
       // 等待下一帧渲染
@@ -907,15 +945,19 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
   }
 
   const elapsedMs = Date.now() - startTime
-  const elapsed = (elapsedMs / 1000).toFixed(1)
   targetMsg.content = fullContent
-  // 输出速度 = 输出 token 数 / 总耗时（token 数优先上游 usage 准确值，缺失时为 chunk 近似计数）
+  // 首字节响应时间（请求发出到收到第一个响应字节），未收到有效内容时为 undefined
+  const ttfb = firstByteAt !== null ? firstByteAt - requestStart : undefined
+  // 输出 token 数：优先上游 usage 准确值，缺失时按输出文本估算（与流式过程中的口径一致）
+  const outputTokens = usageExact ? tokenNum : estimateTokens(fullContent)
+  // 输出速度 = 输出 token 数 / 总耗时（token 数优先上游 usage 准确值，缺失时为文本估算）
   targetMsg.stats = {
-    tokens: tokenNum,
+    tokens: outputTokens,
     elapsedMs,
-    speed: elapsedMs > 0 ? (tokenNum * 1000) / elapsedMs : 0
+    ttfb,
+    speed: elapsedMs > 0 ? (outputTokens * 1000) / elapsedMs : 0
   }
-  tokenUsage.value = t('playground.tokenUsage').replace('{tokens}', String(tokenNum)).replace('{elapsed}', elapsed)
+  tokenUsage.value = t('playground.tokenUsage').replace('{ms}', formatTtfb(ttfb)).replace('{speed}', formatSpeed(targetMsg.stats.speed))
 }
 
 /** 将 Markdown 渲染为安全的 HTML */

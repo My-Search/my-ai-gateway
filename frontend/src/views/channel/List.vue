@@ -186,9 +186,9 @@
         <div v-if="testResult" class="test-result" :class="testResult.success ? 'success' : 'error'">
           <template v-if="testResult.success">
             <div class="test-result-header">
-              <SvgIcon name="check-bold" :size="16" /> {{ t('channel.list.testSuccess') }} ({{ testResult.responseTime }}ms)
-              <span v-if="testResult.outputTokens !== undefined" class="test-result-stats">
-                {{ t('channel.list.testOutputTokens', { tokens: testResult.outputTokens }) }}
+              <SvgIcon name="check-bold" :size="16" /> {{ t('channel.list.testSuccess') }}
+              <span v-if="testResult.ttfb !== undefined" class="test-result-stats">
+                {{ t('channel.list.testTtfb', { ms: formatTtfb(testResult.ttfb) }) }}
                 <span class="test-result-stats-divider">·</span>
                 {{ t('channel.list.testOutputSpeed', { speed: formatSpeed(testResult.outputSpeed) }) }}
               </span>
@@ -248,7 +248,7 @@ const loading = ref(false)
 const showTestModal = ref(false)
 const testChannel = ref<Channel | null>(null)
 const testMessage = ref('Hello, this is a test message.')
-const testResult = ref<{ success: boolean; response?: string; responseTime?: number; outputTokens?: number; outputSpeed?: number; error?: string } | null>(null)
+const testResult = ref<{ success: boolean; response?: string; ttfb?: number; outputSpeed?: number; error?: string } | null>(null)
 const testLoading = ref(false)
 const testModels = ref<ChannelModel[]>([])
 const testApiKeys = ref<ChannelApiKey[]>([])
@@ -262,6 +262,12 @@ const modelSelectOptions = computed(() =>
 const apiKeySelectOptions = computed(() =>
   testApiKeys.value.map(k => ({ value: k.id!, label: k.keyName }))
 )
+
+/* 首字节响应时间格式化：秒保留 1 位小数，无效值显示 - */
+function formatTtfb(ms?: number): string {
+  if (ms === undefined || ms === null || ms < 0) return '-'
+  return (ms / 1000).toFixed(1) + 's'
+}
 
 /* 输出速度格式化：tokens/s 保留 1 位小数 */
 function formatSpeed(speed?: number): string {
