@@ -366,23 +366,10 @@ function modelColor(model: string): string {
 }
 
 /**
- * 取"漂亮"的刻度步长（1/2/5 * 10^n），用于 Y 轴自适应。
- * 使用向上取整，确保 step >= raw，从而保证 top = step * 4 >= max，避免柱子被截断。
+ * Y 轴 5 个等距刻度（0/25/50/75/100%）。
+ * 顶端 = 当月最大单日总量（maxValue）：让"历史用量最多"的那根柱恰好占满图表高度（100%），
+ * 其余柱子按同一比例相对它缩放；无数据时仍显示 5 条网格线让图表骨架可见。
  */
-function niceStep(raw: number): number {
-  if (raw <= 0) return 1
-  const exp = Math.floor(Math.log10(raw))
-  const base = Math.pow(10, exp)
-  const ratio = raw / base
-  let nice: number
-  if (ratio <= 1) nice = 1
-  else if (ratio <= 2) nice = 2
-  else if (ratio <= 5) nice = 5
-  else nice = 10
-  return nice * base
-}
-
-/** Y 轴 5 个等距刻度（0/25/50/75/100%），无数据时仍显示 5 条网格线让图表骨架可见。 */
 const chartYAxis = computed<{ value: number; y: number }[]>(() => {
   if (!usageChartData.value || usageChartData.value.maxValue === 0) {
     // 无数据时显示 0-4 共 5 条网格线，让图表框架依然可见
@@ -392,11 +379,9 @@ const chartYAxis = computed<{ value: number; y: number }[]>(() => {
     }))
   }
   const max = usageChartData.value.maxValue
-  const step = niceStep(max / 4)
-  const top = step * 4
   return [0, 1, 2, 3, 4].map(i => ({
-    value: i * step,
-    y: CHART_PLOT_BOTTOM - (i * step / top) * CHART_PLOT_HEIGHT,
+    value: (i * max) / 4,
+    y: CHART_PLOT_BOTTOM - (i / 4) * CHART_PLOT_HEIGHT,
   }))
 })
 
