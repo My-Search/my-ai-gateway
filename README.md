@@ -2,7 +2,7 @@
 
 **English** | [中文文档](README.zh-CN.md)
 
-<img width="2560" height="1187" alt="image" src="https://github.com/user-attachments/assets/c80b1224-b8b7-496b-bf6f-ef8083903cf1" />
+<img width="2560" height="1187" alt="image" src="https://github.com/user-attachments/assets/a98a9c66-c604-4de8-bed2-4d2047a9c238" />
 
 A personal unified AI gateway that provides multi-channel aggregation, model routing, load balancing, circuit breaking, and API Key management. It exposes OpenAI / Anthropic compatible interfaces, unifying multiple AI providers behind a single entry point.
 
