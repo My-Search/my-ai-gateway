@@ -53,6 +53,10 @@ public class ModelChannelRel {
     @TableField(exist = false)
     private Integer channelEnabled;
 
+    /** 是否有可用 API Key：1-有，0-无（渠道下没有 Key 或所有 Key 均被禁用，含指定 Key 被禁用；非数据库字段，用于前端显示） */
+    @TableField(exist = false)
+    private Integer apiKeyAvailable;
+
     /** 该渠道模型的平均响应时间 ms（非数据库字段，从 TtftTracker 读取） */
     @TableField(exist = false)
     private Long ttftMs;
@@ -127,6 +131,9 @@ public class ModelChannelRel {
 
     public Integer getChannelEnabled() { return channelEnabled; }
     public void setChannelEnabled(Integer channelEnabled) { this.channelEnabled = channelEnabled; }
+
+    public Integer getApiKeyAvailable() { return apiKeyAvailable; }
+    public void setApiKeyAvailable(Integer apiKeyAvailable) { this.apiKeyAvailable = apiKeyAvailable; }
 
     public Long getTtftMs() { return ttftMs; }
     public void setTtftMs(Long ttftMs) { this.ttftMs = ttftMs; }

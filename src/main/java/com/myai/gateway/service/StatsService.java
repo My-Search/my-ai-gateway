@@ -596,18 +596,25 @@ public class StatsService {
                 .collect(Collectors.toList());
 
         // 6. 构建 values 矩阵（model -> List<Long>）+ 累计 maxValue/totalValue
+        // maxValue 取「每天所有模型堆叠总和」的最大值，而非单模型单日最大值，
+        // 否则堆叠柱总高度可能远超 Y 轴上限导致截断。
         Map<String, Object> values = new LinkedHashMap<>();
         long maxValue = 0L;
         long totalValue = 0L;
+        long[] dailyTotals = new long[daysInMonth];
         for (String model : sortedModels) {
             long[] bucket = modelValues.get(model);
             List<Long> series = new ArrayList<>(daysInMonth);
-            for (long v : bucket) {
+            for (int i = 0; i < daysInMonth; i++) {
+                long v = bucket[i];
                 series.add(v);
-                if (v > maxValue) maxValue = v;
+                dailyTotals[i] += v;
                 totalValue += v;
             }
             values.put(model, series);
+        }
+        for (long dt : dailyTotals) {
+            if (dt > maxValue) maxValue = dt;
         }
 
         // 7. 组装返回结果

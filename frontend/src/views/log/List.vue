@@ -365,16 +365,19 @@ function modelColor(model: string): string {
   return CHART_COLOR_PALETTE[(idx >= 0 ? idx : 0) % CHART_COLOR_PALETTE.length]
 }
 
-/** 取"漂亮"的刻度步长（1/2/5 * 10^n），用于 Y 轴自适应。 */
+/**
+ * 取"漂亮"的刻度步长（1/2/5 * 10^n），用于 Y 轴自适应。
+ * 使用向上取整，确保 step >= raw，从而保证 top = step * 4 >= max，避免柱子被截断。
+ */
 function niceStep(raw: number): number {
   if (raw <= 0) return 1
   const exp = Math.floor(Math.log10(raw))
   const base = Math.pow(10, exp)
   const ratio = raw / base
   let nice: number
-  if (ratio < 1.5) nice = 1
-  else if (ratio < 3) nice = 2
-  else if (ratio < 7) nice = 5
+  if (ratio <= 1) nice = 1
+  else if (ratio <= 2) nice = 2
+  else if (ratio <= 5) nice = 5
   else nice = 10
   return nice * base
 }

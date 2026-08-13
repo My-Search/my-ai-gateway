@@ -329,6 +329,7 @@ export default {
   'model.rels.reasoningEffort': '思考强度',
   'model.rels.effortDefault': '默认',
   'model.rels.noData': '暂无数据',
+  'model.rels.noApiKey': '无可用密钥',
   'model.rels.modeSelfAdd': '自添加',
   'model.rels.modeInherit': '继承',
   'model.rels.modeSwitch': '关联模式',

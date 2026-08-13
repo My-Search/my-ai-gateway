@@ -93,7 +93,6 @@ public class CandidateRouter {
         String originalModel = req.getModel();
         RouteResolver.RoutingContext ctx = routeResolver.resolveModelRouting(originalModel);
         List<RoutingCandidate> candidates = routeResolver.getAvailableCandidates(req);
-        routeResolver.logSkippedCandidatesFromResult(traceId, gatewayApiKeyId, req, candidates, ctx);
         // 请求进入即触发各候选渠道的到期熔断探测：异步投递（微秒级），与请求处理并行，
         // 探测开门后对后续请求生效，不阻塞当前请求
         triggerProbeForCandidates(candidates);
@@ -101,7 +100,7 @@ public class CandidateRouter {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, originalModel, null, null,
                     "fail", "error", "没有可用的路由候选", System.currentTimeMillis() - startTime, 0);
             return Mono.just(messageTransformer.buildErrorResponse(req.getClientApiFormat(),
-                    "没有可用的路由候选（渠道/API Key/模型都被熔断或不可用）", "api_error", 503));
+                    "没有可用的路由候选（关联的渠道/API Key/模型均不可用）", "api_error", 503));
         }
         return tryCandidates(traceId, new ArrayList<>(candidates), authHeader, gatewayApiKeyId,
                 req, provider, 0, startTime, ctx, null, invoker)
@@ -149,12 +148,13 @@ public class CandidateRouter {
                     "没有可用的路由候选", "api_error", 503));
         }
 
-        if (isCandidateCircuitBroken(candidate)) {
-            log.info("已熔断跳过 - traceId={} retryIndex={} channel={} model={} key={}",
+        String breakScope = circuitBreakScope(candidate);
+        if (breakScope != null) {
+            log.info("已熔断跳过 - traceId={} retryIndex={} channel={} model={} key={} scope={}",
                     traceId, retryIndex, candidate.getChannel().getName(),
-                    candidate.getChannelModel().getModelName(), candidate.getChannelApiKey().getKeyName());
+                    candidate.getChannelModel().getModelName(), candidate.getChannelApiKey().getKeyName(), breakScope);
             relayLogger.logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
-                    "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+                    breakScope + "跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
             return tryCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider,
                     retryIndex + 1, startTime, ctx, lastErrorMsg, invoker);
@@ -268,7 +268,6 @@ public class CandidateRouter {
         long startTime = System.currentTimeMillis();
         RouteResolver.RoutingContext ctx = routeResolver.resolveModelRouting(req.getModel());
         List<RoutingCandidate> candidates = routeResolver.getAvailableCandidates(req);
-        routeResolver.logSkippedCandidatesFromResult(traceId, gatewayApiKeyId, req, candidates, ctx);
         // 请求进入即触发各候选渠道的到期熔断探测：异步投递（微秒级），与请求处理并行
         triggerProbeForCandidates(candidates);
         if (candidates.isEmpty()) {
@@ -321,12 +320,13 @@ public class CandidateRouter {
             return Flux.error(new RuntimeException("没有可用的路由候选"));
         }
 
-        if (isCandidateCircuitBroken(candidate)) {
-            log.info("已熔断跳过 - traceId={} retryIndex={} channel={} model={} key={}",
+        String breakScope = circuitBreakScope(candidate);
+        if (breakScope != null) {
+            log.info("已熔断跳过 - traceId={} retryIndex={} channel={} model={} key={} scope={}",
                     traceId, retryIndex, candidate.getChannel().getName(),
-                    candidate.getChannelModel().getModelName(), candidate.getChannelApiKey().getKeyName());
+                    candidate.getChannelModel().getModelName(), candidate.getChannelApiKey().getKeyName(), breakScope);
             relayLogger.logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
-                    "已熔断跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+                    breakScope + "跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
             return tryStreamCandidates(traceId, remaining, authHeader, gatewayApiKeyId, req, provider,
                     retryIndex + 1, startTime, internalClient, ctx, lastErrorMsg, finalStateLogged, invoker);
@@ -632,10 +632,20 @@ public class CandidateRouter {
         }
     }
 
-    private boolean isCandidateCircuitBroken(RoutingCandidate candidate) {
-        return circuitBreakerService.isChannelCircuitBroken(candidate.getChannel().getId())
-                || circuitBreakerService.isChannelCircuitBroken(candidate.getChannel().getId(), candidate.getChannelApiKey().getId())
-                || circuitBreakerService.isModelCircuitBroken(candidate.getChannelModel().getId(), candidate.getChannelApiKey().getId());
+    /**
+     * 判断候选是否处于熔断状态，返回熔断级别（"渠道级熔断"/"模型级熔断"），未熔断返回 null。
+     * <p>在路由到该候选时判断：熔断则跳过并记录到请求日志（每 API Key 一条），
+     * 由路由循环按候选列表顺序逐个经过，保证请求日志完整展示跳过过程。</p>
+     */
+    private String circuitBreakScope(RoutingCandidate candidate) {
+        if (circuitBreakerService.isChannelCircuitBroken(candidate.getChannel().getId())
+                || circuitBreakerService.isChannelCircuitBroken(candidate.getChannel().getId(), candidate.getChannelApiKey().getId())) {
+            return "渠道级熔断";
+        }
+        if (circuitBreakerService.isModelCircuitBroken(candidate.getChannelModel().getId(), candidate.getChannelApiKey().getId())) {
+            return "模型级熔断";
+        }
+        return null;
     }
 
     /**

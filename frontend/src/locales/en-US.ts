@@ -329,6 +329,7 @@ export default {
   'model.rels.reasoningEffort': 'Reasoning',
   'model.rels.effortDefault': 'Default',
   'model.rels.noData': 'No data',
+  'model.rels.noApiKey': 'No usable API key',
   'model.rels.modeSelfAdd': 'Self-Add',
   'model.rels.modeInherit': 'Inherit',
   'model.rels.modeSwitch': 'Link Mode',

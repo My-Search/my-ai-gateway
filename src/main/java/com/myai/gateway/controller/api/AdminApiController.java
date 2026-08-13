@@ -710,6 +710,24 @@ public class AdminApiController {
         // 批量计算全部关联的熔断标记（一次加载渠道模型/熔断记录/API Key，避免逐关联 N+1 查询）
         Map<Long, CircuitBreakerService.RelBrokenMark> brokenMarks = circuitBreakerService.computeRelBrokenMarks(rels);
 
+        // 批量加载渠道模型与启用中的 API Key，用于计算每个关联的"可用密钥"标记
+        // （与路由候选构建一致：渠道模型指定了 Key 则仅该 Key 可用，否则渠道下任意启用 Key 即可）
+        List<Long> relChannelModelIds = rels.stream()
+                .map(ModelChannelRel::getChannelModelId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, ChannelModel> channelModelsById = relChannelModelIds.isEmpty()
+                ? Map.of()
+                : modelService.getChannelModelsByIds(relChannelModelIds).stream()
+                        .collect(Collectors.toMap(ChannelModel::getId, cm -> cm, (a, b) -> a));
+        List<Long> relChannelIds = rels.stream()
+                .map(ModelChannelRel::getChannelId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, List<ChannelApiKey>> enabledKeysByChannel = channelApiKeyService.listEnabledByChannelIds(relChannelIds);
+
         // 为每个关联模型计算最近 30 条的平均响应时间和样本数，并填充熔断状态标记
         for (ModelChannelRel rel : rels) {
             String channelName = rel.getChannelName();
@@ -739,6 +757,17 @@ public class AdminApiController {
                 rel.setCircuitBroken(1);
                 rel.setCircuitBrokenScope(mark.scope);
                 rel.setCircuitBrokenExpireAt(mark.expireAt);
+            }
+            // 可用密钥标记：渠道下没有启用 Key、或指定 Key 被禁用/不存在时置 0，前端显示"无可用密钥"
+            if (rel.getChannelId() != null) {
+                ChannelModel relCm = rel.getChannelModelId() != null
+                        ? channelModelsById.get(rel.getChannelModelId()) : null;
+                Long pinnedKeyId = relCm != null ? relCm.getChannelApiKeyId() : null;
+                List<ChannelApiKey> enabledKeys = enabledKeysByChannel.getOrDefault(rel.getChannelId(), List.of());
+                boolean usable = pinnedKeyId != null
+                        ? enabledKeys.stream().anyMatch(k -> pinnedKeyId.equals(k.getId()))
+                        : !enabledKeys.isEmpty();
+                rel.setApiKeyAvailable(usable ? 1 : 0);
             }
         }
 

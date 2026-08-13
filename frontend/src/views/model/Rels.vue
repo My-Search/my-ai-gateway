@@ -110,17 +110,18 @@
           </tr>
         </thead>
         <tbody ref="tbodyRef">
-          <tr v-for="(rel, index) in rels" :key="rel.id" :data-index="index" :class="{ 'row-disabled': rel.channelEnabled !== 1 }">
+          <tr v-for="(rel, index) in rels" :key="rel.id" :data-index="index" :class="{ 'row-disabled': isRelUnavailable(rel) }">
             <td>
               <span v-if="currentMode === 'self_add'" class="drag-handle" :title="t('model.rels.dragSort')">≡</span>
               <span v-else class="sort-index">{{ index + 1 }}</span>
             </td>
             <td>
-              <span :class="{ 'text-disabled': rel.channelEnabled !== 1 }">{{ rel.channelName }}</span>
+              <span :class="{ 'text-disabled': isRelUnavailable(rel) }">{{ rel.channelName }}</span>
               <span v-if="rel.channelEnabled !== 1" class="badge badge-disabled">{{ t('common.disabled') }}</span>
+              <span v-if="rel.apiKeyAvailable === 0" class="badge badge-no-key">{{ t('model.rels.noApiKey') }}</span>
             </td>
             <td>
-              <code class="model-tag" :class="{ 'text-disabled': rel.channelEnabled !== 1 }">{{ rel.channelModelName }}</code>
+              <code class="model-tag" :class="{ 'text-disabled': isRelUnavailable(rel) }">{{ rel.channelModelName }}</code>
             </td>
             <td>
               <span v-if="rel.input" class="input-tags">
@@ -236,6 +237,11 @@ let sortableInstance: Sortable | null = null
 const isDirty = ref(false)
 const originalRelIds = ref<number[]>([])
 const isSaving = ref(false)
+
+/** 关联不可用：渠道被禁用或无可用 API Key（行效果与禁用一致，仅标签不同） */
+function isRelUnavailable(rel: ModelChannelRel): boolean {
+  return rel.channelEnabled !== 1 || rel.apiKeyAvailable === 0
+}
 
 function formatRespTime(ms: number): string {
   if (ms >= 1000) return (ms / 1000).toFixed(1) + 's'
@@ -602,6 +608,16 @@ table td {
   padding: 2px 6px;
   background: var(--text-muted);
   color: var(--bg-primary);
+  border-radius: 4px;
+}
+
+/* 无可用密钥标记：渠道下无启用 API Key（或全部禁用/指定 Key 不可用） */
+.badge-no-key {
+  margin-left: 8px;
+  font-size: 10px;
+  padding: 2px 6px;
+  background: color-mix(in srgb, var(--accent-yellow) 20%, transparent);
+  color: var(--accent-yellow);
   border-radius: 4px;
 }
 

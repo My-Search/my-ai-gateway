@@ -74,7 +74,7 @@ class RelayServiceTest {
     }
 
     @Test
-    void getAvailableCandidates_filtersModelLevelCircuitBrokenPerApiKey() {
+    void getAvailableCandidates_keepsModelLevelCircuitBrokenCandidateForRoutingLoop() {
         // 自定义模型 x
         Model model = new Model();
         model.setId(1L);
@@ -140,9 +140,10 @@ class RelayServiceTest {
 
         List<RoutingCandidate> candidates = relayService.getAvailableCandidates(req);
 
-        // 应过滤掉 a1+ak1，保留 a1+ak2、a2+ak1、a2+ak2
-        assertThat(candidates).hasSize(3);
-        assertThat(candidates).noneMatch(c ->
+        // 熔断不在此处过滤：a1+ak1 仍保留在候选列表中，
+        // 由路由循环在"路由到它"时跳过并记录（见 tryCandidates_skipsAlreadyBrokenCandidateBeforeFirstAttempt）
+        assertThat(candidates).hasSize(4);
+        assertThat(candidates).anyMatch(c ->
                 c.getChannelModel().getModelName().equals("a1") && c.getChannelApiKey().getKeyName().equals("ak1"));
         assertThat(candidates).anyMatch(c ->
                 c.getChannelModel().getModelName().equals("a1") && c.getChannelApiKey().getKeyName().equals("ak2"));
@@ -150,6 +151,9 @@ class RelayServiceTest {
                 c.getChannelModel().getModelName().equals("a2") && c.getChannelApiKey().getKeyName().equals("ak1"));
         assertThat(candidates).anyMatch(c ->
                 c.getChannelModel().getModelName().equals("a2") && c.getChannelApiKey().getKeyName().equals("ak2"));
+        // 候选构建不查询熔断状态（熔断判断移到路由循环）
+        verify(circuitBreakerService, never()).isModelCircuitBroken(any(), any());
+        verify(circuitBreakerService, never()).isChannelCircuitBroken(anyLong());
     }
 
     @Test
@@ -645,7 +649,7 @@ class RelayServiceTest {
     }
 
     @Test
-    void getAvailableCandidates_channelLevelCircuitBreaker_skipsAllModelsForThatKey() {
+    void getAvailableCandidates_keepsChannelLevelCircuitBrokenKeysForRoutingLoop() {
         // 自定义模型 x
         Model model = new Model();
         model.setId(1L);
@@ -690,17 +694,20 @@ class RelayServiceTest {
 
         List<RoutingCandidate> candidates = relayService.getAvailableCandidates(req);
 
-        // 应跳过 ak1 下的所有模型，只保留 a1+ak2, a2+ak2
-        assertThat(candidates).hasSize(2);
-        assertThat(candidates).noneMatch(c -> c.getChannelApiKey().getKeyName().equals("ak1"));
-        assertThat(candidates.get(0).getChannelModel().getModelName()).isEqualTo("a1");
-        assertThat(candidates.get(0).getChannelApiKey().getKeyName()).isEqualTo("ak2");
-        assertThat(candidates.get(1).getChannelModel().getModelName()).isEqualTo("a2");
-        assertThat(candidates.get(1).getChannelApiKey().getKeyName()).isEqualTo("ak2");
+        // 渠道级熔断不在此处过滤：ak1 下的候选保留，由路由循环跳过并记录（每 Key 一条）
+        assertThat(candidates).hasSize(4);
+        assertThat(candidates).anyMatch(c ->
+                c.getChannelModel().getModelName().equals("a1") && c.getChannelApiKey().getKeyName().equals("ak1"));
+        assertThat(candidates).anyMatch(c ->
+                c.getChannelModel().getModelName().equals("a1") && c.getChannelApiKey().getKeyName().equals("ak2"));
+        assertThat(candidates).anyMatch(c ->
+                c.getChannelModel().getModelName().equals("a2") && c.getChannelApiKey().getKeyName().equals("ak1"));
+        assertThat(candidates).anyMatch(c ->
+                c.getChannelModel().getModelName().equals("a2") && c.getChannelApiKey().getKeyName().equals("ak2"));
     }
 
     @Test
-    void getAvailableCandidates_oldFormatGlobalChannelBreaker_skipsAllCandidates() {
+    void getAvailableCandidates_keepsCandidatesUnderGlobalChannelBreakerForRoutingLoop() {
         // 旧格式全渠道熔断记录（channelApiKeyId IS NULL），应跳过该渠道下所有候选
         Model model = new Model();
         model.setId(1L);
@@ -743,8 +750,8 @@ class RelayServiceTest {
 
         List<RoutingCandidate> candidates = relayService.getAvailableCandidates(req);
 
-        // 应跳过该渠道下所有候选
-        assertThat(candidates).isEmpty();
+        // 旧格式全渠道熔断不在此处过滤：候选保留，由路由循环在路由到它时跳过并记录
+        assertThat(candidates).hasSize(4);
     }
 
     @Test

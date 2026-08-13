@@ -92,7 +92,7 @@ public class RelayService {
         this.relayLogger = new RelayLogger(requestLogService, apiKeyService);
         this.sseHandler = new SseHandler(objectMapper, messageTransformer, translatorRegistry,
                 streamContentManager, requestLogService, streamTranslateStates, streamUsageMap);
-        this.routeResolver = new RouteResolver(modelService, circuitBreakerService, channelApiKeyService, relayLogger);
+        this.routeResolver = new RouteResolver(modelService, channelApiKeyService);
         this.requestPreprocessor = new RequestPreprocessor(messageTransformer, routeResolver,
                 promptInjectionService, modelService);
 

@@ -13,25 +13,19 @@ import java.util.List;
 
 /**
  * 路由解析组件
- * <p>负责模型路由配置解析、路由候选构建、熔断跳过日志。</p>
+ * <p>负责模型路由配置解析、路由候选构建。</p>
  */
 public class RouteResolver {
 
     private static final Logger log = LoggerFactory.getLogger(RouteResolver.class);
 
     private final ModelService modelService;
-    private final CircuitBreakerService circuitBreakerService;
     private final ChannelApiKeyService channelApiKeyService;
-    private final RelayLogger relayLogger;
 
     public RouteResolver(ModelService modelService,
-                         CircuitBreakerService circuitBreakerService,
-                         ChannelApiKeyService channelApiKeyService,
-                         RelayLogger relayLogger) {
+                         ChannelApiKeyService channelApiKeyService) {
         this.modelService = modelService;
-        this.circuitBreakerService = circuitBreakerService;
         this.channelApiKeyService = channelApiKeyService;
-        this.relayLogger = relayLogger;
     }
 
     /**
@@ -73,7 +67,9 @@ public class RouteResolver {
     }
 
     /**
-     * 获取可用的路由候选列表
+     * 获取路由候选列表
+     * <p>仅按启用状态过滤（关联/渠道模型/渠道/API Key 禁用则排除）；
+     * 熔断中的候选不在此过滤，由路由循环在"路由到它"时跳过并记录到请求日志。</p>
      */
     public List<RoutingCandidate> getAvailableCandidates(InternalRequest req) {
         String modelName = req.getModel();
@@ -105,8 +101,8 @@ public class RouteResolver {
             }
 
             Long specifiedKeyId = channelModel.getChannelApiKeyId();
-            // 渠道级熔断在循环外检查一次
-            boolean channelLevelBroken = circuitBreakerService.isChannelCircuitBroken(channel.getId());
+            // 熔断状态不在此处过滤：候选全部进入路由循环，由路由时按列表顺序逐个判断，
+            // 熔断候选在"路由到它"时跳过并记录到请求日志（每 API Key 一条）
             List<ChannelApiKey> apiKeys = getApiKeysForCandidate(channel.getId(), specifiedKeyId);
             log.info("渠道模型: {} (id={}), 指定API Key: {}, 可用Keys: {}",
                     channelModel.getModelName(), channelModel.getId(), specifiedKeyId, apiKeys.size());
@@ -114,15 +110,6 @@ public class RouteResolver {
             for (ChannelApiKey apiKey : apiKeys) {
                 if (apiKey.getEnabled() == null || apiKey.getEnabled() != 1) {
                     log.debug("API Key被禁用: keyId={}, keyName={}", apiKey.getId(), apiKey.getKeyName());
-                    continue;
-                }
-                if (channelLevelBroken
-                        || circuitBreakerService.isChannelCircuitBroken(channel.getId(), apiKey.getId())) {
-                    log.info("API Key渠道级熔断跳过: channel={} key={}", channel.getName(), apiKey.getKeyName());
-                    continue;
-                }
-                if (circuitBreakerService.isModelCircuitBroken(channelModel.getId(), apiKey.getId())) {
-                    log.info("模型级熔断跳过: model={} key={}", channelModel.getModelName(), apiKey.getKeyName());
                     continue;
                 }
                 candidates.add(new RoutingCandidate(rel, channel, channelModel, apiKey));
@@ -153,42 +140,5 @@ public class RouteResolver {
         }
         List<ChannelApiKey> keys = channelApiKeyService.getAvailableApiKeys(channelId);
         return keys != null ? keys : Collections.emptyList();
-    }
-
-    /**
-     * 记录被跳过的路由候选到请求日志（熔断、图片能力不匹配等）
-     */
-    public void logSkippedCandidatesFromResult(String traceId, Long gatewayApiKeyId,
-                                                InternalRequest req,
-                                                List<RoutingCandidate> candidates,
-                                                RoutingContext ctx) {
-        Long customModelId = ctx.modelId();
-        if (customModelId == null) return;
-
-        List<ModelChannelRel> rels = modelService.getChannelRels(customModelId);
-        for (ModelChannelRel rel : rels) {
-            if (rel.getEnabled() == null || rel.getEnabled() != 1) continue;
-            ChannelModel channelModel = modelService.getChannelModelById(rel.getChannelModelId());
-            if (channelModel == null || channelModel.getEnabled() == null || channelModel.getEnabled() != 1) continue;
-            Channel channel = modelService.getChannelById(channelModel.getChannelId());
-            if (channel == null || channel.getEnabled() == null || channel.getEnabled() != 1) continue;
-
-            boolean channelLevelBroken = circuitBreakerService.isChannelCircuitBroken(channel.getId());
-            List<ChannelApiKey> apiKeys = getApiKeysForCandidate(channel.getId(), channelModel.getChannelApiKeyId());
-            for (ChannelApiKey apiKey : apiKeys) {
-                if (apiKey.getEnabled() == null || apiKey.getEnabled() != 1) continue;
-
-                boolean channelBroken = channelLevelBroken
-                        || circuitBreakerService.isChannelCircuitBroken(channel.getId(), apiKey.getId());
-                boolean modelBroken = circuitBreakerService.isModelCircuitBroken(channelModel.getId(), apiKey.getId());
-                if (channelBroken || modelBroken) {
-                    String scope = channelBroken ? "渠道级熔断" : "模型级熔断";
-                    relayLogger.logPhase(traceId, gatewayApiKeyId,
-                            new RoutingCandidate(rel, channel, channelModel, apiKey),
-                            req, "skip", scope + "跳过 " + channel.getName() + "/"
-                                    + apiKey.getKeyName() + "/" + channelModel.getModelName(), 0);
-                }
-            }
-        }
     }
 }

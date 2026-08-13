@@ -118,8 +118,8 @@ class StatsServiceTest {
         // B 仅 6/15 有值
         assertThat(values.get("B").get(14)).isEqualTo(200L);
 
-        // maxValue=300（C 单日最高），totalValue=300+200+150=650
-        assertThat(result.get("maxValue")).isEqualTo(300L);
+        // maxValue=600（6/15 堆叠总和 100+200+300，非单模型单日最高），totalValue=300+200+150=650
+        assertThat(result.get("maxValue")).isEqualTo(600L);
         assertThat(result.get("totalValue")).isEqualTo(650L);
     }
 
