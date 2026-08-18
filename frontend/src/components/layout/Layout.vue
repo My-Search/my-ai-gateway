@@ -47,7 +47,10 @@
 
       <!-- Content area -->
       <div class="content-area">
-        <router-view />
+        <!-- 仅缓存主菜单页面（切换流畅、保留状态）；表单/详情等参数页不缓存，保证切换 id 重新加载 -->
+        <keep-alive :include="cachedViews">
+          <router-view />
+        </keep-alive>
       </div>
     </div>
 
@@ -62,6 +65,12 @@ import { useThemeStore } from '@/stores/theme'
 import { useI18n } from '@/composables/useI18n'
 import { useLocaleStore } from '@/stores/locale'
 import Sidebar from './Sidebar.vue'
+
+/**
+ * 需要 keep-alive 缓存的主菜单页面组件名（与各视图 defineOptions name 对应）。
+ * 仅缓存轮询轻量、状态值得保留的列表/仪表盘页；带 SSE 或长连接的重型页面（日志）不缓存。
+ */
+const cachedViews = ['Dashboard', 'ChannelList', 'ModelList', 'ApikeyList']
 
 const route = useRoute()
 const router = useRouter()

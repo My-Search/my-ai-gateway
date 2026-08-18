@@ -247,16 +247,23 @@ function initSortable() {
   if (!el) return
   sortableInstance = new Sortable(el, {
     handle: '.drag-handle',
-    animation: 150,
+    animation: 100,
     easing: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)',
     ghostClass: 'sortable-ghost',
     dragClass: 'sortable-drag',
+    forceFallback: true,
+    fallbackClass: 'sortable-fallback',
+    fallbackOnBody: true,
+    fallbackTolerance: 3,
+    delay: 0,
+    delayOnTouchOnly: true,
     onEnd: (evt: { oldIndex?: number; newIndex?: number }) => {
       if (evt.oldIndex === undefined || evt.newIndex === undefined || evt.oldIndex === evt.newIndex) return
       const newKeys = [...apiKeys.value]
       const [moved] = newKeys.splice(evt.oldIndex, 1)
       newKeys.splice(evt.newIndex, 0, moved)
       newKeys.forEach((k, i) => k.sortOrder = i)
+      _skipSortableReinit = true
       apiKeys.value = newKeys
     }
   })
@@ -278,7 +285,11 @@ const form = ref<Partial<Channel>>({
 const apiKeys = ref<ChannelApiKey[]>([])
 const models = ref<ModelItem[]>([])
 
+// 需要 deep 监听 apiKeys：新增/删除走 push/splice（引用不变），非 deep 无法触发重建。
+// 拖拽 onEnd 触发的数组更新用标记位跳过重建（onEnd 本身已是本地 DOM 操作）。
+let _skipSortableReinit = false
 watch(apiKeys, () => {
+  if (_skipSortableReinit) { _skipSortableReinit = false; return }
   nextTick(() => initSortable())
 }, { deep: true })
 
@@ -542,6 +553,8 @@ async function handleSave() {
   opacity: 0.8;
   background-color: var(--bg-card);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 @media (max-width: 768px) {

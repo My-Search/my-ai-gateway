@@ -180,7 +180,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { apikeyApi, type ApiKey, type ApiKeyUsageStats, type ApiKeyPeriodStats } from '@/api/apikey'
 import { shareApi } from '@/api/share'
@@ -387,7 +387,16 @@ async function loadKeys() {
   }
 }
 
+// 供 keep-alive 按组件名缓存（Layout.vue cachedViews）
+defineOptions({ name: 'ApikeyList' })
+
+// onMounted 负责首次加载（保证页面一定有数据，不依赖 keep-alive 是否命中）；
+// onActivated 仅在 keep-alive 缓存恢复（菜单切回）时刷新数据，首次跳过避免重复加载
+let activatedCount = 0
 onMounted(loadKeys)
+onActivated(() => {
+  if (activatedCount++ > 0) loadKeys()
+})
 </script>
 
 <style scoped>

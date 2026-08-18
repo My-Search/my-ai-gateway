@@ -421,6 +421,8 @@ function removeRel(rel: ModelChannelRel) {
     confirmClass: 'btn-danger',
     onConfirm: async () => {
       try {
+        // 若已调整过顺序（未保存），先持久化顺序，避免删除后 loadData 刷新丢失排序
+        if (!(await persistOrder())) return
         const res = await modelApi.removeRel(rel.id)
         if (res.data.success) {
           await loadData()
@@ -460,42 +462,60 @@ function initSortable() {
 
   sortableInstance = new Sortable(tbody, {
     handle: '.drag-handle',
-    animation: 150,
+    animation: 100,
     easing: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)',
     ghostClass: 'sortable-ghost',
     dragClass: 'sortable-drag',
+    forceFallback: true,
+    fallbackClass: 'sortable-fallback',
+    fallbackOnBody: true,
+    fallbackTolerance: 3,
+    delay: 0,
+    delayOnTouchOnly: true,
     onEnd: (evt) => {
       if (evt.oldIndex === undefined || evt.newIndex === undefined || evt.oldIndex === evt.newIndex) return
 
       const newRels = [...rels.value]
       const [moved] = newRels.splice(evt.oldIndex, 1)
       newRels.splice(evt.newIndex, 0, moved)
+      _skipSortableReinit = true
       rels.value = newRels
 
       const currentIds = rels.value.map(r => r.id)
-      isDirty.value = JSON.stringify(currentIds) !== JSON.stringify(originalRelIds.value)
+      isDirty.value = currentIds.join(',') !== originalRelIds.value.join(',')
     }
   })
 }
 
-async function saveOrder() {
-  if (currentMode.value !== 'self_add') return
+/**
+ * 仅保存当前顺序（不重载数据），供删除等需要先持久化顺序再执行后续操作的场景复用。
+ * @returns 是否保存成功
+ */
+async function persistOrder(): Promise<boolean> {
+  if (currentMode.value !== 'self_add') return false
+  if (!isDirty.value) return true // 顺序无改动，无需保存
   isSaving.value = true
   try {
     const sortedRelIds = rels.value.map(r => r.id)
     const res = await modelApi.batchUpdateSortOrders(sortedRelIds)
     if (res.data.success) {
       isDirty.value = false
-      await loadData()
-    } else {
-      openDialog({ title: t('model.rels.saveFailed'), message: res.data.error || t('error.unknown') })
+      return true
     }
+    openDialog({ title: t('model.rels.saveFailed'), message: res.data.error || t('error.unknown') })
+    return false
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : String(e)
     openDialog({ title: t('model.rels.saveFailed'), message })
+    return false
   } finally {
     isSaving.value = false
   }
+}
+
+async function saveOrder() {
+  if (!(await persistOrder())) return
+  await loadData()
 }
 
 /* ---------- 模式切换 ----------
@@ -563,8 +583,10 @@ async function confirmInheritSource() {
   await doSetMode('inherit', pendingSourceId.value)
 }
 
-// Initialize Sortable after data is loaded and DOM is updated
+// 仅在数据首次加载或模式切换时重建 Sortable，避免拖拽 onEnd 触发重建。
+let _skipSortableReinit = false
 watch(rels, () => {
+  if (_skipSortableReinit) { _skipSortableReinit = false; return }
   nextTick(() => initSortable())
 })
 
@@ -742,6 +764,8 @@ table td {
   opacity: 0.8;
   background-color: var(--bg-card);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  will-change: transform;
+  transform: translateZ(0);
 }
 
 .sortable-drag td {

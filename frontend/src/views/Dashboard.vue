@@ -284,7 +284,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, onActivated } from 'vue'
 import { dashboardApi, type DashboardStats } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
 import { formatLocalTime } from '@/utils/date'
@@ -381,11 +381,24 @@ async function fetchStats() {
 
 watch([channelRankPeriod, modelRankPeriod, selectedDate], fetchStats)
 
+// 供 keep-alive 按组件名缓存（Layout.vue cachedViews）
+defineOptions({ name: 'Dashboard' })
+
+// onMounted 负责首次加载（保证页面一定有数据，不依赖 keep-alive 是否命中）；
+// onActivated 仅在 keep-alive 缓存恢复（菜单切回）时刷新数据，首次跳过避免重复加载
+let activatedCount = 0
 onMounted(async () => {
   loading.value = true
   await fetchStats()
   loading.value = false
   dashboardRefreshTimer = setInterval(fetchStats, 15000)
+})
+onActivated(async () => {
+  if (activatedCount++ > 0) {
+    loading.value = true
+    await fetchStats()
+    loading.value = false
+  }
 })
 
 onUnmounted(() => {

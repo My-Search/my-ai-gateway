@@ -191,7 +191,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel, type ModelStatsItem } from '@/api/model'
@@ -386,9 +386,18 @@ async function loadData() {
 /* ══════════════════════════════════════
    Lifecycle
    ══════════════════════════════════════ */
+// 供 keep-alive 按组件名缓存（Layout.vue cachedViews）
+defineOptions({ name: 'ModelList' })
+
+// onMounted 负责首次加载（保证页面一定有数据，不依赖 keep-alive 是否命中）；
+// onActivated 仅在 keep-alive 缓存恢复（菜单切回）时刷新数据，首次跳过避免重复加载
+let activatedCount = 0
 onMounted(() => {
   loadData()
   document.addEventListener('click', onDocumentClick)
+})
+onActivated(() => {
+  if (activatedCount++ > 0) loadData()
 })
 
 onUnmounted(() => {
