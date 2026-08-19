@@ -2,8 +2,11 @@ package com.myai.gateway.relay;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myai.gateway.config.LocalCacheService;
 import com.myai.gateway.entity.Channel;
+import com.myai.gateway.observability.RelayMetrics;
 import com.myai.gateway.relay.balancer.LoadBalancer;
+import com.myai.gateway.service.CircuitBreakerStateChangedEvent;
 import com.myai.gateway.relay.balancer.LoadBalancerFactory;
 import com.myai.gateway.relay.balancer.RoutingCandidate;
 import com.myai.gateway.relay.stream.SseEvent;
@@ -53,6 +56,29 @@ public class CandidateRouter {
     private final CircuitBreakerRecoveryService recoveryService;
     final ConcurrentHashMap<String, int[]> streamUsageMap;
 
+    /**
+     * 熔断状态短路缓存（可选能力，由 Spring 注入）。
+     * <p>缓解 {@code circuitBreakScope} 对每个候选每个重试轮次的 selectCount 重复查询
+     * （同一候选依次被选多次时，熔断状态在毫秒级内不变，无需反复查 DB）。
+     * 使用极短 TTL（1s）自愈，熔断/探测开门延迟不超过 1 秒；未注入（测试）时走直查行为不变。</p>
+     */
+    private LocalCacheService localCacheService;
+
+    /** 熔断短路缓存 TTL（毫秒级极短，权衡查询次数与熔断生效延迟） */
+    private static final Duration CIRCUIT_CACHE_TTL = Duration.ofSeconds(1);
+    private static final String CACHE_NS_CIRCUIT = LocalCacheService.NS_CIRCUIT_STATE_BY_SCOPE;
+
+    /**
+     * "未熔断"哨兵值：Caffeine 不缓存 null 值，健康候选（最常见情形）需以哨兵形式
+     * 写入缓存才能命中，否则每次仍直查 DB，短路缓存形同虚设。
+     */
+    private static final String CIRCUIT_HEALTHY_SENTINEL = "__healthy__";
+
+    /**
+     * 业务指标（可选能力，由 {@link RelayService} 透传注入；测试直接 new 时为 null 不埋点）。
+     */
+    private RelayMetrics relayMetrics;
+
     public CandidateRouter(ModelService modelService,
                            CircuitBreakerService circuitBreakerService,
                            RequestLogService requestLogService,
@@ -83,6 +109,47 @@ public class CandidateRouter {
         this.webClient = webClient;
         this.recoveryService = recoveryService;
         this.streamUsageMap = streamUsageMap;
+    }
+
+    /**
+     * 注入本地缓存服务（可选能力，由 Spring 调用；测试直接 new 时可省略）。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setLocalCacheService(LocalCacheService localCacheService) {
+        this.localCacheService = localCacheService;
+    }
+
+    /**
+     * 注入业务指标（可选能力，由 {@link RelayService} 透传；测试直接 new 时可省略）。
+     */
+    public void setRelayMetrics(RelayMetrics relayMetrics) {
+        this.relayMetrics = relayMetrics;
+    }
+
+    /**
+     * 监听熔断状态变更事件，主动失效熔断短路缓存。
+     * <p>由 {@code CircuitBreakerService} 在触发/解除/探测开门/手动恢复时发布，
+     * 避免状态变更后缓存中仍持有旧值导致最多 1 秒窗口内的不一致。</p>
+     * <p>失效粒度：{@code channelModelId} 与 {@code channelApiKeyId} 均有值时精确失效单个 key；
+     * 任一为空（渠道级/全渠道熔断）时影响该渠道下全部候选，无法定位到具体 key，
+     * 失效整个命名空间（TTL 仅 1s，整体失效成本可忽略）。</p>
+     */
+    @org.springframework.context.event.EventListener
+    public void onCircuitBreakerStateChanged(CircuitBreakerStateChangedEvent event) {
+        if (localCacheService == null) {
+            return;
+        }
+        if (event.getChannelModelId() == null || event.getChannelApiKeyId() == null) {
+            // 渠道级/全渠道熔断：影响面为该渠道全部候选，整体失效确保一致性
+            localCacheService.invalidateAll(CACHE_NS_CIRCUIT);
+            log.debug("熔断状态变更事件 - 失效整个命名空间: channelId={}, channelModelId={}, channelApiKeyId={}",
+                    event.getChannelId(), event.getChannelModelId(), event.getChannelApiKeyId());
+            return;
+        }
+        String key = event.buildCacheKey();
+        localCacheService.invalidate(CACHE_NS_CIRCUIT, key);
+        log.debug("熔断状态变更事件 - 失效缓存: channelId={}, channelModelId={}, channelApiKeyId={}",
+                event.getChannelId(), event.getChannelModelId(), event.getChannelApiKeyId());
     }
 
     // ========== 非流式路由 ==========
@@ -136,6 +203,7 @@ public class CandidateRouter {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, req.getModel(), null, null,
                     "fail", "error", failMsg, System.currentTimeMillis() - startTime, retryIndex);
             log.warn("所有候选均失败 - traceId={}, lastError={}", traceId, lastErrorMsg);
+            recordRouteMetric(req.getModel(), null, "fail", startTime);
             return Mono.just(messageTransformer.buildErrorResponse(req.getClientApiFormat(),
                     failMsg, "api_error", 503));
         }
@@ -153,6 +221,9 @@ public class CandidateRouter {
             log.info("已熔断跳过 - traceId={} retryIndex={} channel={} model={} key={} scope={}",
                     traceId, retryIndex, candidate.getChannel().getName(),
                     candidate.getChannelModel().getModelName(), candidate.getChannelApiKey().getKeyName(), breakScope);
+            if (relayMetrics != null) {
+                relayMetrics.recordCircuitBreakSkip(breakScope);
+            }
             relayLogger.logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
                     breakScope + "跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
@@ -183,6 +254,7 @@ public class CandidateRouter {
                     relayLogger.updateGatewayApiKeyLastUsed(authHeader);
                     latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(),
                             System.currentTimeMillis() - startTime);
+                    recordRouteMetric(req.getModel(), candidate.getChannel().getName(), "success", startTime);
                     String transformed = transformResponse(body, candidate, req, actualProvider);
                     int[] usage = extractUsageFromProviderResponse(body);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(), gatewayApiKeyId,
@@ -305,6 +377,7 @@ public class CandidateRouter {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, req.getModel(), null, null,
                     "fail", "error", failMsg, System.currentTimeMillis() - startTime, retryIndex);
             log.warn("所有流式候选均失败 - traceId={}{}, lastError={}", traceId, extraInfo, lastErrorMsg);
+            recordRouteMetric(req.getModel(), null, "fail", startTime);
             return Flux.error(new RuntimeException(failMsg));
         }
 
@@ -325,6 +398,9 @@ public class CandidateRouter {
             log.info("已熔断跳过 - traceId={} retryIndex={} channel={} model={} key={} scope={}",
                     traceId, retryIndex, candidate.getChannel().getName(),
                     candidate.getChannelModel().getModelName(), candidate.getChannelApiKey().getKeyName(), breakScope);
+            if (relayMetrics != null) {
+                relayMetrics.recordCircuitBreakSkip(breakScope);
+            }
             relayLogger.logPhase(traceId, gatewayApiKeyId, candidate, req, "skip",
                     breakScope + "跳过 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
             remaining.remove(candidate);
@@ -378,6 +454,7 @@ public class CandidateRouter {
                     relayLogger.updateGatewayApiKeyLastUsed(authHeader);
                     latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(),
                             System.currentTimeMillis() - startTime);
+                    recordRouteMetric(req.getModel(), candidate.getChannel().getName(), "success", startTime);
                     streamContentManager.clearContent(traceId);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(), gatewayApiKeyId,
                             req.getModel(), candidate.getChannelModel().getModelName(),
@@ -636,8 +713,26 @@ public class CandidateRouter {
      * 判断候选是否处于熔断状态，返回熔断级别（"渠道级熔断"/"模型级熔断"），未熔断返回 null。
      * <p>在路由到该候选时判断：熔断则跳过并记录到请求日志（每 API Key 一条），
      * 由路由循环按候选列表顺序逐个经过，保证请求日志完整展示跳过过程。</p>
+     * <p>熔断状态查询结果带 1s 短路缓存：同一候选在短时间内（同请求重试轮次）只会查一次 DB，
+     * 缓解候选数量大时的 selectCount 重复查询；熔断/探测开门延迟不超过 1 秒。</p>
      */
     private String circuitBreakScope(RoutingCandidate candidate) {
+        if (localCacheService == null) {
+            return queryCircuitBreakScope(candidate);
+        }
+        String key = candidate.getChannel().getId() + ":"
+                + candidate.getChannelModel().getId() + ":"
+                + candidate.getChannelApiKey().getId();
+        String cached = localCacheService.get(CACHE_NS_CIRCUIT, key, CIRCUIT_CACHE_TTL,
+                () -> {
+                    String scope = queryCircuitBreakScope(candidate);
+                    // 健康状态（null）以哨兵值缓存，保证命中
+                    return scope == null ? CIRCUIT_HEALTHY_SENTINEL : scope;
+                });
+        return CIRCUIT_HEALTHY_SENTINEL.equals(cached) ? null : cached;
+    }
+
+    private String queryCircuitBreakScope(RoutingCandidate candidate) {
         if (circuitBreakerService.isChannelCircuitBroken(candidate.getChannel().getId())
                 || circuitBreakerService.isChannelCircuitBroken(candidate.getChannel().getId(), candidate.getChannelApiKey().getId())) {
             return "渠道级熔断";
@@ -646,6 +741,15 @@ public class CandidateRouter {
             return "模型级熔断";
         }
         return null;
+    }
+
+    /**
+     * 记录一次路由请求的业务指标（可选能力，未注入 RelayMetrics 时为空操作）。
+     */
+    private void recordRouteMetric(String model, String channel, String result, long startTime) {
+        if (relayMetrics != null) {
+            relayMetrics.recordRoute(model, channel, result, System.currentTimeMillis() - startTime);
+        }
     }
 
     /**

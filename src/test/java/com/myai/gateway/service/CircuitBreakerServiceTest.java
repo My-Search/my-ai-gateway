@@ -29,6 +29,7 @@ class CircuitBreakerServiceTest {
     private CircuitBreakerStateMapper stateMapper;
     private ModelService modelService;
     private ChannelApiKeyService channelApiKeyService;
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
     private CircuitBreakerService service;
 
     @BeforeEach
@@ -36,7 +37,8 @@ class CircuitBreakerServiceTest {
         stateMapper = mock(CircuitBreakerStateMapper.class);
         modelService = mock(ModelService.class);
         channelApiKeyService = mock(ChannelApiKeyService.class);
-        service = new CircuitBreakerService(stateMapper, modelService, channelApiKeyService);
+        eventPublisher = mock(org.springframework.context.ApplicationEventPublisher.class);
+        service = new CircuitBreakerService(stateMapper, modelService, channelApiKeyService, eventPublisher);
     }
 
     @Test

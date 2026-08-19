@@ -71,11 +71,17 @@ app:
   # 系统配置项 timeout_min_seconds / timeout_max_seconds 在管理后台设置，此处不配置。
 
 # Actuator
+# Prometheus 端点安全：通过环境变量 ACTUATOR_ACCESS_TOKEN 配置访问令牌，
+# 抓取时在请求头中携带 Authorization: Bearer <token> 或 X-Actuator-Token: <token>。
+# 未配置令牌时端点公开访问（向后兼容）。
 management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,prometheus
   endpoint:
     health:
       show-details: when_authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}

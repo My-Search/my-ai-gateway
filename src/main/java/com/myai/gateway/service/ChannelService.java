@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myai.gateway.config.LocalCacheService;
 import com.myai.gateway.entity.Channel;
 import com.myai.gateway.entity.ChannelModel;
 import com.myai.gateway.entity.CircuitBreakerState;
@@ -50,6 +51,11 @@ public class ChannelService {
     private final HttpClient httpClient;
     private final MultiModalRuleService multiModalRuleService;
 
+    /**
+     * 热点查询缓存（可选能力，由 Spring 注入；测试直接 new 时为 null 走直查）。
+     */
+    private LocalCacheService localCacheService;
+
     public ChannelService(ChannelMapper channelMapper, ChannelModelMapper channelModelMapper, 
                           ChannelApiKeyService channelApiKeyService,
                           ModelChannelRelMapper modelChannelRelMapper,
@@ -67,6 +73,28 @@ public class ChannelService {
                 .connectTimeout(Duration.ofSeconds(30))
                 .build();
     }
+
+    /**
+     * 注入本地缓存服务（可选能力，由 Spring 调用）。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setLocalCacheService(LocalCacheService localCacheService) {
+        this.localCacheService = localCacheService;
+    }
+
+    private boolean hasCache() {
+        return localCacheService != null;
+    }
+
+    private void invalidateCache(String namespace, String key) {
+        if (hasCache()) {
+            localCacheService.invalidate(namespace, key);
+        }
+    }
+
+    /** 缓存命名空间常量（与 ModelService 读方共用同一组 namespace） */
+    private static final String CACHE_CHANNEL_BY_ID = LocalCacheService.NS_CHANNEL_BY_ID;
+    private static final String CACHE_CHANNEL_MODEL_BY_ID = LocalCacheService.NS_CHANNEL_MODEL_BY_ID;
 
     // ==================== 渠道 CRUD ====================
 
@@ -103,6 +131,10 @@ public class ChannelService {
             channel.setBaseUrl(channel.getBaseUrl().trim());
         }
         channelMapper.updateById(channel);
+        // 渠道信息更新影响路由展示（名称/类型/启用），失效缓存
+        if (channel.getId() != null) {
+            invalidateCache(CACHE_CHANNEL_BY_ID, String.valueOf(channel.getId()));
+        }
         return channel;
     }
 
@@ -230,6 +262,13 @@ public class ChannelService {
             log.warn("同步模型列表失败: {}", e.getMessage());
         }
 
+        // 模型同步影响路由解析（渠道模型增删/字段变更），失效相关缓存
+        if (channel.getId() != null) {
+            invalidateCache(CACHE_CHANNEL_BY_ID, String.valueOf(channel.getId()));
+        }
+        if (hasCache() && localCacheService != null) {
+            localCacheService.invalidateAll(CACHE_CHANNEL_MODEL_BY_ID);
+        }
         return channel;
     }
 
@@ -288,6 +327,11 @@ public class ChannelService {
 
         // 6. 删除渠道本身
         channelMapper.deleteById(id);
+        // 渠道及下属模型已删除，失效相关缓存
+        invalidateCache(CACHE_CHANNEL_BY_ID, String.valueOf(id));
+        if (hasCache()) {
+            localCacheService.invalidateAll(CACHE_CHANNEL_MODEL_BY_ID);
+        }
         log.info("渠道 {} 已删除，相关关联数据已清理", id);
     }
 
@@ -346,6 +390,10 @@ public class ChannelService {
         log.info("渠道 {} 重新加载了 {} 个模型（保留 {} 个手动模型）", 
                 channel.getName(), addedCount, existingManualModels.size());
         
+        // 模型重新加载影响路由解析，失效全部渠道模型缓存
+        if (hasCache()) {
+            localCacheService.invalidateAll(CACHE_CHANNEL_MODEL_BY_ID);
+        }
         // 返回更新后的所有模型
         return channelModelMapper.selectList(
                 new LambdaQueryWrapper<ChannelModel>().eq(ChannelModel::getChannelId, channel.getId()));
@@ -477,6 +525,9 @@ public class ChannelService {
         } catch (Exception e) {
             log.warn("解析手动输入的模型列表失败: {}", e.getMessage());
         }
+        if (hasCache()) {
+            localCacheService.invalidateAll(CACHE_CHANNEL_MODEL_BY_ID);
+        }
         return channel;
     }
 
@@ -500,6 +551,9 @@ public class ChannelService {
         cm.setSource("manual");
         applyRulesToModel(cm);
         channelModelMapper.insert(cm);
+        if (hasCache() && cm.getId() != null) {
+            invalidateCache(CACHE_CHANNEL_MODEL_BY_ID, String.valueOf(cm.getId()));
+        }
         return cm;
     }
 
@@ -559,6 +613,9 @@ public class ChannelService {
      */
     public void deleteChannelModel(Long modelId) {
         channelModelMapper.deleteById(modelId);
+        if (modelId != null) {
+            invalidateCache(CACHE_CHANNEL_MODEL_BY_ID, String.valueOf(modelId));
+        }
     }
 
     /**
@@ -566,6 +623,9 @@ public class ChannelService {
      */
     @Transactional
     public int deleteAllChannelModels(Long channelId) {
+        if (hasCache()) {
+            localCacheService.invalidateAll(CACHE_CHANNEL_MODEL_BY_ID);
+        }
         return channelModelMapper.delete(
                 new LambdaQueryWrapper<ChannelModel>()
                         .eq(ChannelModel::getChannelId, channelId));

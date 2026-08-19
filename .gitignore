@@ -68,6 +68,10 @@ tmpcookie.txt
 test-spacing-*.png
 frontend/test-*.html
 
+### Dev scratch outputs ###
+*.out
+/original_controller.java
+
 ### Vite temp files ###
 frontend/*.timestamp-*.mjs
 

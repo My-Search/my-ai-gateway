@@ -1,6 +1,7 @@
 package com.myai.gateway.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.myai.gateway.config.LocalCacheService;
 import com.myai.gateway.entity.ChannelApiKey;
 import com.myai.gateway.mapper.ChannelApiKeyMapper;
 import org.slf4j.Logger;
@@ -24,14 +25,47 @@ public class ChannelApiKeyService {
 
     private final ChannelApiKeyMapper channelApiKeyMapper;
 
+    /**
+     * 热点查询缓存（可选能力，由 Spring 注入；测试直接 new 时为 null 走直查）。
+     */
+    private LocalCacheService localCacheService;
+
     public ChannelApiKeyService(ChannelApiKeyMapper channelApiKeyMapper) {
         this.channelApiKeyMapper = channelApiKeyMapper;
     }
 
     /**
+     * 注入本地缓存服务（可选能力，由 Spring 调用）。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setLocalCacheService(LocalCacheService localCacheService) {
+        this.localCacheService = localCacheService;
+    }
+
+    private boolean hasCache() {
+        return localCacheService != null;
+    }
+
+    private void invalidateCache(String namespace, String key) {
+        if (hasCache()) {
+            localCacheService.invalidate(namespace, key);
+        }
+    }
+
+    /** 缓存命名空间常量（与 LocalCacheService 共享） */
+    private static final String CACHE_BY_CHANNEL = LocalCacheService.NS_API_KEY_BY_CHANNEL;
+
+    /**
      * 获取渠道下所有启用的 API Keys
      */
     public List<ChannelApiKey> listEnabledByChannelId(Long channelId) {
+        if (channelId == null) {
+            return List.of();
+        }
+        if (hasCache()) {
+            return localCacheService.get(CACHE_BY_CHANNEL, String.valueOf(channelId),
+                    () -> channelApiKeyMapper.selectEnabledByChannelId(channelId));
+        }
         return channelApiKeyMapper.selectEnabledByChannelId(channelId);
     }
 
@@ -88,6 +122,7 @@ public class ChannelApiKeyService {
             Long generatedId = channelApiKeyMapper.getLastInsertId();
             apiKey.setId(generatedId);
         }
+        invalidateCache(CACHE_BY_CHANNEL, String.valueOf(apiKey.getChannelId()));
         return apiKey;
     }
 
@@ -100,6 +135,7 @@ public class ChannelApiKeyService {
             apiKey.setChannelId(channelId);
             create(apiKey);
         }
+        invalidateCache(CACHE_BY_CHANNEL, String.valueOf(channelId));
         log.info("渠道 {} 批量创建了 {} 个 API Keys", channelId, apiKeys.size());
     }
 
@@ -113,6 +149,7 @@ public class ChannelApiKeyService {
             apiKey.setApiKey(apiKey.getApiKey().trim());
         }
         channelApiKeyMapper.updateById(apiKey);
+        invalidateCache(CACHE_BY_CHANNEL, String.valueOf(apiKey.getChannelId()));
         return apiKey;
     }
 
@@ -121,7 +158,11 @@ public class ChannelApiKeyService {
      */
     @Transactional
     public void delete(Long id) {
+        ChannelApiKey existing = channelApiKeyMapper.selectById(id);
         channelApiKeyMapper.deleteById(id);
+        if (existing != null) {
+            invalidateCache(CACHE_BY_CHANNEL, String.valueOf(existing.getChannelId()));
+        }
     }
 
     /**
@@ -129,6 +170,7 @@ public class ChannelApiKeyService {
      */
     @Transactional
     public int deleteAllByChannelId(Long channelId) {
+        invalidateCache(CACHE_BY_CHANNEL, String.valueOf(channelId));
         return channelApiKeyMapper.delete(
                 new LambdaQueryWrapper<ChannelApiKey>()
                         .eq(ChannelApiKey::getChannelId, channelId));
@@ -186,6 +228,7 @@ public class ChannelApiKeyService {
             if (currentSortOrder < maxSortOrder) {
                 targetKey.setSortOrder(maxSortOrder + 1);
                 channelApiKeyMapper.updateById(targetKey);
+                invalidateCache(CACHE_BY_CHANNEL, String.valueOf(channelId));
                 log.info("API Key {} 已移至渠道 {} 的最后 (sortOrder: {} -> {})",
                         apiKeyId, channelId, currentSortOrder, maxSortOrder + 1);
             }
@@ -282,6 +325,7 @@ public class ChannelApiKeyService {
             }
         }
 
+        invalidateCache(CACHE_BY_CHANNEL, String.valueOf(channelId));
         log.info("渠道 {} API Keys 同步完成", channelId);
     }
 }

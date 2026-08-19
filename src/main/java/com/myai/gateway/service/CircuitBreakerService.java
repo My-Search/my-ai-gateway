@@ -5,6 +5,7 @@ import com.myai.gateway.entity.*;
 import com.myai.gateway.mapper.CircuitBreakerStateMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,13 +37,30 @@ public class CircuitBreakerService {
     private final CircuitBreakerStateMapper stateMapper;
     private final ModelService modelService;
     private final ChannelApiKeyService channelApiKeyService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public CircuitBreakerService(CircuitBreakerStateMapper stateMapper,
                                   ModelService modelService,
-                                  ChannelApiKeyService channelApiKeyService) {
+                                  ChannelApiKeyService channelApiKeyService,
+                                  ApplicationEventPublisher eventPublisher) {
         this.stateMapper = stateMapper;
         this.modelService = modelService;
         this.channelApiKeyService = channelApiKeyService;
+        this.eventPublisher = eventPublisher;
+    }
+
+    /**
+     * 发布熔断状态变更事件，触发缓存失效。
+     * <p>仅在 channelApiKeyId 和 channelModelId 都有值时精确失效单个 key；
+     * 其他情况（如全渠道熔断）失效整个命名空间以确保一致性。</p>
+     */
+    private void publishStateChangedEvent(Long channelId, Long channelApiKeyId, Long channelModelId) {
+        try {
+            eventPublisher.publishEvent(new CircuitBreakerStateChangedEvent(this, channelId, channelApiKeyId, channelModelId));
+        } catch (Exception e) {
+            // 事件发布失败不应影响熔断主逻辑
+            log.debug("发布熔断状态变更事件失败: channelId={}, err={}", channelId, e.getMessage());
+        }
     }
 
     /**
@@ -168,6 +186,8 @@ public class CircuitBreakerService {
                     channelId, channelApiKeyId, channelModelId, config.getCircuitBreakDuration());
             triggerModelCircuitBreak(channelId, channelApiKeyId, channelModelId, now, expireAt);
         }
+        // 发布事件，触发熔断短路缓存失效
+        publishStateChangedEvent(channelId, channelApiKeyId, channelModelId);
     }
 
     /**
@@ -272,6 +292,9 @@ public class CircuitBreakerService {
         log.info("模型级门打开 - channelModelId={}, channelId={}, channelApiKeyId={}",
                 state.getChannelModelId(), state.getChannelId(), state.getChannelApiKeyId());
 
+        // 发布事件，触发熔断短路缓存失效
+        publishStateChangedEvent(state.getChannelId(), state.getChannelApiKeyId(), state.getChannelModelId());
+
         // 2. 联动删除同 (channelId, channelApiKeyId) 的渠道级记录（渠道门跟随模型恢复）
         //    条件：渠道记录的 openedAt 不晚于模型记录（只跟随"先于我熔断"的渠道门）。
         //    防止探测期间渠道门被真实请求重新触发后，旧模型记录误删新渠道门。
@@ -326,6 +349,8 @@ public class CircuitBreakerService {
         stateMapper.deleteById(state.getId());
         log.info("熔断门打开（删除记录） - channelId={}, channelApiKeyId={}, channelModelId={}",
                 state.getChannelId(), state.getChannelApiKeyId(), state.getChannelModelId());
+        // 发布事件，触发熔断短路缓存失效
+        publishStateChangedEvent(state.getChannelId(), state.getChannelApiKeyId(), state.getChannelModelId());
     }
 
     /**
@@ -635,6 +660,8 @@ public class CircuitBreakerService {
         if (count > 0) {
             log.info("手动解除熔断 - channelModelId={}, channelId={}, channelApiKeyId={}, 解除{}条",
                     channelModelId, channelId, channelApiKeyId, count);
+            // 发布事件，触发熔断短路缓存失效
+            publishStateChangedEvent(channelId, channelApiKeyId, channelModelId);
         }
         return count;
     }

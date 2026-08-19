@@ -118,6 +118,26 @@ public class RelayService {
                 webClient, circuitBreakerRecoveryService, streamUsageMap);
     }
 
+    /**
+     * 注入本地缓存服务（可选能力，由 Spring 调用；测试直接 new 时可省略）。
+     * <p>透传给内部创建的 {@link CandidateRouter}，使熔断短路缓存在生产环境生效，
+     * 同时不影响单元测试（tests 直接 new 时缓存保持 null、走直查行为不变）。</p>
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setLocalCacheService(com.myai.gateway.config.LocalCacheService localCacheService) {
+        this.candidateRouter.setLocalCacheService(localCacheService);
+    }
+
+    /**
+     * 注入业务指标（可选能力，由 Spring 调用；测试直接 new 时可省略）。
+     * <p>透传给内部创建的 {@link CandidateRouter}，使 Prometheus 业务指标在生产环境生效，
+     * 同时不影响单元测试。</p>
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRelayMetrics(com.myai.gateway.observability.RelayMetrics relayMetrics) {
+        this.candidateRouter.setRelayMetrics(relayMetrics);
+    }
+
     // ========== 非流式入口 ==========
 
     /**

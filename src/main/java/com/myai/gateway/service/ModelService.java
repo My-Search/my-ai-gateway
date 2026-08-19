@@ -2,6 +2,7 @@ package com.myai.gateway.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.myai.gateway.config.LocalCacheService;
 import com.myai.gateway.entity.*;
 import com.myai.gateway.mapper.*;
 import org.slf4j.Logger;
@@ -30,6 +31,13 @@ public class ModelService {
     private final CircuitBreakerConfigMapper circuitBreakerConfigMapper;
     private final ChannelService channelService;
 
+    /**
+     * 本服务热点查询缓存（可选能力）。
+     * <p>由 Spring 注入 {@link LocalCacheService}；单元测试直接 new 时保持 null，走直查，
+     * 行为与未加缓存前完全一致。缓存以短 TTL 自愈 + 写路径显式失效保证数据一致。</p>
+     */
+    private LocalCacheService localCacheService;
+
     public ModelService(ModelMapper modelMapper, ModelChannelRelMapper relMapper,
                         ChannelModelMapper channelModelMapper, ChannelMapper channelMapper,
                         CircuitBreakerConfigMapper circuitBreakerConfigMapper,
@@ -41,6 +49,33 @@ public class ModelService {
         this.circuitBreakerConfigMapper = circuitBreakerConfigMapper;
         this.channelService = channelService;
     }
+
+    /**
+     * 注入本地缓存服务（可选能力，由 Spring 调用；测试直接 new 时可省略）。
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setLocalCacheService(LocalCacheService localCacheService) {
+        this.localCacheService = localCacheService;
+    }
+
+    private boolean hasCache() {
+        return localCacheService != null;
+    }
+
+    /**
+     * 按命名空间失效一个缓存键（写操作后调用，保证后续读拿到最新数据）。
+     */
+    private void invalidateCache(String namespace, String key) {
+        if (hasCache()) {
+            localCacheService.invalidate(namespace, key);
+        }
+    }
+
+    /** 缓存命名空间常量（与 LocalCacheService 共享，写方失效用同一组常量） */
+    private static final String CACHE_MODEL_BY_ID = LocalCacheService.NS_MODEL_BY_ID;
+    private static final String CACHE_MODEL_BY_NAME = LocalCacheService.NS_MODEL_BY_NAME;
+    private static final String CACHE_CHANNEL_MODEL_BY_ID = LocalCacheService.NS_CHANNEL_MODEL_BY_ID;
+    private static final String CACHE_CHANNEL_BY_ID = LocalCacheService.NS_CHANNEL_BY_ID;
 
     // ==================== 自定义模型 CRUD ====================
 
@@ -62,10 +97,25 @@ public class ModelService {
     }
 
     public Model getById(Long id) {
+        if (id == null) {
+            return null;
+        }
+        if (hasCache()) {
+            return localCacheService.get(CACHE_MODEL_BY_ID, String.valueOf(id),
+                    () -> modelMapper.selectById(id));
+        }
         return modelMapper.selectById(id);
     }
 
     public Model getByModelName(String modelName) {
+        if (modelName == null) {
+            return null;
+        }
+        if (hasCache()) {
+            return localCacheService.get(CACHE_MODEL_BY_NAME, modelName,
+                    () -> modelMapper.selectOne(
+                            new LambdaQueryWrapper<Model>().eq(Model::getModelName, modelName)));
+        }
         return modelMapper.selectOne(
                 new LambdaQueryWrapper<Model>().eq(Model::getModelName, modelName));
     }
@@ -92,7 +142,19 @@ public class ModelService {
 
     @Transactional
     public Model update(Model model) {
+        // 先取旧实体：改名场景下需失效旧 modelName 的缓存（否则最长 TTL 内按旧名查到已不存在的实体）
+        Model old = model.getId() != null ? modelMapper.selectById(model.getId()) : null;
         modelMapper.updateById(model);
+        // 模型更新会影响 id/name 命中缓存，主动失效
+        if (model.getId() != null) {
+            invalidateCache(CACHE_MODEL_BY_ID, String.valueOf(model.getId()));
+        }
+        if (old != null && old.getModelName() != null) {
+            invalidateCache(CACHE_MODEL_BY_NAME, old.getModelName());
+        }
+        if (model.getModelName() != null) {
+            invalidateCache(CACHE_MODEL_BY_NAME, model.getModelName());
+        }
         return model;
     }
 
@@ -117,6 +179,11 @@ public class ModelService {
         circuitBreakerConfigMapper.delete(
                 new LambdaQueryWrapper<CircuitBreakerConfig>().eq(CircuitBreakerConfig::getModelId, id));
         modelMapper.deleteById(id);
+        // 删除后失效模型 id/name 缓存
+        invalidateCache(CACHE_MODEL_BY_ID, String.valueOf(id));
+        if (self != null && self.getModelName() != null) {
+            invalidateCache(CACHE_MODEL_BY_NAME, self.getModelName());
+        }
     }
 
     // ==================== 关联渠道模型管理 ====================
@@ -229,6 +296,8 @@ public class ModelService {
         }
         model.setUpdatedAt(LocalDateTime.now());
         modelMapper.updateById(model);
+        // relMode / inheritFromModelId 变更影响 getChannelRels 解析，失效模型缓存
+        invalidateCache(CACHE_MODEL_BY_ID, String.valueOf(modelId));
         return model;
     }
 
@@ -473,6 +542,13 @@ public class ModelService {
      * 根据 ID 查询渠道模型
      */
     public ChannelModel getChannelModelById(Long channelModelId) {
+        if (channelModelId == null) {
+            return null;
+        }
+        if (hasCache()) {
+            return localCacheService.get(CACHE_CHANNEL_MODEL_BY_ID, String.valueOf(channelModelId),
+                    () -> channelModelMapper.selectById(channelModelId));
+        }
         return channelModelMapper.selectById(channelModelId);
     }
 
@@ -506,6 +582,13 @@ public class ModelService {
      * 根据 ID 查询渠道
      */
     public Channel getChannelById(Long channelId) {
+        if (channelId == null) {
+            return null;
+        }
+        if (hasCache()) {
+            return localCacheService.get(CACHE_CHANNEL_BY_ID, String.valueOf(channelId),
+                    () -> channelMapper.selectById(channelId));
+        }
         return channelMapper.selectById(channelId);
     }
 
