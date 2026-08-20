@@ -66,6 +66,15 @@
         </select>
       </div>
 
+      <div class="form-group">
+        <label for="modelRefresh">{{ t('channel.form.modelRefresh') }}</label>
+        <select id="modelRefresh" v-model.number="form.modelRefreshEnabled" class="form-control">
+          <option :value="1">{{ t('channel.form.modelRefreshAuto') }}</option>
+          <option :value="0">{{ t('channel.form.modelRefreshNone') }}</option>
+        </select>
+        <div class="form-hint">{{ t('channel.form.modelRefreshHint') }}</div>
+      </div>
+
       <!-- Channel Models -->
       <div class="form-group">
         <label>{{ t('channel.form.models') }}</label>
@@ -280,7 +289,8 @@ const form = ref<Partial<Channel>>({
   name: '',
   channelType: 'openai',
   baseUrl: '',
-  enabled: 1
+  enabled: 1,
+  modelRefreshEnabled: 1
 })
 const apiKeys = ref<ChannelApiKey[]>([])
 const models = ref<ModelItem[]>([])
@@ -300,6 +310,8 @@ onMounted(async () => {
       const res = await channelApi.get(id)
       const data = res.data
       form.value = { ...data.channel }
+      // 旧渠道无刷新模式字段，回显默认自动刷新
+      if (form.value.modelRefreshEnabled == null) form.value.modelRefreshEnabled = 1
       apiKeys.value = (data.apiKeys || []).map(k => ({ ...k }))
       models.value = (data.channelModels || []).map(m => ({
         id: m.id,

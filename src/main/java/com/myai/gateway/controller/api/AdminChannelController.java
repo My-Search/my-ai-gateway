@@ -109,6 +109,8 @@ public class AdminChannelController {
             channel.setChannelType((String) body.get("channelType"));
             channel.setBaseUrl((String) body.get("baseUrl"));
             channel.setEnabled(body.get("enabled") != null ? Integer.parseInt(body.get("enabled").toString()) : 1);
+            channel.setModelRefreshEnabled(body.get("model_refresh_enabled") != null
+                    ? Integer.parseInt(body.get("model_refresh_enabled").toString()) : 1);
 
             String manualModels = body.get("manualModels") != null ? body.get("manualModels").toString() : "[]";
             String apiKeysJson = body.get("apiKeysJson") != null ? body.get("apiKeysJson").toString() : "[]";
@@ -147,6 +149,9 @@ public class AdminChannelController {
             if (body.containsKey("channelType")) channel.setChannelType((String) body.get("channelType"));
             if (body.containsKey("baseUrl")) channel.setBaseUrl((String) body.get("baseUrl"));
             if (body.containsKey("enabled")) channel.setEnabled(Integer.parseInt(body.get("enabled").toString()));
+            if (body.containsKey("model_refresh_enabled")) {
+                channel.setModelRefreshEnabled(Integer.parseInt(body.get("model_refresh_enabled").toString()));
+            }
 
             String manualModels = body.get("manualModels") != null ? body.get("manualModels").toString() : null;
             String apiKeysJson = body.get("apiKeysJson") != null ? body.get("apiKeysJson").toString() : null;

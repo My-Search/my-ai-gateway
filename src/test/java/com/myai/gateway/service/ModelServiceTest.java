@@ -49,8 +49,19 @@ class ModelServiceTest {
         channelMapper = mock(ChannelMapper.class);
         circuitBreakerConfigMapper = mock(CircuitBreakerConfigMapper.class);
         channelService = mock(ChannelService.class);
-        service = new ModelService(modelMapper, relMapper, channelModelMapper, channelMapper,
-                circuitBreakerConfigMapper, channelService);
+
+        // 创建子组件
+        ModelQuery modelQuery = new ModelQuery(modelMapper);
+        ModelCacheQuery cacheQuery = new ModelCacheQuery(modelMapper, channelMapper, null);
+        ModelInheritanceResolver inheritanceResolver = new ModelInheritanceResolver(
+                modelMapper, relMapper, channelModelMapper, channelMapper);
+        ModelChannelRelManager relManager = new ModelChannelRelManager(relMapper, modelMapper);
+        CircuitBreakerConfigManager circuitBreakerConfigManager =
+                new CircuitBreakerConfigManager(circuitBreakerConfigMapper, modelMapper, relMapper);
+        ModelCrud modelCrud = new ModelCrud(modelMapper, circuitBreakerConfigMapper, relMapper, null);
+
+        service = new ModelService(modelQuery, modelCrud, cacheQuery, inheritanceResolver,
+                relManager, circuitBreakerConfigManager, channelService, channelModelMapper);
     }
 
     // ==================== Helpers ====================

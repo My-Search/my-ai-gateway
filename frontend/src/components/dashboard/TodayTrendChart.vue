@@ -3,7 +3,7 @@
     <div class="card-header">
       <div class="card-title"><SvgIcon name="chart" :size="18" /> {{ t('dashboard.todayTrend') }}</div>
       <div class="tab-switch">
-        <button :class="['tab-btn', mode === 'all' ? 'active' : '']" @click="switchMode('all')">{{ t('dashboard.trendAll') }}</button>
+        <button :class="['tab-btn', mode === 'all' ? 'active' : '']" @click="switchMode('all')">{{ t('dashboard.trendSuccessFail') }}</button>
         <button :class="['tab-btn', mode === 'entry' ? 'active' : '']" @click="switchMode('entry')">{{ t('dashboard.trendEntry') }}</button>
         <button :class="['tab-btn', mode === 'channel' ? 'active' : '']" @click="switchMode('channel')">{{ t('dashboard.trendChannel') }}</button>
       </div>
@@ -26,7 +26,7 @@ const props = withDefaults(defineProps<{
   date: ''
 })
 
-const mode = ref<'all' | 'entry' | 'channel'>('all')
+const mode = ref<'all' | 'entry' | 'channel'>('entry')
 const trendData = ref<TodayTrendData | null>(null)
 const chartRef = ref<HTMLDivElement | null>(null)
 let chart: echarts.ECharts | null = null

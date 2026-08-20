@@ -49,6 +49,9 @@ public class AdminConfigService {
     /** 熔断触发式探测节流（秒），默认 6；0=不节流 */
     public static final String KEY_CIRCUIT_BREAKER_PROBE_THROTTLE_SECONDS = "circuit_breaker_probe_throttle_seconds";
 
+    /** 渠道模型自动刷新间隔（分钟），默认 30 */
+    public static final String KEY_CHANNEL_MODEL_REFRESH_INTERVAL_MINUTES = "channel_model_refresh_interval_minutes";
+
     private final AdminConfigMapper adminConfigMapper;
 
     public AdminConfigService(AdminConfigMapper adminConfigMapper) {
@@ -194,6 +197,7 @@ public class AdminConfigService {
         String requestDataSaveLevel = getValueByKey(KEY_REQUEST_DATA_SAVE_LEVEL);
         String probeIntervalMinutes = getValueByKey(KEY_CIRCUIT_BREAKER_PROBE_INTERVAL_MINUTES);
         String probeThrottleSeconds = getValueByKey(KEY_CIRCUIT_BREAKER_PROBE_THROTTLE_SECONDS);
+        String modelRefreshIntervalMinutes = getValueByKey(KEY_CHANNEL_MODEL_REFRESH_INTERVAL_MINUTES);
         if (retentionDays == null) retentionDays = "7";
         if (cleanupEnabled == null) cleanupEnabled = "1";
         if (requestBodyTtlHours == null) requestBodyTtlHours = "4";
@@ -203,6 +207,7 @@ public class AdminConfigService {
         if (requestDataSaveLevel == null) requestDataSaveLevel = "info";
         if (probeIntervalMinutes == null) probeIntervalMinutes = "30";
         if (probeThrottleSeconds == null) probeThrottleSeconds = "6";
+        if (modelRefreshIntervalMinutes == null) modelRefreshIntervalMinutes = "30";
 
         Map<String, String> config = new LinkedHashMap<>();
         config.put(KEY_LOG_RETENTION_DAYS, retentionDays);
@@ -214,7 +219,26 @@ public class AdminConfigService {
         config.put(KEY_REQUEST_DATA_SAVE_LEVEL, requestDataSaveLevel);
         config.put(KEY_CIRCUIT_BREAKER_PROBE_INTERVAL_MINUTES, probeIntervalMinutes);
         config.put(KEY_CIRCUIT_BREAKER_PROBE_THROTTLE_SECONDS, probeThrottleSeconds);
+        config.put(KEY_CHANNEL_MODEL_REFRESH_INTERVAL_MINUTES, modelRefreshIntervalMinutes);
         return config;
+    }
+
+    /**
+     * 获取渠道模型自动刷新间隔（分钟），解析失败或非法时返回默认值 30。
+     */
+    public int getChannelModelRefreshIntervalMinutes() {
+        String value = getValueByKey(KEY_CHANNEL_MODEL_REFRESH_INTERVAL_MINUTES);
+        if (value != null) {
+            try {
+                int minutes = Integer.parseInt(value.trim());
+                if (minutes >= 1) {
+                    return minutes;
+                }
+            } catch (NumberFormatException e) {
+                log.warn("渠道模型刷新间隔配置非法，使用默认值: {}", value);
+            }
+        }
+        return 30;
     }
 
     /**

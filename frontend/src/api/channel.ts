@@ -7,6 +7,8 @@ export interface Channel {
   baseUrl: string
   apiKey?: string
   enabled: number
+  /** 模型刷新模式：1-自动刷新 0-不刷新，默认 1 */
+  modelRefreshEnabled?: number
   createdAt?: string
   updatedAt?: string
   // 用量统计字段（列表接口返回）

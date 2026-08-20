@@ -167,6 +167,22 @@ public class AdminConfigController {
                 }
             }
 
+            if (body.containsKey(AdminConfigService.KEY_CHANNEL_MODEL_REFRESH_INTERVAL_MINUTES)) {
+                String val = body.get(AdminConfigService.KEY_CHANNEL_MODEL_REFRESH_INTERVAL_MINUTES);
+                try {
+                    int minutes = Integer.parseInt(val);
+                    if (minutes < 1 || minutes > 1440) {
+                        result.put("success", false);
+                        result.put("error", "渠道模型刷新间隔必须在 1-1440 分钟之间");
+                        return ResponseEntity.ok(result);
+                    }
+                } catch (NumberFormatException e) {
+                    result.put("success", false);
+                    result.put("error", "渠道模型刷新间隔必须为有效数字");
+                    return ResponseEntity.ok(result);
+                }
+            }
+
             adminConfigService.updateSystemConfig(body);
             result.put("success", true);
             result.put("data", adminConfigService.getSystemConfig());

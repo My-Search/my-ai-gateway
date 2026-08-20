@@ -1,22 +1,23 @@
 package com.myai.gateway.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.myai.gateway.config.LocalCacheService;
-import com.myai.gateway.entity.*;
-import com.myai.gateway.mapper.*;
+import com.myai.gateway.entity.ChannelModel;
+import com.myai.gateway.entity.CircuitBreakerConfig;
+import com.myai.gateway.entity.Model;
+import com.myai.gateway.entity.ModelChannelRel;
+import com.myai.gateway.mapper.ChannelModelMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
- * 模型服务
+ * 模型服务门面
  * 管理自定义模型的增删改查，以及关联渠道模型和熔断配置
  */
 @Service
@@ -24,242 +25,90 @@ public class ModelService {
 
     private static final Logger log = LoggerFactory.getLogger(ModelService.class);
 
-    private final ModelMapper modelMapper;
-    private final ModelChannelRelMapper relMapper;
-    private final ChannelModelMapper channelModelMapper;
-    private final ChannelMapper channelMapper;
-    private final CircuitBreakerConfigMapper circuitBreakerConfigMapper;
+    private final ModelQuery modelQuery;
+    private final ModelCrud modelCrud;
+    private final ModelCacheQuery cacheQuery;
+    private final ModelInheritanceResolver inheritanceResolver;
+    private final ModelChannelRelManager relManager;
+    private final CircuitBreakerConfigManager circuitBreakerConfigManager;
     private final ChannelService channelService;
+    private final ChannelModelMapper channelModelMapper;
 
     /**
-     * 本服务热点查询缓存（可选能力）。
-     * <p>由 Spring 注入 {@link LocalCacheService}；单元测试直接 new 时保持 null，走直查，
-     * 行为与未加缓存前完全一致。缓存以短 TTL 自愈 + 写路径显式失效保证数据一致。</p>
+     * 热点查询缓存（可选能力）
      */
     private LocalCacheService localCacheService;
 
-    public ModelService(ModelMapper modelMapper, ModelChannelRelMapper relMapper,
-                        ChannelModelMapper channelModelMapper, ChannelMapper channelMapper,
-                        CircuitBreakerConfigMapper circuitBreakerConfigMapper,
-                        ChannelService channelService) {
-        this.modelMapper = modelMapper;
-        this.relMapper = relMapper;
-        this.channelModelMapper = channelModelMapper;
-        this.channelMapper = channelMapper;
-        this.circuitBreakerConfigMapper = circuitBreakerConfigMapper;
+    public ModelService(ModelQuery modelQuery,
+                        ModelCrud modelCrud,
+                        ModelCacheQuery cacheQuery,
+                        ModelInheritanceResolver inheritanceResolver,
+                        ModelChannelRelManager relManager,
+                        CircuitBreakerConfigManager circuitBreakerConfigManager,
+                        ChannelService channelService,
+                        ChannelModelMapper channelModelMapper) {
+        this.modelQuery = modelQuery;
+        this.modelCrud = modelCrud;
+        this.cacheQuery = cacheQuery;
+        this.inheritanceResolver = inheritanceResolver;
+        this.relManager = relManager;
+        this.circuitBreakerConfigManager = circuitBreakerConfigManager;
         this.channelService = channelService;
+        this.channelModelMapper = channelModelMapper;
     }
 
     /**
-     * 注入本地缓存服务（可选能力，由 Spring 调用；测试直接 new 时可省略）。
+     * 注入本地缓存服务（可选能力）
      */
-    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    @Autowired(required = false)
     public void setLocalCacheService(LocalCacheService localCacheService) {
         this.localCacheService = localCacheService;
     }
 
-    private boolean hasCache() {
-        return localCacheService != null;
-    }
-
-    /**
-     * 按命名空间失效一个缓存键（写操作后调用，保证后续读拿到最新数据）。
-     */
-    private void invalidateCache(String namespace, String key) {
-        if (hasCache()) {
-            localCacheService.invalidate(namespace, key);
-        }
-    }
-
-    /** 缓存命名空间常量（与 LocalCacheService 共享，写方失效用同一组常量） */
-    private static final String CACHE_MODEL_BY_ID = LocalCacheService.NS_MODEL_BY_ID;
-    private static final String CACHE_MODEL_BY_NAME = LocalCacheService.NS_MODEL_BY_NAME;
-    private static final String CACHE_CHANNEL_MODEL_BY_ID = LocalCacheService.NS_CHANNEL_MODEL_BY_ID;
-    private static final String CACHE_CHANNEL_BY_ID = LocalCacheService.NS_CHANNEL_BY_ID;
-
     // ==================== 自定义模型 CRUD ====================
 
     public List<Model> listAll() {
-        return modelMapper.selectList(
-                new LambdaQueryWrapper<Model>().orderByAsc(Model::getCreatedAt));
+        return modelQuery.listAll();
     }
 
-    /**
-     * 列出对外可见的模型列表（hidden=0 且 enabled=1）。
-     * 用于对外 API（/v1/models）和分享接口，隐藏模型仅在管理后台可见。
-     */
     public List<Model> listVisible() {
-        return modelMapper.selectList(
-                new LambdaQueryWrapper<Model>()
-                        .eq(Model::getHidden, 0)
-                        .eq(Model::getEnabled, 1)
-                        .orderByAsc(Model::getCreatedAt));
+        return modelQuery.listVisible();
     }
 
     public Model getById(Long id) {
-        if (id == null) {
-            return null;
-        }
-        if (hasCache()) {
-            return localCacheService.get(CACHE_MODEL_BY_ID, String.valueOf(id),
-                    () -> modelMapper.selectById(id));
-        }
-        return modelMapper.selectById(id);
+        return cacheQuery.getModelById(id);
     }
 
     public Model getByModelName(String modelName) {
-        if (modelName == null) {
-            return null;
-        }
-        if (hasCache()) {
-            return localCacheService.get(CACHE_MODEL_BY_NAME, modelName,
-                    () -> modelMapper.selectOne(
-                            new LambdaQueryWrapper<Model>().eq(Model::getModelName, modelName)));
-        }
-        return modelMapper.selectOne(
-                new LambdaQueryWrapper<Model>().eq(Model::getModelName, modelName));
+        return cacheQuery.getByModelName(modelName);
     }
 
-    /**
-     * 列出可作为继承源的入口模型（不含自身）。
-     * 规则：仅启用 (enabled=1) 的模型；过滤后会由调用方负责环检测。
-     */
     public List<Model> listInheritableModels(Long excludeModelId) {
-        return modelMapper.selectList(
-                new LambdaQueryWrapper<Model>()
-                        .eq(Model::getEnabled, 1)
-                        .ne(excludeModelId != null, Model::getId, excludeModelId)
-                        .orderByAsc(Model::getModelName));
+        return modelQuery.listInheritableModels(excludeModelId);
     }
 
-    @Transactional
     public Model create(Model model) {
-        modelMapper.insert(model);
-        // 自动创建默认熔断配置
-        createDefaultCircuitBreaker(model.getId());
-        return model;
+        return modelCrud.create(model);
     }
 
-    @Transactional
     public Model update(Model model) {
-        // 先取旧实体：改名场景下需失效旧 modelName 的缓存（否则最长 TTL 内按旧名查到已不存在的实体）
-        Model old = model.getId() != null ? modelMapper.selectById(model.getId()) : null;
-        modelMapper.updateById(model);
-        // 模型更新会影响 id/name 命中缓存，主动失效
-        if (model.getId() != null) {
-            invalidateCache(CACHE_MODEL_BY_ID, String.valueOf(model.getId()));
-        }
-        if (old != null && old.getModelName() != null) {
-            invalidateCache(CACHE_MODEL_BY_NAME, old.getModelName());
-        }
-        if (model.getModelName() != null) {
-            invalidateCache(CACHE_MODEL_BY_NAME, model.getModelName());
-        }
-        return model;
+        return modelCrud.update(model);
     }
 
-    @Transactional
     public void delete(Long id) {
-        // 阻止删除：若有其他模型正在继承本模型
-        Model self = modelMapper.selectById(id);
-        if (self != null) {
-            List<Model> inheritors = modelMapper.selectList(
-                    new LambdaQueryWrapper<Model>()
-                            .eq(Model::getRelMode, Model.RelMode.INHERIT)
-                            .eq(Model::getInheritFromModelId, id));
-            if (!inheritors.isEmpty()) {
-                String names = inheritors.stream()
-                        .map(Model::getModelName)
-                        .collect(Collectors.joining("、"));
-                throw new RuntimeException("模型「" + self.getModelName() + "」正被以下模型继承，无法删除：" + names);
-            }
-        }
-        // 级联删除关联和熔断配置
-        relMapper.delete(new LambdaQueryWrapper<ModelChannelRel>().eq(ModelChannelRel::getModelId, id));
-        circuitBreakerConfigMapper.delete(
-                new LambdaQueryWrapper<CircuitBreakerConfig>().eq(CircuitBreakerConfig::getModelId, id));
-        modelMapper.deleteById(id);
-        // 删除后失效模型 id/name 缓存
-        invalidateCache(CACHE_MODEL_BY_ID, String.valueOf(id));
-        if (self != null && self.getModelName() != null) {
-            invalidateCache(CACHE_MODEL_BY_NAME, self.getModelName());
-        }
+        modelCrud.delete(id);
     }
 
     // ==================== 关联渠道模型管理 ====================
 
-    /**
-     * 获取自定义模型关联的所有渠道模型（含渠道信息）。
-     * <p>
-     * 主干流程：根据模型的 relMode 决定返回自有 rels 还是解析自源模型（递归解析 + 环检测）。
-     * 继承模式下，关联列表是源模型的实时映射，rels 内的 id 是源模型 rel 的 id（用于排障识别）。
-     * </p>
-     */
     public List<ModelChannelRel> getChannelRels(Long modelId) {
-        return resolveRels(modelId, new java.util.HashSet<>());
+        return inheritanceResolver.getChannelRels(modelId);
     }
 
-    /**
-     * 递归解析模型的关联列表。
-     * - self_add：直接查本模型自有的 rels 并填充渠道信息
-     * - inherit：递归到源模型解析（带环检测）
-     */
-    private List<ModelChannelRel> resolveRels(Long modelId, java.util.Set<Long> visited) {
-        if (modelId == null) return java.util.Collections.emptyList();
-        if (!visited.add(modelId)) {
-            log.warn("检测到模型关联的循环继承，modelId={}，已访问链路={}", modelId, visited);
-            return java.util.Collections.emptyList();
-        }
-
-        Model model = modelMapper.selectById(modelId);
-        if (model == null) return java.util.Collections.emptyList();
-
-        if (Model.RelMode.INHERIT.equals(model.getRelMode()) && model.getInheritFromModelId() != null) {
-            return resolveRels(model.getInheritFromModelId(), visited);
-        }
-
-        // 自添加模式：直接查本模型自有的 rels
-        List<ModelChannelRel> rels = relMapper.selectList(
-                new LambdaQueryWrapper<ModelChannelRel>()
-                        .eq(ModelChannelRel::getModelId, modelId)
-                        .orderByAsc(ModelChannelRel::getSortOrder)
-                        .orderByAsc(ModelChannelRel::getCreatedAt));
-
-        // 填充渠道模型和渠道名称
-        for (ModelChannelRel rel : rels) {
-            ChannelModel cm = channelModelMapper.selectById(rel.getChannelModelId());
-            if (cm != null) {
-                rel.setChannelModelName(cm.getModelName());
-                rel.setInput(cm.getInput());
-                Channel channel = channelMapper.selectById(cm.getChannelId());
-                if (channel != null) {
-                    rel.setChannelName(channel.getName());
-                    rel.setChannelType(channel.getChannelType());
-                    rel.setChannelId(channel.getId());
-                    rel.setChannelEnabled(channel.getEnabled());
-                }
-            }
-        }
-        return rels;
-    }
-
-    /**
-     * 切换模型的关联模式。
-     * <p>
-     * 处理流程：
-     * - self_add → inherit：保留本模型自有的 rels（仅切换模式，切回时恢复），设置 inheritFromModelId
-     * - inherit → self_add：恢复为之前保留的自有 rels（之前自添加的 rels 切走时未被删除）
-     * - 同模式切换：仅当两端都是 inherit 且源不同时才允许切换源；同源则视为无操作
-     * </p>
-     *
-     * @param modelId      目标模型 ID
-     * @param newMode      新模式（self_add / inherit）
-     * @param sourceModelId  继承源模型 ID（仅 newMode='inherit' 时必填，且不能等于 modelId）
-     * @return 更新后的 Model
-     */
     @Transactional
     public Model setRelMode(Long modelId, String newMode, Long sourceModelId) {
-        Model model = modelMapper.selectById(modelId);
+        // 获取当前模式（直查新实例，避免修改共享缓存引用）
+        Model model = modelCrud.getById(modelId);
         if (model == null) {
             throw new RuntimeException("模型不存在");
         }
@@ -272,58 +121,35 @@ public class ModelService {
             if (sourceModelId.equals(modelId)) {
                 throw new RuntimeException("不能将模型继承自自身");
             }
-            Model source = modelMapper.selectById(sourceModelId);
+            Model source = cacheQuery.getModelById(sourceModelId);
             if (source == null) {
                 throw new RuntimeException("源模型不存在");
             }
             // 检测切换到 inherit 后是否会产生环
             java.util.Set<Long> visited = new java.util.HashSet<>();
             visited.add(modelId);
-            if (wouldCreateCycle(sourceModelId, visited)) {
+            if (inheritanceResolver.wouldCreateCycle(sourceModelId, visited)) {
                 throw new RuntimeException("指定的源模型会形成循环继承");
             }
-
-            // self_add → inherit：保留自有 rels（仅切换模式，切回时恢复）
-            // inherit → inherit：仅更新源
+            // self_add → inherit：保留自有 rels
             model.setRelMode(Model.RelMode.INHERIT);
             model.setInheritFromModelId(sourceModelId);
         } else if (Model.RelMode.SELF_ADD.equals(newMode)) {
-            // inherit → self_add：恢复为之前保留的自有 rels（之前自添加的 rels 未被删除）
+            // inherit → self_add：恢复为之前保留的自有 rels
             model.setRelMode(Model.RelMode.SELF_ADD);
             model.setInheritFromModelId(null);
         } else {
             throw new RuntimeException("未知的关联模式: " + newMode);
         }
         model.setUpdatedAt(LocalDateTime.now());
-        modelMapper.updateById(model);
-        // relMode / inheritFromModelId 变更影响 getChannelRels 解析，失效模型缓存
-        invalidateCache(CACHE_MODEL_BY_ID, String.valueOf(modelId));
+        modelCrud.update(model);
         return model;
     }
 
-    /**
-     * 检测从 startModelId 出发解析继承时是否会形成环。
-     * visited 集合中应已包含发起继承的 modelId。
-     */
-    private boolean wouldCreateCycle(Long startModelId, java.util.Set<Long> visited) {
-        Model m = modelMapper.selectById(startModelId);
-        if (m == null) return false;
-        if (!Model.RelMode.INHERIT.equals(m.getRelMode()) || m.getInheritFromModelId() == null) {
-            return false;
-        }
-        Long next = m.getInheritFromModelId();
-        if (visited.contains(next)) return true;
-        visited.add(next);
-        return wouldCreateCycle(next, visited);
-    }
-
-    /**
-     * 获取所有可用的渠道模型（含渠道信息），用于关联选择
-     */
     public List<ChannelModel> getAllAvailableChannelModels() {
-        List<Channel> channels = channelService.listEnabled();
+        List<com.myai.gateway.entity.Channel> channels = channelService.listEnabled();
         List<ChannelModel> allModels = new java.util.ArrayList<>();
-        for (Channel channel : channels) {
+        for (com.myai.gateway.entity.Channel channel : channels) {
             List<ChannelModel> models = channelService.getChannelModels(channel.getId());
             for (ChannelModel cm : models) {
                 cm.setChannelName(channel.getName());
@@ -331,230 +157,82 @@ public class ModelService {
                 allModels.add(cm);
             }
         }
-        // 按模型名排序（相同前缀天然排在一起）
         allModels.sort(java.util.Comparator.comparing(ChannelModel::getModelName));
         return allModels;
     }
 
-    /**
-     * 添加关联
-     */
-    @Transactional
     public ModelChannelRel addChannelRel(ModelChannelRel rel) {
-        assertSelfAddMode(rel.getModelId());
+        relManager.assertSelfAddMode(rel.getModelId());
         // 检查是否已存在关联
-        ModelChannelRel existing = relMapper.selectOne(
-                new LambdaQueryWrapper<ModelChannelRel>()
-                        .eq(ModelChannelRel::getModelId, rel.getModelId())
-                        .eq(ModelChannelRel::getChannelModelId, rel.getChannelModelId()));
+        com.myai.gateway.entity.ModelChannelRel existing = relManager.getExistingRel(
+                rel.getModelId(), rel.getChannelModelId());
         if (existing != null) {
             throw new RuntimeException("该渠道模型已关联到此自定义模型");
         }
-        // 自动设置 sortOrder 为当前最大值+1（如果没有则从0开始）
-        ModelChannelRel lastRel = relMapper.selectOne(
-                new LambdaQueryWrapper<ModelChannelRel>()
-                        .eq(ModelChannelRel::getModelId, rel.getModelId())
-                        .orderByDesc(ModelChannelRel::getSortOrder)
-                        .last("LIMIT 1"));
-        rel.setSortOrder((lastRel != null && lastRel.getSortOrder() != null)
-                ? lastRel.getSortOrder() + 1 : 0);
-        relMapper.insert(rel);
+        // 自动设置 sortOrder
+        int nextSortOrder = relManager.getNextSortOrder(rel.getModelId());
+        rel.setSortOrder(nextSortOrder);
+        relManager.insertRel(rel);
         return rel;
     }
 
-    /**
-     * 批量添加关联（跳过已存在的）
-     */
-    @Transactional
     public int batchAddChannelRels(Long modelId, List<Long> channelModelIds) {
-        assertSelfAddMode(modelId);
-        int added = 0;
-        // 获取当前最大的 sortOrder
-        ModelChannelRel lastRel = relMapper.selectOne(
-                new LambdaQueryWrapper<ModelChannelRel>()
-                        .eq(ModelChannelRel::getModelId, modelId)
-                        .orderByDesc(ModelChannelRel::getSortOrder)
-                        .last("LIMIT 1"));
-        int nextSortOrder = (lastRel != null && lastRel.getSortOrder() != null)
-                ? lastRel.getSortOrder() + 1 : 0;
-
-        for (Long channelModelId : channelModelIds) {
-            ModelChannelRel existing = relMapper.selectOne(
-                    new LambdaQueryWrapper<ModelChannelRel>()
-                            .eq(ModelChannelRel::getModelId, modelId)
-                            .eq(ModelChannelRel::getChannelModelId, channelModelId));
-            if (existing != null) {
-                continue; // 跳过已存在的关联
-            }
-            ModelChannelRel newRel = new ModelChannelRel(modelId, channelModelId);
-            newRel.setSortOrder(nextSortOrder++);
-            relMapper.insert(newRel);
-            added++;
-        }
-        if (added > 0) {
-            log.info("批量关联模型 {}: 新增 {} 个关联", modelId, added);
-        }
-        return added;
+        return relManager.batchAddChannelRels(modelId, channelModelIds);
     }
 
-    /**
-     * 根据 ID 查询关联
-     */
     public ModelChannelRel getChannelRelById(Long relId) {
-        return relMapper.selectById(relId);
+        return relManager.getChannelRelById(relId);
     }
 
-    /**
-     * 删除关联
-     */
-    @Transactional
     public void removeChannelRel(Long relId) {
-        ModelChannelRel rel = relMapper.selectById(relId);
-        if (rel == null) {
-            throw new RuntimeException("关联不存在");
-        }
-        assertSelfAddMode(rel.getModelId());
-        relMapper.deleteById(relId);
+        relManager.removeChannelRel(relId);
     }
 
-    /**
-     * 更新关联的默认思考强度（reasoning_effort）
-     *
-     * @param relId 关联 ID
-     * @param reasoningEffort 思考强度值（null 表示清除默认值）
-     */
-    @Transactional
     public void updateChannelRelReasoningEffort(Long relId, String reasoningEffort) {
-        ModelChannelRel rel = relMapper.selectById(relId);
-        if (rel == null) {
-            throw new RuntimeException("关联不存在");
-        }
-        assertSelfAddMode(rel.getModelId());
-        rel.setReasoningEffort(reasoningEffort);
-        relMapper.updateById(rel);
-        log.info("更新关联推理强度: relId={}, reasoningEffort={}", relId, reasoningEffort);
+        relManager.updateChannelRelReasoningEffort(relId, reasoningEffort);
     }
 
-    /**
-     * 更新关联的排序顺序
-     */
-    @Transactional
     public void updateChannelRelSortOrder(Long relId, Integer newSortOrder) {
-        ModelChannelRel rel = relMapper.selectById(relId);
-        if (rel == null) {
-            throw new RuntimeException("关联不存在");
-        }
-        assertSelfAddMode(rel.getModelId());
-        rel.setSortOrder(newSortOrder);
-        relMapper.updateById(rel);
+        relManager.updateChannelRelSortOrder(relId, newSortOrder);
     }
 
-    /**
-     * 批量更新多个关联的排序顺序
-     * @param sortedRelIds 按期望顺序排列的关联 ID 列表
-     */
-    @Transactional
     public void updateChannelRelSortOrders(List<Long> sortedRelIds) {
-        if (sortedRelIds == null || sortedRelIds.isEmpty()) return;
-        // 先校验所有 rels 对应的模型都不是 inherit 模式
-        for (int i = 0; i < sortedRelIds.size(); i++) {
-            ModelChannelRel rel = relMapper.selectById(sortedRelIds.get(i));
-            if (rel == null) {
-                throw new RuntimeException("关联不存在: id=" + sortedRelIds.get(i));
-            }
-            if (i == 0) {
-                // 仅校验第一个的 modelId（同一批次属于同一模型）
-                assertSelfAddMode(rel.getModelId());
-            }
-            rel.setSortOrder(i);
-            relMapper.updateById(rel);
-        }
-    }
-
-    /**
-     * 校验模型处于 self_add 模式，否则抛出明确错误。
-     * 继承模式下不允许手动修改关联。
-     */
-    private void assertSelfAddMode(Long modelId) {
-        if (modelId == null) return;
-        Model m = modelMapper.selectById(modelId);
-        if (m != null && Model.RelMode.INHERIT.equals(m.getRelMode())) {
-            throw new RuntimeException("模型「" + m.getModelName() + "」当前为继承模式，无法修改关联");
-        }
+        relManager.updateChannelRelSortOrders(sortedRelIds);
     }
 
     // ==================== 熔断配置 ====================
 
     public CircuitBreakerConfig getCircuitBreakerConfig(Long modelId) {
-        CircuitBreakerConfig config = circuitBreakerConfigMapper.selectOne(
-                new LambdaQueryWrapper<CircuitBreakerConfig>()
-                        .eq(CircuitBreakerConfig::getModelId, modelId));
-        if (config == null) {
-            config = createDefaultCircuitBreaker(modelId);
-        }
-        // 填充模型名
-        Model model = modelMapper.selectById(modelId);
-        if (model != null) {
-            config.setModelName(model.getModelName());
-        }
-        return config;
+        return circuitBreakerConfigManager.getCircuitBreakerConfig(modelId);
     }
 
-    @Transactional
     public CircuitBreakerConfig updateCircuitBreakerConfig(CircuitBreakerConfig config) {
-        CircuitBreakerConfig existing = circuitBreakerConfigMapper.selectOne(
-                new LambdaQueryWrapper<CircuitBreakerConfig>()
-                        .eq(CircuitBreakerConfig::getModelId, config.getModelId()));
-        if (existing != null) {
-            config.setId(existing.getId());
-            circuitBreakerConfigMapper.updateById(config);
-        } else {
-            circuitBreakerConfigMapper.insert(config);
-        }
-        return config;
+        return circuitBreakerConfigManager.updateCircuitBreakerConfig(config);
     }
 
-    private CircuitBreakerConfig createDefaultCircuitBreaker(Long modelId) {
-        CircuitBreakerConfig config = new CircuitBreakerConfig();
-        config.setModelId(modelId);
-        config.setRetryCount(3);
-        config.setCircuitBreakDuration(60);
-        config.setCircuitBreakScope("model");
-        config.setEnabled(1);
-        circuitBreakerConfigMapper.insert(config);
-        return config;
+    public int getCircuitBreakDurationByChannelModelId(Long channelModelId) {
+        return circuitBreakerConfigManager.getCircuitBreakDurationByChannelModelId(channelModelId);
     }
 
     // ==================== 查询方法 ====================
 
-    /**
-     * 获取自定义模型关联的可用渠道模型列表（已过滤熔断状态等）
-     */
     public List<ModelChannelRel> getAvailableRels(Long modelId) {
         return getChannelRels(modelId).stream()
                 .filter(r -> r.getEnabled() == 1)
-                .collect(Collectors.toList());
+                .collect(java.util.stream.Collectors.toList());
     }
 
-    // ==================== 跨服务查询 ====================
-
-    /**
-     * 根据 ID 查询渠道模型
-     */
     public ChannelModel getChannelModelById(Long channelModelId) {
         if (channelModelId == null) {
             return null;
         }
-        if (hasCache()) {
-            return localCacheService.get(CACHE_CHANNEL_MODEL_BY_ID, String.valueOf(channelModelId),
+        if (localCacheService != null) {
+            return localCacheService.get(LocalCacheService.NS_CHANNEL_MODEL_BY_ID, String.valueOf(channelModelId),
                     () -> channelModelMapper.selectById(channelModelId));
         }
         return channelModelMapper.selectById(channelModelId);
     }
 
-    /**
-     * 根据 ID 批量查询渠道模型
-     */
     public List<ChannelModel> getChannelModelsByIds(Collection<Long> channelModelIds) {
         if (channelModelIds == null || channelModelIds.isEmpty()) {
             return List.of();
@@ -562,86 +240,33 @@ public class ModelService {
         return channelModelMapper.selectBatchIds(channelModelIds);
     }
 
-    /**
-     * 查询指定渠道下第一个启用的渠道模型（熔断探测目标用）。
-     * <p>渠道级门探测时渠道下所有模型共用同一上游，任一启用模型即可代表渠道可达性。</p>
-     */
     public ChannelModel getFirstEnabledChannelModelByChannelId(Long channelId) {
         if (channelId == null) {
             return null;
         }
         return channelModelMapper.selectOne(
-                new LambdaQueryWrapper<ChannelModel>()
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ChannelModel>()
                         .eq(ChannelModel::getChannelId, channelId)
                         .eq(ChannelModel::getEnabled, 1)
                         .orderByAsc(ChannelModel::getId)
                         .last("LIMIT 1"));
     }
 
-    /**
-     * 根据 ID 查询渠道
-     */
-    public Channel getChannelById(Long channelId) {
-        if (channelId == null) {
-            return null;
-        }
-        if (hasCache()) {
-            return localCacheService.get(CACHE_CHANNEL_BY_ID, String.valueOf(channelId),
-                    () -> channelMapper.selectById(channelId));
-        }
-        return channelMapper.selectById(channelId);
+    public com.myai.gateway.entity.Channel getChannelById(Long channelId) {
+        return cacheQuery.getChannelById(channelId);
     }
 
-    /**
-     * 根据渠道模型 ID 反查其所属自定义模型的熔断持续时间（秒）。
-     * <p>用于探测失败后的续期时长：{@code channelModelId → model_channel_rels → modelId → 熔断配置}。
-     * 查不到配置或时长无效时返回默认 {@value #DEFAULT_CIRCUIT_BREAK_DURATION_SECONDS} 秒。</p>
-     */
-    public int getCircuitBreakDurationByChannelModelId(Long channelModelId) {
-        if (channelModelId == null) {
-            return DEFAULT_CIRCUIT_BREAK_DURATION_SECONDS;
-        }
-        try {
-            ModelChannelRel rel = relMapper.selectOne(
-                    new LambdaQueryWrapper<ModelChannelRel>()
-                            .eq(ModelChannelRel::getChannelModelId, channelModelId)
-                            .last("LIMIT 1"));
-            if (rel != null && rel.getModelId() != null) {
-                CircuitBreakerConfig config = circuitBreakerConfigMapper.selectOne(
-                        new LambdaQueryWrapper<CircuitBreakerConfig>()
-                                .eq(CircuitBreakerConfig::getModelId, rel.getModelId()));
-                if (config != null && config.getCircuitBreakDuration() != null
-                        && config.getCircuitBreakDuration() > 0) {
-                    return config.getCircuitBreakDuration();
-                }
-            }
-        } catch (Exception e) {
-            log.warn("反查熔断时长失败，使用默认值: channelModelId={}, err={}", channelModelId, e.getMessage());
-        }
-        return DEFAULT_CIRCUIT_BREAK_DURATION_SECONDS;
-    }
+    // ==================== LRU 支持 ====================
 
-    private static final int DEFAULT_CIRCUIT_BREAK_DURATION_SECONDS = 60;
-
-    // ==================== 轮询 LRU 支持 ====================
-
-    /**
-     * 更新渠道模型的最后使用时间（用于轮询 LRU 排序）
-     *
-     * <p>非关键路径操作，失败时仅记录日志不抛出异常，避免影响主请求流程。
-     * 使用单字段 UPDATE 替代先 SELECT 再全字段 UPDATE，缩短锁持有时间，
-     * 缓解 SQLite 单写者模型下的 SQLITE_BUSY 竞争。</p>
-     *
-     * @param channelModelId 渠道模型 ID
-     */
     public void updateChannelModelLastUsed(Long channelModelId) {
         if (channelModelId == null) {
             return;
         }
         try {
-            LambdaUpdateWrapper<ChannelModel> wrapper = new LambdaUpdateWrapper<ChannelModel>()
-                    .eq(ChannelModel::getId, channelModelId)
-                    .set(ChannelModel::getLastUsedAt, LocalDateTime.now());
+            com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ChannelModel> wrapper =
+                    new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ChannelModel>()
+                            .eq(ChannelModel::getId, channelModelId)
+                            .set(ChannelModel::getLastUsedAt, LocalDateTime.now());
             channelModelMapper.update(null, wrapper);
             log.debug("渠道模型 {} 最后使用时间已更新", channelModelId);
         } catch (Exception e) {

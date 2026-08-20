@@ -168,6 +168,27 @@
         </div>
       </div>
 
+      <!-- Channel Model Auto Refresh -->
+      <div class="section">
+        <div class="section-header">
+          <SvgIcon name="refresh" :size="18" />
+          <span>{{ t('systemConfig.modelRefreshManagement') }}</span>
+        </div>
+        <div class="section-desc">{{ t('systemConfig.modelRefreshManagementDesc') }}</div>
+
+        <div class="config-row">
+          <div class="config-row-label">
+            <div class="config-label">{{ t('systemConfig.modelRefreshInterval') }}</div>
+            <div class="config-hint">{{ t('systemConfig.modelRefreshIntervalHint') }}</div>
+          </div>
+          <div class="config-row-control">
+            <input type="number" class="form-control" style="width:120px;"
+                   v-model.number="form.channel_model_refresh_interval_minutes"
+                   :min="1" :max="1440" />
+          </div>
+        </div>
+      </div>
+
       <!-- Save -->
       <div class="section-footer">
         <button class="btn btn-primary" @click="handleSave" :disabled="saving">
@@ -202,7 +223,8 @@ const form = reactive({
   timeout_min_seconds: 20,
   timeout_max_seconds: 60,
   circuit_breaker_probe_interval_minutes: 30,
-  circuit_breaker_probe_throttle_seconds: 6
+  circuit_breaker_probe_throttle_seconds: 6,
+  channel_model_refresh_interval_minutes: 30
 })
 
 /** 表单是否已被修改但未保存 */
@@ -242,6 +264,8 @@ async function loadConfig() {
       form.circuit_breaker_probe_interval_minutes = Number.isNaN(probeInterval) ? 30 : probeInterval
       const probeThrottle = parseFloat(res.data.data.circuit_breaker_probe_throttle_seconds)
       form.circuit_breaker_probe_throttle_seconds = Number.isNaN(probeThrottle) ? 6 : probeThrottle
+      const modelRefreshInterval = parseInt(res.data.data.channel_model_refresh_interval_minutes)
+      form.channel_model_refresh_interval_minutes = Number.isNaN(modelRefreshInterval) ? 30 : modelRefreshInterval
       // 加载完成后记录初始快照
       snapshotForm()
     }
@@ -280,6 +304,11 @@ async function handleSave() {
     return
   }
 
+  if (!form.channel_model_refresh_interval_minutes || form.channel_model_refresh_interval_minutes < 1) {
+    error.value = t('systemConfig.modelRefreshIntervalInvalid')
+    return
+  }
+
   saving.value = true
   error.value = ''
   successMsg.value = ''
@@ -293,7 +322,8 @@ async function handleSave() {
       timeout_min_seconds: String(form.timeout_min_seconds),
       timeout_max_seconds: String(form.timeout_max_seconds),
       circuit_breaker_probe_interval_minutes: String(form.circuit_breaker_probe_interval_minutes),
-      circuit_breaker_probe_throttle_seconds: String(form.circuit_breaker_probe_throttle_seconds)
+      circuit_breaker_probe_throttle_seconds: String(form.circuit_breaker_probe_throttle_seconds),
+      channel_model_refresh_interval_minutes: String(form.channel_model_refresh_interval_minutes)
     })
     if (res.data.success) {
       successMsg.value = t('systemConfig.saveSuccess')

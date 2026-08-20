@@ -10,6 +10,7 @@ export interface SystemConfig {
   timeout_max_seconds: string
   circuit_breaker_probe_interval_minutes: string
   circuit_breaker_probe_throttle_seconds: string
+  channel_model_refresh_interval_minutes: string
 }
 
 export const systemApi = {

@@ -1,35 +1,37 @@
 package com.myai.gateway.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.myai.gateway.entity.RequestLog;
 import com.myai.gateway.mapper.RequestLogMapper;
 import org.springframework.stereotype.Service;
 
-import java.time.*;
-import java.time.format.DateTimeFormatter;
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.List;
+import java.util.Map;
 
 /**
- * 统计服务 - 从请求日志中聚合数据
+ * 统计服务 - 从请求日志中聚合数据（门面）
+ * <p>
+ * Dashboard / 趋势图表 / API Key 用量的具体聚合逻辑分别由
+ * {@link DashboardStatsCollector}、{@link TrendChartStatsCollector}、
+ * {@link ApiKeyUsageStatsCollector} 承担，本类仅做职责编排与对外暴露，
+ * 保持对外 API 稳定（controller/前端零改动）。
+ * </p>
  */
 @Service
 public class StatsService {
 
-    private static final ZoneId SHANGHAI = ZoneId.of("Asia/Shanghai");
-
-    private final RequestLogMapper requestLogMapper;
+    private final DashboardStatsCollector dashboardStats;
+    private final TrendChartStatsCollector trendChartStats;
+    private final ApiKeyUsageStatsCollector apiKeyUsageStats;
 
     public StatsService(RequestLogMapper requestLogMapper) {
-        this.requestLogMapper = requestLogMapper;
+        this.dashboardStats = new DashboardStatsCollector(requestLogMapper);
+        this.trendChartStats = new TrendChartStatsCollector(requestLogMapper);
+        this.apiKeyUsageStats = new ApiKeyUsageStatsCollector(requestLogMapper);
     }
 
     /**
      * 获取Dashboard统计数据
      * <p>
      * 使用 SQL 聚合查询替代原来的全量加载+内存聚合方式，大幅减少数据扫描量。
-     * 优化前：10+ 次全量查询（含 7 次逐日循环），加载全部行到内存做 stream 聚合
-     * 优化后：7 次轻量聚合查询，SQLite 直接返回聚合结果
      * </p>
      *
      * @param channelRankPeriod 渠道排行时间周期：today / yesterday / week / month
@@ -37,179 +39,7 @@ public class StatsService {
      * @param date              参考日期（yyyy-MM-dd，可选，null 表示今天）
      */
     public Map<String, Object> getDashboardStats(String channelRankPeriod, String modelRankPeriod, String date) {
-        Map<String, Object> stats = new LinkedHashMap<>();
-        // 统一使用 Asia/Shanghai 时区计算日期范围，与 getTodayHourlyTrend 保持一致
-        // created_at 存储为 UTC，需要将上海时区的日期起止转换为 UTC 用于 SQL WHERE
-        LocalDate refDate = date != null && !date.isBlank() ? LocalDate.parse(date) : LocalDate.now(SHANGHAI);
-        LocalDateTime todayStart = refDate.atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
-        LocalDateTime yesterdayStart = todayStart.minusDays(1);
-        LocalDateTime sevenDaysAgo = todayStart.minusDays(6);
-
-        // 1. 今日聚合统计（trace-level 去重）
-        Map<String, Object> todayAgg = requestLogMapper.selectTodayAggregatedStats(todayStart);
-        long todayRequests = toLong(todayAgg.get("today_requests"));       // 今日发起的唯一请求数
-        double avgResponseTime = todayAgg.get("avg_response_time") != null
-                ? ((Number) todayAgg.get("avg_response_time")).doubleValue() : 0.0;
-
-        // 2. 昨日唯一请求数（同比对比，trace-level 去重）
-        long yesterdayRequests = requestLogMapper.selectYesterdayStartCount(yesterdayStart, todayStart);
-
-        // 3. 以 trace-level 计算成功/失败数与成功率
-        //    todayFail: 今日发起且从未 success（所有尝试均失败）的 trace 数
-        //    todaySuccess: 今日发起且至少有一次 success 的 trace 数
-        long todayFail = requestLogMapper.countFailedTraces(todayStart);
-        long todaySuccess = Math.max(0, todayRequests - todayFail);
-        double successRate = todayRequests > 0 ? (double) todaySuccess / todayRequests * 100 : 0;
-
-        stats.put("todayRequests", todayRequests);
-        stats.put("yesterdayRequests", yesterdayRequests);
-        stats.put("todaySuccess", todaySuccess);
-        stats.put("todayFail", todayFail);
-        stats.put("avgResponseTime", Math.round(avgResponseTime));
-        stats.put("successRate", Math.round(successRate * 10) / 10.0);
-
-        // 4. Token 用量
-        Map<String, Object> tokenStats = new LinkedHashMap<>();
-        tokenStats.put("promptTokens", toLong(todayAgg.get("prompt_tokens")));
-        tokenStats.put("completionTokens", toLong(todayAgg.get("completion_tokens")));
-        tokenStats.put("totalTokens", toLong(todayAgg.get("total_tokens")));
-        stats.put("todayTokenStats", tokenStats);
-
-        // 5. 本月统计（上海时区日期转 UTC 查询）
-        LocalDateTime monthStart = toUtc(refDate.withDayOfMonth(1));
-        LocalDateTime monthEnd = toUtc(refDate.plusMonths(1).withDayOfMonth(1));
-        Map<String, Object> monthAgg = requestLogMapper.selectMonthlyAggregatedStats(monthStart, monthEnd);
-        long monthlyRequests = toLong(monthAgg.get("monthly_requests"));
-        long monthlySuccess = toLong(monthAgg.get("monthly_success"));
-        long monthlyFail = toLong(monthAgg.get("monthly_fail"));
-        double monthlyAvgResponse = monthAgg.get("avg_response_time") != null
-                ? ((Number) monthAgg.get("avg_response_time")).doubleValue() : 0.0;
-        double monthlySuccessRate = monthlyRequests > 0 ? (double) monthlySuccess / monthlyRequests * 100 : 0.0;
-
-        Map<String, Object> monthlyStats = new LinkedHashMap<>();
-        monthlyStats.put("requests", monthlyRequests);
-        monthlyStats.put("promptTokens", toLong(monthAgg.get("monthly_prompt_tokens")));
-        monthlyStats.put("completionTokens", toLong(monthAgg.get("monthly_completion_tokens")));
-        monthlyStats.put("totalTokens", toLong(monthAgg.get("monthly_total_tokens")));
-        monthlyStats.put("successRate", Math.round(monthlySuccessRate * 10) / 10.0);
-        monthlyStats.put("avgResponseTime", Math.round(monthlyAvgResponse));
-        monthlyStats.put("failCount", monthlyFail);
-
-        // 5.1 上月统计（用于环比）
-        LocalDateTime prevMonthStart = toUtc(refDate.minusMonths(1).withDayOfMonth(1));
-        LocalDateTime prevMonthEnd = toUtc(refDate.withDayOfMonth(1));
-        Map<String, Object> prevMonthAgg = requestLogMapper.selectMonthlyAggregatedStats(prevMonthStart, prevMonthEnd);
-        long prevMonthlyRequests = toLong(prevMonthAgg.get("monthly_requests"));
-        long prevMonthlySuccess = toLong(prevMonthAgg.get("monthly_success"));
-        long prevMonthlyFail = toLong(prevMonthAgg.get("monthly_fail"));
-        double prevMonthlyAvgResponse = prevMonthAgg.get("avg_response_time") != null
-                ? ((Number) prevMonthAgg.get("avg_response_time")).doubleValue() : 0.0;
-        double prevMonthlySuccessRate = prevMonthlyRequests > 0 ? (double) prevMonthlySuccess / prevMonthlyRequests * 100 : 0.0;
-
-        Map<String, Object> prevMonthlyStats = new LinkedHashMap<>();
-        prevMonthlyStats.put("requests", prevMonthlyRequests);
-        prevMonthlyStats.put("totalTokens", toLong(prevMonthAgg.get("monthly_total_tokens")));
-        prevMonthlyStats.put("successRate", Math.round(prevMonthlySuccessRate * 10) / 10.0);
-        prevMonthlyStats.put("avgResponseTime", Math.round(prevMonthlyAvgResponse));
-        prevMonthlyStats.put("failCount", prevMonthlyFail);
-
-        monthlyStats.put("prev", prevMonthlyStats);
-        stats.put("monthlyStats", monthlyStats);
-
-        // 6. 渠道排行、模型排行（按周期参数聚合）
-        PeriodRange channelPeriod = calculatePeriodRange(channelRankPeriod, refDate);
-        PeriodRange modelPeriod = calculatePeriodRange(modelRankPeriod, refDate);
-        stats.put("channelRank", requestLogMapper.selectChannelRank(channelPeriod.since(), channelPeriod.end()));
-        stats.put("modelRank", requestLogMapper.selectEntryModelRank(modelPeriod.since(), modelPeriod.end()));
-        stats.put("channelModelRank", requestLogMapper.selectChannelModelRank(modelPeriod.since(), modelPeriod.end()));
-
-        // 7. 7天趋势（一次 GROUP BY 替代原来 7 次循环）
-        List<Map<String, Object>> dailyTrend = buildDailyTrend(sevenDaysAgo);
-        long maxDailyRequests = dailyTrend.stream()
-                .mapToLong(d -> toLong(d.get("requests")))
-                .max().orElse(1);
-        if (maxDailyRequests == 0) maxDailyRequests = 1;
-        stats.put("dailyTrend", dailyTrend);
-        stats.put("maxDailyRequests", maxDailyRequests);
-
-        // 8. 最近 10 条独特 trace 的最新日志条目（trace-level 去重）
-        List<RequestLog> recentLogs = requestLogMapper.selectRecentTraces();
-        stats.put("recentLogs", recentLogs);
-
-        return stats;
-    }
-
-    /**
-     * 根据周期字符串计算查询时间范围
-     * 返回的时间范围已转换为 UTC（上海时区日期 → UTC）
-     */
-    private PeriodRange calculatePeriodRange(String period, LocalDate refDate) {
-        if (period == null) period = "today";
-        if (refDate == null) refDate = LocalDate.now(SHANGHAI);
-        return switch (period) {
-            case "yesterday" -> {
-                LocalDate yesterday = refDate.minusDays(1);
-                yield new PeriodRange(toUtc(yesterday), toUtc(refDate));
-            }
-            case "week" -> {
-                LocalDate weekStart = refDate.with(DayOfWeek.MONDAY);
-                yield new PeriodRange(toUtc(weekStart), null);
-            }
-            case "month" -> {
-                LocalDate monthStart = refDate.withDayOfMonth(1);
-                yield new PeriodRange(toUtc(monthStart), null);
-            }
-            default -> new PeriodRange(toUtc(refDate), null);
-        };
-    }
-
-    /** 时间范围记录 */
-    private record PeriodRange(LocalDateTime since, LocalDateTime end) {}
-
-    /** 将上海时区的 LocalDate 起始时刻转换为 UTC LocalDateTime，用于 SQL WHERE */
-    private LocalDateTime toUtc(LocalDate shanghaiDate) {
-        return shanghaiDate.atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
-    }
-
-    /**
-     * 从聚合查询结果中安全转为 long
-     */
-    private long toLong(Object value) {
-        if (value == null) return 0L;
-        return ((Number) value).longValue();
-    }
-
-    /**
-     * 从聚合查询结果构建 7 天趋势（带 label 字段，兼容前端）
-     */
-    private List<Map<String, Object>> buildDailyTrend(LocalDateTime since) {
-        List<Map<String, Object>> dbRows = requestLogMapper.selectDailyTrend(since);
-        // 用 Map 索引实现 O(1) 查找，替代原来的 O(n²) 双层循环
-        Map<String, Map<String, Object>> dateIndex = new HashMap<>();
-        for (Map<String, Object> row : dbRows) {
-            dateIndex.put((String) row.get("date"), row);
-        }
-        LocalDate startDate = since.toLocalDate();
-        List<Map<String, Object>> result = new ArrayList<>();
-        for (int i = 0; i < 7; i++) {
-            LocalDate date = startDate.plusDays(i);
-            String dateStr = date.toString();
-            Map<String, Object> day = new LinkedHashMap<>();
-            day.put("date", dateStr);
-            day.put("label", date.getMonthValue() + "/" + date.getDayOfMonth());
-            Map<String, Object> row = dateIndex.get(dateStr);
-            if (row != null) {
-                day.put("requests", toLong(row.get("requests")));
-                day.put("success", toLong(row.get("success")));
-                day.put("fail", toLong(row.get("fail")));
-            } else {
-                day.put("requests", 0L);
-                day.put("success", 0L);
-                day.put("fail", 0L);
-            }
-            result.add(day);
-        }
-        return result;
+        return dashboardStats.collect(channelRankPeriod, modelRankPeriod, date);
     }
 
     /**
@@ -225,303 +55,34 @@ public class StatsService {
      * </p>
      */
     public Map<String, Object> getTodayHourlyTrend(String mode, String date) {
-        // 使用 Asia/Shanghai 时区计算今日范围，因为 created_at 存储为 UTC
-        // 将上海时区的今日起止转换为 UTC 用于 SQL WHERE
-        LocalDate refDate = date != null && !date.isBlank() ? LocalDate.parse(date) : LocalDate.now(SHANGHAI);
-        LocalDateTime todayStart = toUtc(refDate);
-        LocalDateTime tomorrowStart = toUtc(refDate.plusDays(1));
-
-        // 预填 144 个时间桶标签 ["00:00", "00:10", ..., "23:50"]
-        int bucketCount = 24 * 6; // 144
-        String[] buckets = new String[bucketCount];
-        Map<String, Integer> bucketIndex = new HashMap<>(bucketCount);
-        for (int i = 0; i < bucketCount; i++) {
-            String label = String.format("%02d:%02d", i / 6, (i % 6) * 10);
-            buckets[i] = label;
-            bucketIndex.put(label, i);
-        }
-
-        Map<String, long[]> seriesMap = new LinkedHashMap<>();
-        if ("entry".equals(mode)) {
-            List<Map<String, Object>> rows = requestLogMapper.selectTodayBucketEntryModelTrend(todayStart, tomorrowStart);
-            for (Map<String, Object> row : rows) {
-                String bucket = (String) row.get("bucket");
-                Integer idx = bucketIndex.get(bucket);
-                if (idx == null) continue;
-                String model = (String) row.get("model_name");
-                long requests = toLong(row.get("requests"));
-                if (model == null || model.isEmpty()) continue;
-                seriesMap.computeIfAbsent(model, k -> new long[bucketCount])[idx] += requests;
-            }
-        } else if ("channel".equals(mode)) {
-            List<Map<String, Object>> rows = requestLogMapper.selectTodayBucketChannelModelTrend(todayStart, tomorrowStart);
-            for (Map<String, Object> row : rows) {
-                String bucket = (String) row.get("bucket");
-                Integer idx = bucketIndex.get(bucket);
-                if (idx == null) continue;
-                String channelName = (String) row.get("channel_name");
-                String modelName = (String) row.get("name");
-                long requests = toLong(row.get("requests"));
-                String key = channelName != null ? channelName + "/" + modelName : modelName;
-                if (modelName == null || modelName.isEmpty()) continue;
-                seriesMap.computeIfAbsent(key, k -> new long[bucketCount])[idx] += requests;
-            }
-        } else {
-            // all 模式 — 拆分为成功/失败两条线
-            List<Map<String, Object>> rows = requestLogMapper.selectTodayBucketTrend(todayStart, tomorrowStart);
-            long[] total = new long[bucketCount];
-            long[] success = new long[bucketCount];
-            for (Map<String, Object> row : rows) {
-                String bucket = (String) row.get("bucket");
-                Integer idx = bucketIndex.get(bucket);
-                if (idx == null) continue;
-                total[idx] += toLong(row.get("requests"));
-                success[idx] += toLong(row.get("success"));
-            }
-            long[] fail = new long[bucketCount];
-            for (int i = 0; i < bucketCount; i++) {
-                fail[i] = Math.max(0, total[i] - success[i]);
-            }
-            seriesMap.put("success", success);
-            seriesMap.put("fail", fail);
-        }
-
-        // 按总请求量降序排列模型
-        List<String> sortedModels = seriesMap.entrySet().stream()
-                .sorted(Map.Entry.<String, long[]>comparingByValue(
-                        Comparator.comparingLong(a -> {
-                            long sum = 0;
-                            for (long v : a) sum += v;
-                            return -sum;
-                        })).reversed())
-                .map(Map.Entry::getKey)
-                .collect(Collectors.toList());
-
-        // 构建 series 输出
-        Map<String, Object> series = new LinkedHashMap<>();
-        for (String model : sortedModels) {
-            long[] values = seriesMap.get(model);
-            List<Long> list = new ArrayList<>(bucketCount);
-            for (long v : values) list.add(v);
-            series.put(model, list);
-        }
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("buckets", Arrays.asList(buckets));
-        result.put("mode", mode != null ? mode : "all");
-        result.put("series", series);
-        return result;
+        return trendChartStats.collectTodayHourlyTrend(mode, date);
     }
 
     /**
      * 获取所有渠道的汇总用量统计（用于渠道列表页展示）
-     * <p>
-     * 使用 SQL GROUP BY 聚合替代原来的全量加载 + 4 次流处理，
-     * 大幅减少从 request_logs 表扫描的数据量和 Java 堆内存占用。
-     * </p>
      *
      * @return Map: channelName -> { requestCount, promptTokens, completionTokens, totalTokens }
      */
     public Map<String, Map<String, Object>> getChannelSummaryStats() {
-        List<Map<String, Object>> rows = requestLogMapper.selectChannelSummaryStats();
-
-        Map<String, Map<String, Object>> result = new LinkedHashMap<>();
-        for (Map<String, Object> row : rows) {
-            String channelName = (String) row.get("channel_name");
-            if (channelName == null || channelName.isEmpty()) continue;
-            Map<String, Object> stats = new LinkedHashMap<>();
-            stats.put("requestCount", toLong(row.get("request_count")));
-            stats.put("promptTokens", toLong(row.get("prompt_tokens")));
-            stats.put("completionTokens", toLong(row.get("completion_tokens")));
-            stats.put("totalTokens", toLong(row.get("total_tokens")));
-            result.put(channelName, stats);
-        }
-        return result;
+        return trendChartStats.collectChannelSummaryStats();
     }
 
     /**
      * 获取指定渠道下各模型的用量统计（用于渠道模型详情页展示）
-     * 按 channel_model_name 聚合成功请求的 token 用量和请求次数
-     * 同时计算每个模型最近30次请求的平均响应时间，以及渠道整体最近30次的平均响应时间
-     * 额外返回今日/本周/本月的请求次数和 Token 用量（按 Asia/Shanghai 时区计算）
+     * <p>
+     * 按 channel_model_name 聚合成功请求的 token 用量和请求次数，
+     * 额外返回今日/本周/本月的请求次数和 Token 用量（按 Asia/Shanghai 时区计算）。
+     * </p>
      *
      * @param channelName 渠道名称
-     * @return Map: { modelStats: List[{ modelName, requestCount, promptTokens, completionTokens, totalTokens, avgResponseTimeRecent30, today, week, month }],
-     *                channelAvgResponseTimeRecent30: long }
+     * @return Map: { modelStats: List[...], channelAvgResponseTimeRecent30: long }
      */
     public Map<String, Object> getChannelModelUsageStats(String channelName) {
-        // Token 统计仅按 success 聚合
-        List<RequestLog> successLogs = requestLogMapper.selectList(
-                new LambdaQueryWrapper<RequestLog>()
-                        .eq(RequestLog::getPhase, "success")
-                        .eq(RequestLog::getChannelName, channelName)
-                        .isNotNull(RequestLog::getChannelModelName)
-                        .ne(RequestLog::getChannelModelName, ""));
-
-        // 响应时间按 success+fail 聚合（失败请求也有响应时间），按时间倒序用于截取最近 N 条
-        List<RequestLog> responseTimeLogs = requestLogMapper.selectList(
-                new LambdaQueryWrapper<RequestLog>()
-                        .in(RequestLog::getPhase, "success", "fail")
-                        .eq(RequestLog::getChannelName, channelName)
-                        .isNotNull(RequestLog::getChannelModelName)
-                        .ne(RequestLog::getChannelModelName, "")
-                        .isNotNull(RequestLog::getResponseTimeMs)
-                        .gt(RequestLog::getResponseTimeMs, 0)
-                        .orderByDesc(RequestLog::getCreatedAt));
-
-        // 计算时间段边界（上海时区 -> UTC，created_at 存储为 UTC）
-        LocalDate nowSh = LocalDate.now(SHANGHAI);
-        LocalDateTime todayStartUtc = nowSh.atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
-        LocalDateTime weekStartUtc = nowSh.with(DayOfWeek.MONDAY).atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
-        LocalDateTime monthStartUtc = nowSh.withDayOfMonth(1).atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
-
-        // 全量统计
-        Map<String, Long> requestCounts = aggregateRequestCounts(successLogs, null);
-        Map<String, Long> promptSums = aggregatePromptTokens(successLogs, null);
-        Map<String, Long> completionSums = aggregateCompletionTokens(successLogs, null);
-        Map<String, Long> totalSums = aggregateTotalTokens(successLogs, null);
-
-        // 今日统计
-        Map<String, Long> todayRequestCounts = aggregateRequestCounts(successLogs, todayStartUtc);
-        Map<String, Long> todayPromptSums = aggregatePromptTokens(successLogs, todayStartUtc);
-        Map<String, Long> todayCompletionSums = aggregateCompletionTokens(successLogs, todayStartUtc);
-        Map<String, Long> todayTotalSums = aggregateTotalTokens(successLogs, todayStartUtc);
-
-        // 本周统计
-        Map<String, Long> weekRequestCounts = aggregateRequestCounts(successLogs, weekStartUtc);
-        Map<String, Long> weekPromptSums = aggregatePromptTokens(successLogs, weekStartUtc);
-        Map<String, Long> weekCompletionSums = aggregateCompletionTokens(successLogs, weekStartUtc);
-        Map<String, Long> weekTotalSums = aggregateTotalTokens(successLogs, weekStartUtc);
-
-        // 本月统计
-        Map<String, Long> monthRequestCounts = aggregateRequestCounts(successLogs, monthStartUtc);
-        Map<String, Long> monthPromptSums = aggregatePromptTokens(successLogs, monthStartUtc);
-        Map<String, Long> monthCompletionSums = aggregateCompletionTokens(successLogs, monthStartUtc);
-        Map<String, Long> monthTotalSums = aggregateTotalTokens(successLogs, monthStartUtc);
-
-        // 按模型分组（已按时间倒序），每组取最近 30 条计算平均响应时间
-        Map<String, List<RequestLog>> logsByModel = responseTimeLogs.stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelModelName));
-
-        Map<String, Long> modelAvgResponseTimeRecent30 = new LinkedHashMap<>();
-        for (Map.Entry<String, List<RequestLog>> entry : logsByModel.entrySet()) {
-            double avg = entry.getValue().stream()
-                    .limit(30)
-                    .mapToInt(RequestLog::getResponseTimeMs)
-                    .average()
-                    .orElse(0.0);
-            modelAvgResponseTimeRecent30.put(entry.getKey(), Math.round(avg));
-        }
-
-        // 渠道级：所有模型合在一起取最近 30 条的平均响应时间
-        long channelAvgResponseTimeRecent30 = Math.round(
-                responseTimeLogs.stream()
-                        .limit(30)
-                        .mapToInt(RequestLog::getResponseTimeMs)
-                        .average()
-                        .orElse(0.0));
-
-        Set<String> allModels = new LinkedHashSet<>();
-        allModels.addAll(requestCounts.keySet());
-        allModels.addAll(todayRequestCounts.keySet());
-        allModels.addAll(weekRequestCounts.keySet());
-        allModels.addAll(monthRequestCounts.keySet());
-
-        List<Map<String, Object>> modelStatsList = allModels.stream()
-                .sorted((a, b) -> Long.compare(
-                        requestCounts.getOrDefault(b, 0L),
-                        requestCounts.getOrDefault(a, 0L)))
-                .map(modelName -> {
-                    Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("modelName", modelName);
-                    item.put("requestCount", requestCounts.getOrDefault(modelName, 0L));
-                    item.put("promptTokens", promptSums.getOrDefault(modelName, 0L));
-                    item.put("completionTokens", completionSums.getOrDefault(modelName, 0L));
-                    item.put("totalTokens", totalSums.getOrDefault(modelName, 0L));
-                    item.put("avgResponseTimeRecent30", modelAvgResponseTimeRecent30.getOrDefault(modelName, 0L));
-
-                    item.put("today", buildPeriodMap(
-                            todayRequestCounts.getOrDefault(modelName, 0L),
-                            todayPromptSums.getOrDefault(modelName, 0L),
-                            todayCompletionSums.getOrDefault(modelName, 0L),
-                            todayTotalSums.getOrDefault(modelName, 0L)));
-                    item.put("week", buildPeriodMap(
-                            weekRequestCounts.getOrDefault(modelName, 0L),
-                            weekPromptSums.getOrDefault(modelName, 0L),
-                            weekCompletionSums.getOrDefault(modelName, 0L),
-                            weekTotalSums.getOrDefault(modelName, 0L)));
-                    item.put("month", buildPeriodMap(
-                            monthRequestCounts.getOrDefault(modelName, 0L),
-                            monthPromptSums.getOrDefault(modelName, 0L),
-                            monthCompletionSums.getOrDefault(modelName, 0L),
-                            monthTotalSums.getOrDefault(modelName, 0L)));
-
-                    return item;
-                })
-                .collect(Collectors.toList());
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("modelStats", modelStatsList);
-        result.put("channelAvgResponseTimeRecent30", channelAvgResponseTimeRecent30);
-        return result;
-    }
-
-    private List<RequestLog> filterSince(List<RequestLog> logs, LocalDateTime since) {
-        if (since == null) return logs;
-        return logs.stream()
-                .filter(l -> l.getCreatedAt() != null && !l.getCreatedAt().isBefore(since))
-                .collect(Collectors.toList());
-    }
-
-    private Map<String, Long> aggregateRequestCounts(List<RequestLog> logs, LocalDateTime since) {
-        return filterSince(logs, since).stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelModelName, Collectors.counting()));
-    }
-
-    private Map<String, Long> aggregatePromptTokens(List<RequestLog> logs, LocalDateTime since) {
-        return filterSince(logs, since).stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
-                        Collectors.summingLong(l -> l.getPromptTokens() != null ? l.getPromptTokens() : 0)));
-    }
-
-    private Map<String, Long> aggregateCompletionTokens(List<RequestLog> logs, LocalDateTime since) {
-        return filterSince(logs, since).stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
-                        Collectors.summingLong(l -> l.getCompletionTokens() != null ? l.getCompletionTokens() : 0)));
-    }
-
-    private Map<String, Long> aggregateTotalTokens(List<RequestLog> logs, LocalDateTime since) {
-        return filterSince(logs, since).stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelModelName,
-                        Collectors.summingLong(l -> l.getTotalTokens() != null ? l.getTotalTokens() : 0)));
-    }
-
-    private Map<String, Object> buildPeriodMap(long requestCount, long promptTokens, long completionTokens, long totalTokens) {
-        Map<String, Object> map = new LinkedHashMap<>();
-        map.put("requestCount", requestCount);
-        map.put("promptTokens", promptTokens);
-        map.put("completionTokens", completionTokens);
-        map.put("totalTokens", totalTokens);
-        return map;
+        return trendChartStats.collectChannelModelUsageStats(channelName);
     }
 
     /**
      * 获取"请求日志"页面顶部"使用历史"堆叠柱状图数据。
-     * <p>
-     * 主干流程：
-     * <ol>
-     *   <li>把 year/month 转成 [since, until) 半开区间（含起始日 00:00、不含次月 00:00）</li>
-     *   <li>按 modelType 分支调用 SQL 聚合该月数据：
-     *     <ul>
-     *       <li>entry 模式：按入口模型名聚合 token 用量（仅统计 success 行）</li>
-     *       <li>channel 模式：按 trace 级聚合，最终成功归入该次渠道模型名，最终失败归为"请求失败"，统计请求次数</li>
-     *     </ul>
-     *   </li>
-     *   <li>遍历当月每一天，组装 days/dates 数组（无论是否有数据都补齐，便于前端稳定渲染）</li>
-     *   <li>将模型按该月总用量降序排序，确保色板稳定分配（最常用模型固定拿主色）</li>
-     *   <li>构建 values 矩阵：model -> List&lt;Long&gt;，长度等于 days.length</li>
-     * </ol>
-     * </p>
      *
      * @param year            目标年份（如 2026）
      * @param month           目标月份，1-12
@@ -533,108 +94,21 @@ public class StatsService {
      */
     public Map<String, Object> getLogUsageChart(int year, int month, String modelType, String modelName,
                                                 Long gatewayApiKeyId, String apiKeyName) {
-        return getLogUsageChartInternal(year, month, modelType, modelName, gatewayApiKeyId, apiKeyName);
+        return trendChartStats.collectLogUsageChart(year, month, modelType, modelName, gatewayApiKeyId, apiKeyName);
     }
 
     /** 兼容旧调用：仅传 modelName + apiKeyName */
     public Map<String, Object> getLogUsageChart(int year, int month, String modelName, String apiKeyName) {
-        return getLogUsageChartInternal(year, month, "entry", modelName, null, apiKeyName);
+        return trendChartStats.collectLogUsageChart(year, month, "entry", modelName, null, apiKeyName);
     }
 
     /** 兼容旧调用：传 modelName + gatewayApiKeyId + apiKeyName */
     public Map<String, Object> getLogUsageChart(int year, int month, String modelName, Long gatewayApiKeyId, String apiKeyName) {
-        return getLogUsageChartInternal(year, month, "entry", modelName, gatewayApiKeyId, apiKeyName);
-    }
-
-    private Map<String, Object> getLogUsageChartInternal(int year, int month, String modelType,
-                                                         String modelName,
-                                                         Long gatewayApiKeyId, String apiKeyName) {
-        // 1. 规范化入参并计算 [since, until)
-        YearMonth ym = YearMonth.of(year, month);
-        LocalDate sinceDate = ym.atDay(1);
-        LocalDate untilDate = ym.plusMonths(1).atDay(1);
-        LocalDateTime since = sinceDate.atStartOfDay();
-        LocalDateTime until = untilDate.atStartOfDay();
-        int daysInMonth = ym.lengthOfMonth();
-
-        // 2. 按 modelType 分支拉取该月 (date, model_name, total_tokens) 聚合行
-        boolean isChannel = "channel".equals(modelType);
-        List<Map<String, Object>> rows = isChannel
-            ? requestLogMapper.selectDailyChannelModelTokenUsage(
-                since, until, emptyToNull(modelName), gatewayApiKeyId, emptyToNull(apiKeyName))
-            : requestLogMapper.selectDailyModelTokenUsage(
-                since, until, emptyToNull(modelName), gatewayApiKeyId, emptyToNull(apiKeyName));
-
-        // 3. 预生成 days 数组（yyyy-MM-dd 形式）+ 用于 O(1) 查找的 dateIndex
-        DateTimeFormatter dateFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-        List<String> days = new ArrayList<>(daysInMonth);
-        Map<String, Integer> dateIndex = new HashMap<>(daysInMonth);
-        for (int d = 1; d <= daysInMonth; d++) {
-            String dateStr = sinceDate.withDayOfMonth(d).format(dateFmt);
-            days.add(dateStr);
-            dateIndex.put(dateStr, d - 1);
-        }
-
-        // 4. 遍历聚合行：累加到 modelTotals（用于排序）和 modelValues（按日填充）
-        //    使用 LinkedHashMap 保证遍历顺序稳定（与数据库返回顺序一致）
-        Map<String, long[]> modelValues = new LinkedHashMap<>();
-        Map<String, Long> modelTotals = new HashMap<>();
-        for (Map<String, Object> row : rows) {
-            String date = (String) row.get("date");
-            String model = (String) row.get("model_name");
-            long tokens = toLong(row.get("total_tokens"));
-            Integer idx = dateIndex.get(date);
-            if (idx == null || model == null || model.isEmpty()) continue;
-            long[] bucket = modelValues.computeIfAbsent(model, k -> new long[daysInMonth]);
-            bucket[idx] += tokens;
-            modelTotals.merge(model, tokens, Long::sum);
-        }
-
-        // 5. 按月总用量降序排序模型列表（保证前端颜色映射稳定：TopN 模型固定拿主色）
-        List<String> sortedModels = modelValues.keySet().stream()
-                .sorted(Comparator.comparingLong((String m) -> modelTotals.getOrDefault(m, 0L)).reversed())
-                .collect(Collectors.toList());
-
-        // 6. 构建 values 矩阵（model -> List<Long>）+ 累计 maxValue/totalValue
-        // maxValue 取「每天所有模型堆叠总和」的最大值，而非单模型单日最大值，
-        // 否则堆叠柱总高度可能远超 Y 轴上限导致截断。
-        Map<String, Object> values = new LinkedHashMap<>();
-        long maxValue = 0L;
-        long totalValue = 0L;
-        long[] dailyTotals = new long[daysInMonth];
-        for (String model : sortedModels) {
-            long[] bucket = modelValues.get(model);
-            List<Long> series = new ArrayList<>(daysInMonth);
-            for (int i = 0; i < daysInMonth; i++) {
-                long v = bucket[i];
-                series.add(v);
-                dailyTotals[i] += v;
-                totalValue += v;
-            }
-            values.put(model, series);
-        }
-        for (long dt : dailyTotals) {
-            if (dt > maxValue) maxValue = dt;
-        }
-
-        // 7. 组装返回结果
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("year", year);
-        result.put("month", month);
-        result.put("days", days);
-        result.put("models", sortedModels);
-        result.put("values", values);
-        result.put("maxValue", maxValue);
-        result.put("totalValue", totalValue);
-        return result;
+        return trendChartStats.collectLogUsageChart(year, month, "entry", modelName, gatewayApiKeyId, apiKeyName);
     }
 
     /**
      * 获取模型管理页所需的各模型统计与趋势数据。
-     * <p>
-     * 返回每个入口模型的：今日请求数、成功率、平均响应时间、以及今日每10分钟请求数趋势。
-     * 只有今日有请求的模型才会返回 stats；所有已知模型的 trend 都会补齐（无数据填 0）。
-     * </p>
      *
      * @param modelNames 所有已知模型名称列表（用于补齐无数据的模型趋势）
      * @param date       参考日期（yyyy-MM-dd，可选，null 表示今天）
@@ -644,130 +118,17 @@ public class StatsService {
      * }
      */
     public Map<String, Object> getModelListStats(List<String> modelNames, String date) {
-        LocalDate refDate = date != null && !date.isBlank() ? LocalDate.parse(date) : LocalDate.now(SHANGHAI);
-        LocalDateTime todayStart = toUtc(refDate);
-        LocalDateTime todayEnd = toUtc(refDate.plusDays(1));
-
-        // 1. 今日各模型统计
-        List<Map<String, Object>> modelStatsRows = requestLogMapper.selectTodayModelStats(todayStart);
-        Map<String, Map<String, Object>> statsMap = new LinkedHashMap<>();
-        for (Map<String, Object> row : modelStatsRows) {
-            String name = (String) row.get("model_name");
-            if (name == null || name.isEmpty()) continue;
-            long requests = toLong(row.get("requests"));
-            long success = toLong(row.get("success"));
-            double avgResponse = row.get("avg_response_time") != null
-                    ? ((Number) row.get("avg_response_time")).doubleValue() : 0.0;
-            double successRate = requests > 0 ? (double) success / requests * 100 : 0.0;
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("modelName", name);
-            item.put("requests", requests);
-            item.put("successRate", Math.round(successRate * 10) / 10.0);
-            item.put("avgResponseTime", Math.round(avgResponse));
-            statsMap.put(name, item);
-        }
-
-        // 2. 今日每10分钟趋势（按模型分组）
-        List<Map<String, Object>> trendRows = requestLogMapper.selectTodayModelBucketTrend(todayStart, todayEnd);
-        // 预生成 bucket 列表（00:00 ~ 23:50，每10分钟）
-        List<String> buckets = new ArrayList<>();
-        for (int h = 0; h < 24; h++) {
-            for (int m = 0; m < 60; m += 10) {
-                buckets.add(String.format("%02d:%02d", h, m));
-            }
-        }
-        Map<String, Integer> bucketIndex = new HashMap<>();
-        for (int i = 0; i < buckets.size(); i++) bucketIndex.put(buckets.get(i), i);
-
-        // 按模型收集趋势数据
-        Map<String, long[]> modelTrendArrays = new LinkedHashMap<>();
-        for (Map<String, Object> row : trendRows) {
-            String name = (String) row.get("model_name");
-            String bucket = (String) row.get("bucket");
-            if (name == null || name.isEmpty() || bucket == null) continue;
-            Integer idx = bucketIndex.get(bucket);
-            if (idx == null) continue;
-            long[] arr = modelTrendArrays.computeIfAbsent(name, k -> new long[buckets.size()]);
-            arr[idx] = toLong(row.get("requests"));
-        }
-
-        // 3. 补齐所有已知模型的 trend（无数据填 0）
-        Map<String, List<Long>> trends = new LinkedHashMap<>();
-        for (String name : modelNames) {
-            long[] arr = modelTrendArrays.get(name);
-            if (arr == null) arr = new long[buckets.size()];
-            List<Long> list = new ArrayList<>(buckets.size());
-            for (long v : arr) list.add(v);
-            trends.put(name, list);
-        }
-        // 也包含不在 modelNames 中但有数据的模型
-        for (Map.Entry<String, long[]> entry : modelTrendArrays.entrySet()) {
-            if (!trends.containsKey(entry.getKey())) {
-                List<Long> list = new ArrayList<>(buckets.size());
-                for (long v : entry.getValue()) list.add(v);
-                trends.put(entry.getKey(), list);
-            }
-        }
-
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("stats", new ArrayList<>(statsMap.values()));
-        result.put("trends", trends);
-        result.put("buckets", buckets);
-        return result;
+        return trendChartStats.collectModelListStats(modelNames, date);
     }
 
     /**
      * 获取所有 API Key 的日/周/月用量统计（token 和请求次数）
      * <p>
      * 返回 Map&lt;apiKeyId, Map&lt;period, stats&gt;&gt;，其中 period 为 "day"/"week"/"month"，
-     * stats 包含 requestCount 和 totalTokens。
-     * 所有时间范围基于上海时区计算。
+     * stats 包含 requestCount 和 totalTokens。所有时间范围基于上海时区计算。
      * </p>
      */
     public Map<Long, Map<String, Map<String, Object>>> getApiKeyUsageStats() {
-        LocalDate now = LocalDate.now(SHANGHAI);
-        // 今日起始（上海时区转 UTC）
-        LocalDateTime dayStart = toUtc(now);
-        // 本周起始（周一）
-        LocalDateTime weekStart = toUtc(now.with(DayOfWeek.MONDAY));
-        // 本月起始
-        LocalDateTime monthStart = toUtc(now.withDayOfMonth(1));
-
-        // 三个周期的查询
-        List<Map<String, Object>> dayStats = requestLogMapper.selectApiKeyUsageStats(dayStart);
-        List<Map<String, Object>> weekStats = requestLogMapper.selectApiKeyUsageStats(weekStart);
-        List<Map<String, Object>> monthStats = requestLogMapper.selectApiKeyUsageStats(monthStart);
-
-        // 构建结果：apiKeyId -> { day: {...}, week: {...}, month: {...} }
-        Map<Long, Map<String, Map<String, Object>>> result = new LinkedHashMap<>();
-        mergePeriodStats(result, "day", dayStats);
-        mergePeriodStats(result, "week", weekStats);
-        mergePeriodStats(result, "month", monthStats);
-        return result;
+        return apiKeyUsageStats.collect();
     }
-
-    /**
-     * 将某一周期的统计结果合并到 result 中
-     */
-    private void mergePeriodStats(Map<Long, Map<String, Map<String, Object>>> result,
-                                   String period, List<Map<String, Object>> statsList) {
-        for (Map<String, Object> row : statsList) {
-            Number idNum = (Number) row.get("gateway_api_key_id");
-            if (idNum == null) continue;
-            Long apiKeyId = idNum.longValue();
-            Map<String, Map<String, Object>> periods = result.computeIfAbsent(apiKeyId, k -> new LinkedHashMap<>());
-            Map<String, Object> periodStats = new LinkedHashMap<>();
-            periodStats.put("requestCount", toLong(row.get("request_count")));
-            periodStats.put("totalTokens", toLong(row.get("total_tokens")));
-            periods.put(period, periodStats);
-        }
-    }
-
-    /** null/空字符串/纯空白统一归一为 null，便于在 MyBatis 动态 SQL 中按空判断跳过条件。 */
-    private String emptyToNull(String s) {
-        if (s == null) return null;
-        String trimmed = s.trim();
-        return trimmed.isEmpty() ? null : trimmed;
-    }
-
 }

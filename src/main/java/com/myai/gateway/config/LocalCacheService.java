@@ -44,10 +44,11 @@ public class LocalCacheService {
 
     // ==================== 跨 Service 共享的缓存命名空间 ====================
     // 读方（如 ModelService）与写方（如 ChannelService）共用常量，避免字符串散落。
-    public static final String NS_MODEL_BY_ID = "ModelService.modelById";
-    public static final String NS_MODEL_BY_NAME = "ModelService.modelByName";
-    public static final String NS_CHANNEL_MODEL_BY_ID = "ModelService.channelModelById";
-    public static final String NS_CHANNEL_BY_ID = "ModelService.channelById";
+    // 注意：命名空间字符串一旦上线使用即为其真实键名，改动会导致缓存键不匹配（TTL 自愈）。
+    public static final String NS_MODEL_BY_ID = "model_by_id";
+    public static final String NS_MODEL_BY_NAME = "model_by_name";
+    public static final String NS_CHANNEL_MODEL_BY_ID = "channel_model_by_id";
+    public static final String NS_CHANNEL_BY_ID = "channel_by_id";
     public static final String NS_API_KEY_BY_CHANNEL = "ChannelApiKeyService.byChannel";
     public static final String NS_CIRCUIT_STATE_BY_SCOPE = "CandidateRouter.circuitState";
 

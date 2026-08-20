@@ -454,3 +454,15 @@ INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUE
 
 ALTER TABLE models ADD COLUMN force_override_reasoning_effort INTEGER DEFAULT 0;
 UPDATE models SET force_override_reasoning_effort = 0 WHERE force_override_reasoning_effort IS NULL;
+
+-- ========================================
+-- VERSION:v1.28.0
+-- 渠道模型自动刷新：channels 支持按渠道开关自动刷新模型
+-- model_refresh_enabled=1 定时任务按系统配置间隔刷新（默认 30 分钟），0=不刷新
+-- 刷新间隔在 admin_config 的 channel_model_refresh_interval_minutes 配置（默认 30 分钟）
+-- ========================================
+
+ALTER TABLE channels ADD COLUMN model_refresh_enabled INTEGER DEFAULT 1;
+UPDATE channels SET model_refresh_enabled = 1 WHERE model_refresh_enabled IS NULL;
+
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('channel_model_refresh_interval_minutes', '30', '渠道模型自动刷新间隔（分钟），默认 30 分钟');

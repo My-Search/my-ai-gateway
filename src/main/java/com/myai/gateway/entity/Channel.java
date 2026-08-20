@@ -34,6 +34,9 @@ public class Channel {
     /** 排序 */
     private Integer sortOrder;
 
+    /** 模型刷新模式：1-自动刷新（定时任务按系统配置间隔拉取） 0-不刷新 */
+    private Integer modelRefreshEnabled;
+
     @TableField(fill = FieldFill.INSERT)
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
     private LocalDateTime createdAt;
@@ -81,6 +84,9 @@ public class Channel {
 
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
+
+    public Integer getModelRefreshEnabled() { return modelRefreshEnabled; }
+    public void setModelRefreshEnabled(Integer modelRefreshEnabled) { this.modelRefreshEnabled = modelRefreshEnabled; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
