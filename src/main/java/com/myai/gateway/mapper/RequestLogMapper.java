@@ -132,7 +132,7 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(completion_tokens, 0) ELSE 0 END), 0) as monthly_completion_tokens, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as monthly_total_tokens, " +
             "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as monthly_success, " +
-            "AVG(CASE WHEN response_time_ms > 0 THEN response_time_ms ELSE NULL END) as avg_response_time, " +
+            "AVG(CASE WHEN first_byte_ms > 0 THEN first_byte_ms ELSE NULL END) as avg_response_time, " +
             "COUNT(DISTINCT CASE WHEN phase = 'fail' THEN trace_id END) as monthly_fail " +
             "FROM request_logs WHERE created_at >= #{monthStart} AND created_at < #{monthEnd}")
     Map<String, Object> selectMonthlyAggregatedStats(@Param("monthStart") LocalDateTime monthStart,
@@ -143,14 +143,14 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
      * <p>
      * today_requests:   今日发起请求的唯一 trace 数（phase='start' 去重）
      * today_success:   今日至少有一次 success 的唯一 trace 数（含跨日完成）
-     * avg_response_time: 成功/失败尝试的平均响应时间
+     * avg_response_time: 成功/失败尝试的首字节平均响应时间
      * 注：today_fail 在 Java 层通过 MAX(0, today_requests - today_success) 计算
      * </p>
      */
     @Select("SELECT " +
             "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as today_requests, " +
             "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as today_success, " +
-            "AVG(CASE WHEN response_time_ms > 0 THEN response_time_ms ELSE NULL END) as avg_response_time, " +
+            "AVG(CASE WHEN first_byte_ms > 0 THEN first_byte_ms ELSE NULL END) as avg_response_time, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(prompt_tokens, 0) ELSE 0 END), 0) as prompt_tokens, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(completion_tokens, 0) ELSE 0 END), 0) as completion_tokens, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as total_tokens " +
@@ -181,7 +181,7 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "SELECT channel_name as name, " +
             "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
             "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
-            "AVG(CASE WHEN response_time_ms > 0 THEN response_time_ms ELSE NULL END) as avgTime, " +
+            "AVG(CASE WHEN first_byte_ms > 0 THEN first_byte_ms ELSE NULL END) as avgTime, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as totalTokens " +
             "FROM request_logs WHERE created_at &gt;= #{since} " +
             "<if test='end != null'>AND created_at &lt; #{end}</if> " +
@@ -369,13 +369,13 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
 
     /**
      * 按入口模型聚合今日统计（trace-level 去重）。
-     * 返回 { model_name, requests, success, avg_response_time }
+     * 返回 { model_name, requests, success, avg_response_time }（avg_response_time 为首字节平均响应时间）
      */
     @Select("SELECT " +
             "model_name, " +
             "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
             "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
-            "AVG(CASE WHEN response_time_ms > 0 THEN response_time_ms ELSE NULL END) as avg_response_time " +
+            "AVG(CASE WHEN first_byte_ms > 0 THEN first_byte_ms ELSE NULL END) as avg_response_time " +
             "FROM request_logs WHERE created_at >= #{since} " +
             "AND model_name IS NOT NULL AND model_name != '' " +
             "GROUP BY model_name")
