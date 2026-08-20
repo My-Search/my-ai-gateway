@@ -82,13 +82,13 @@ class LatencyTrackerTest {
 
     @Test
     void getTimeout_hasMinFloor() {
-        // 6 个极低值样本（会被 clamp 到 MIN_LATENCY_MS=2500）
+        // 6 个极低值样本（会被 clamp 到 MIN_LATENCY_MS=500）
         for (int i = 0; i < 6; i++) {
             tracker.record(1L, 100L, 500L);
         }
 
         long timeout = tracker.getTimeout(1L, 100L);
-        // ema ≈ 2500 → 2500*3=7500 → clamp(7500, 20000, 60000) = 20000
+        // ema ≈ 500 → 500*3=1500 → clamp(1500, 20000, 60000) = 20000
         assertThat(timeout).isEqualTo(20_000L);
     }
 
@@ -152,9 +152,9 @@ class LatencyTrackerTest {
 
     @Test
     void record_lowerBoundClamp() {
-        // 1ms 被 clamp 到 MIN_LATENCY_MS=2500
+        // 1ms 被 clamp 到 MIN_LATENCY_MS=500
         tracker.record(1L, 100L, 1L);
-        assertThat(tracker.getLatency(1L, 100L)).isEqualTo(2_500L);
+        assertThat(tracker.getLatency(1L, 100L)).isEqualTo(LatencyTracker.MIN_LATENCY_MS);
     }
 
     @Test

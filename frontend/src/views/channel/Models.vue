@@ -59,7 +59,7 @@
             <th>{{ t('channel.models.status') }}</th>
             <th>{{ t('channel.models.requestCount') }}</th>
             <th>{{ t('channel.models.tokenUsage') }}</th>
-            <th>{{ t('channel.models.avgResponseShort') }}</th>
+            <th style="text-align:center;">{{ t('channel.models.avgResponseShort') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -89,7 +89,7 @@
               </template>
               <span v-else style="color:var(--text-muted);">-</span>
             </td>
-            <td style="text-align:right;font-variant-numeric:tabular-nums;">
+            <td style="text-align:center;font-variant-numeric:tabular-nums;">
               <span v-if="getModelStat(m.modelName)?.avgResponseTimeRecent30" style="font-weight:600;">
                 {{ formatResponseTime(getModelStat(m.modelName)?.avgResponseTimeRecent30) }}
               </span>
@@ -218,11 +218,10 @@ const totalCompletionTokens = computed(() =>
   modelStats.value.reduce((sum, s) => sum + getDisplayStat(s).completionTokens, 0)
 )
 
-/** Format response time: >=1000ms shows seconds, otherwise ms */
+/** Format response time: seconds with 2 decimals */
 function formatResponseTime(ms: number | undefined): string {
   if (ms == null || ms === 0) return '-'
-  if (ms >= 1000) return (ms / 1000).toFixed(2) + 's'
-  return Math.round(ms) + 'ms'
+  return (ms / 1000).toFixed(2) + 's'
 }
 
 onMounted(async () => {

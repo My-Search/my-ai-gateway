@@ -119,7 +119,7 @@
             <div class="stat-divider"></div>
             <div class="stat-item">
               <span class="stat-label">{{ t('model.list.avgResponse') }}</span>
-              <span class="stat-value">{{ card.stats?.avgResponseTime != null ? card.stats.avgResponseTime + 'ms' : '-' }}</span>
+              <span class="stat-value">{{ card.stats?.avgResponseTime != null ? formatSeconds(card.stats.avgResponseTime) : '-' }}</span>
             </div>
           </div>
 
@@ -196,6 +196,7 @@ import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel, type ModelStatsItem } from '@/api/model'
 import { sparklinePaths } from '@/utils/sparkline'
+import { formatSeconds } from '@/utils/format'
 import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'

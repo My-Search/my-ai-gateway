@@ -75,7 +75,7 @@
           </div>
           <div class="stat-body">
             <div class="stat-label">{{ t('dashboard.avgResponse') }}</div>
-            <div class="stat-value">{{ stats.avgResponseTime ?? '-' }}<small>ms</small></div>
+            <div class="stat-value">{{ formatSeconds(stats.avgResponseTime) }}</div>
             <div class="stat-hint">{{ t('dashboard.basedOnToday') }}</div>
           </div>
         </div>
@@ -154,7 +154,7 @@
           </div>
           <div class="monthly-stat-info">
             <div class="monthly-label">{{ t('dashboard.monthlyAvgResponse') }}</div>
-            <div class="monthly-value">{{ stats.monthlyStats?.avgResponseTime ?? 0 }}<small>ms</small></div>
+            <div class="monthly-value">{{ formatSeconds(stats.monthlyStats?.avgResponseTime) }}</div>
             <div class="monthly-change" :class="getChangeClass('avgResponseTime', true)">
               <span class="change-arrow">{{ getChangeArrow('avgResponseTime', true) }}</span>
               {{ getChangePercent('avgResponseTime') }}%
@@ -210,7 +210,7 @@
               <div class="rank-meta">
                 <span>{{ ch.requests }} {{ t('dashboard.requests') }}</span>
                 <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ ch.success }}</span>
-                <span v-if="ch.avgTime > 0" class="rank-meta-time">{{ ch.avgTime }}ms</span>
+                <span v-if="ch.avgTime > 0" class="rank-meta-time">{{ formatSeconds(ch.avgTime) }}</span>
                 <span class="rank-meta-tokens"><SvgIcon name="token" :size="10" /> {{ formatTokens(ch.totalTokens) }} tokens</span>
               </div>
             </div>
@@ -288,7 +288,7 @@ import { ref, computed, onMounted, onUnmounted, watch, onActivated } from 'vue'
 import { dashboardApi, type DashboardStats } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
 import { formatLocalTime } from '@/utils/date'
-import { formatNumber, formatTokens } from '@/utils/format'
+import { formatNumber, formatSeconds, formatTokens } from '@/utils/format'
 import TodayTrendChart from '@/components/dashboard/TodayTrendChart.vue'
 import PhaseBadge from '@/components/common/PhaseBadge.vue'
 import { sparklinePaths } from '@/utils/sparkline'

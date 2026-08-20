@@ -69,8 +69,8 @@
       <div class="form-group">
         <label for="modelRefresh">{{ t('channel.form.modelRefresh') }}</label>
         <select id="modelRefresh" v-model.number="form.modelRefreshEnabled" class="form-control">
-          <option :value="1">{{ t('channel.form.modelRefreshAuto') }}</option>
-          <option :value="0">{{ t('channel.form.modelRefreshNone') }}</option>
+          <option :value="1">{{ t('common.enabled') }}</option>
+          <option :value="0">{{ t('common.disabled') }}</option>
         </select>
         <div class="form-hint">{{ t('channel.form.modelRefreshHint') }}</div>
       </div>

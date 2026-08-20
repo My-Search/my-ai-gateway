@@ -264,15 +264,16 @@ public class CandidateRouter {
                     balancer.markSuccess(candidate);
                     modelService.updateChannelModelLastUsed(candidate.getChannelModel().getId());
                     relayLogger.updateGatewayApiKeyLastUsed(authHeader);
+                    Long firstByteMs = firstByteMsSince(traceId, startTime);
                     latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(),
-                            System.currentTimeMillis() - startTime);
+                            firstByteMs != null ? firstByteMs : System.currentTimeMillis() - startTime);
                     recordRouteMetric(req.getModel(), candidate.getChannel().getName(), "success", startTime);
                     String transformed = transformResponse(body, candidate, req, actualProvider);
                     int[] usage = extractUsageFromProviderResponse(body);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(), gatewayApiKeyId,
                             req.getModel(), candidate.getChannelModel().getModelName(),
                             candidate.getChannel().getName(), "success", "success", "请求成功",
-                            System.currentTimeMillis() - startTime, firstByteMsSince(traceId, startTime),
+                            System.currentTimeMillis() - startTime, firstByteMs,
                             retryIndex, usage[0], usage[1], usage[2]);
                     log.info("候选请求成功 - traceId={} channel={} model={} key={}",
                             traceId, candidate.getChannel().getName(), candidate.getChannelModel().getModelName(),
@@ -311,6 +312,8 @@ public class CandidateRouter {
                                                      ProviderInvoker invoker) {
         long attemptStartTime = System.currentTimeMillis();
         long timeoutMs = latencyTracker.getTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId());
+        // 每次尝试独立测量首字节：清掉上一次尝试（可能属于失败候选）残留的时间戳
+        firstByteArrivalMsByTraceId.remove(traceId);
         return invoker.invokeNonStream(authHeader, req, candidate, provider, traceId)
                 .flatMap(body -> {
                     if (body == null || body.isBlank()) {
@@ -466,17 +469,18 @@ public class CandidateRouter {
                             resultMsg = "流式请求成功（用量为估算值）";
                         }
                     }
+                    Long firstByteMs = firstByteMsSince(traceId, startTime);
                     balancer.markSuccess(candidate);
                     modelService.updateChannelModelLastUsed(candidate.getChannelModel().getId());
                     relayLogger.updateGatewayApiKeyLastUsed(authHeader);
                     latencyTracker.record(candidate.getChannel().getId(), candidate.getChannelModel().getId(),
-                            System.currentTimeMillis() - startTime);
+                            firstByteMs != null ? firstByteMs : System.currentTimeMillis() - startTime);
                     recordRouteMetric(req.getModel(), candidate.getChannel().getName(), "success", startTime);
                     streamContentManager.clearContent(traceId);
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(), gatewayApiKeyId,
                             req.getModel(), candidate.getChannelModel().getModelName(),
                             candidate.getChannel().getName(), "success", "success", resultMsg,
-                            System.currentTimeMillis() - startTime, firstByteMsSince(traceId, startTime),
+                            System.currentTimeMillis() - startTime, firstByteMs,
                             retryIndex, pt, ct, tt);
                 })
                 .switchIfEmpty(Flux.defer(() -> {
@@ -530,6 +534,8 @@ public class CandidateRouter {
                                                              ProviderInvoker invoker) {
         long attemptStartTime = System.currentTimeMillis();
         long timeoutMs = latencyTracker.getTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId());
+        // 每次尝试独立测量首字节：清掉上一次尝试（可能属于失败候选）残留的时间戳
+        firstByteArrivalMsByTraceId.remove(traceId);
         return invoker.invokeStream(authHeader, req, candidate, provider, internalClient, traceId)
                 // 仅对首个数据包应用超时（初次响应超时），收到任意一个事件后即不再限制后续空闲时间
                 // firstTimeout = Mono.delay(timeoutMs)：在 timeoutMs 后发出信号触发首元素超时
@@ -613,7 +619,7 @@ public class CandidateRouter {
     private Mono<String> bodyToUtf8StringWithFirstByte(org.springframework.web.reactive.function.client.ClientResponse resp,
                                                        String traceId) {
         return resp.bodyToFlux(org.springframework.core.io.buffer.DataBuffer.class)
-                .doOnNext(buf -> firstByteArrivalMsByTraceId.put(traceId, System.currentTimeMillis()))
+                .doOnNext(buf -> firstByteArrivalMsByTraceId.putIfAbsent(traceId, System.currentTimeMillis()))
                 .collectList()
                 .map(buffers -> {
                     java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
@@ -678,7 +684,7 @@ public class CandidateRouter {
                     // JSON 对象，导致后续 token 全部丢失。
                     return metaFlux.concatWith(sseHandler.extractCompleteEvents(
                                     resp.bodyToFlux(org.springframework.core.io.buffer.DataBuffer.class)
-                                            .doOnNext(buf -> firstByteArrivalMsByTraceId.put(traceId, System.currentTimeMillis())))
+                                            .doOnNext(buf -> firstByteArrivalMsByTraceId.putIfAbsent(traceId, System.currentTimeMillis())))
                             .map(chunk -> sseHandler.parseSseEventBlock(
                                     chunk, candidate, provider, req, traceId))
                             .flatMapSequential(Flux::fromIterable));

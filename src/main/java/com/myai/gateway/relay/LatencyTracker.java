@@ -10,8 +10,9 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 自适应超时追踪器
  *
- * <p>维护每个 {@code (channelId, channelModelId)} 组合的平均响应时间（EMA），
- * 用于计算自适应超时时间。</p>
+ * <p>维护每个 {@code (channelId, channelModelId)} 组合的首字节平均延迟（EMA），
+ * 用于计算自适应超时时间。测量输入为请求收到首个响应字节的耗时（首字节语义：
+ * 流式为首个 SSE 事件到达耗时；非流式响应一次到位，首字节耗时即完整响应耗时）。</p>
  *
  * <p>超时计算：</p>
  * <ul>
@@ -39,8 +40,8 @@ public class LatencyTracker {
     /** 默认超时时间（样本数不足时使用，60 秒） */
     static final long DEFAULT_TIMEOUT_MS = 60_000L;
 
-    /** 最小延迟（2.5 秒），避免 ema 过低 */
-    static final long MIN_LATENCY_MS = 2_500L;
+    /** 最小延迟（500 毫秒），避免首字节 ema 过低（总耗时语义下的 2.5s 钳位值对首字节偏高） */
+    static final long MIN_LATENCY_MS = 500L;
 
     /** 最小超时默认值（20 秒），当系统配置未设置时使用 */
     static final long DEFAULT_MIN_TIMEOUT_MS = 20_000L;

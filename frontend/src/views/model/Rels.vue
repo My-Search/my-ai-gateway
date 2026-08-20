@@ -244,8 +244,7 @@ function isRelUnavailable(rel: ModelChannelRel): boolean {
 }
 
 function formatRespTime(ms: number): string {
-  if (ms >= 1000) return (ms / 1000).toFixed(1) + 's'
-  return ms + 'ms'
+  return (ms / 1000).toFixed(2) + 's'
 }
 
 function effortLabel(value: string): string {

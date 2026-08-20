@@ -26,3 +26,13 @@ export function formatTokens(n: number | undefined | null): string {
   if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K'
   return n.toLocaleString()
 }
+
+/**
+ * 格式化耗时 - 统一以秒为单位显示，保留 2 位小数
+ * @param ms 毫秒数（允许 undefined/null）
+ * @returns 秒字符串（如 '1.25s'），空值返回 '-'
+ */
+export function formatSeconds(ms: number | undefined | null): string {
+  if (ms == null) return '-'
+  return (ms / 1000).toFixed(2) + 's'
+}

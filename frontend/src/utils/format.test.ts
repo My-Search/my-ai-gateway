@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatNumber, formatTokens } from './format'
+import { formatNumber, formatTokens, formatSeconds } from './format'
 
 describe('formatNumber', () => {
   it('空值返回 0', () => {
@@ -55,5 +55,24 @@ describe('formatTokens', () => {
   it('负数不进入 K/M 缩写分支，走千分位格式化', () => {
     expect(formatTokens(-500)).toBe('-500')
     expect(formatTokens(-5000)).toBe('-5,000')
+  })
+})
+
+describe('formatSeconds', () => {
+  it('空值返回 -', () => {
+    expect(formatSeconds(null)).toBe('-')
+    expect(formatSeconds(undefined)).toBe('-')
+  })
+
+  it('毫秒换算为秒并保留 2 位小数', () => {
+    expect(formatSeconds(0)).toBe('0.00s')
+    expect(formatSeconds(500)).toBe('0.50s')
+    expect(formatSeconds(1250)).toBe('1.25s')
+    expect(formatSeconds(60000)).toBe('60.00s')
+  })
+
+  it('不足 1 秒也以秒为单位显示', () => {
+    expect(formatSeconds(800)).toBe('0.80s')
+    expect(formatSeconds(99)).toBe('0.10s')
   })
 })
