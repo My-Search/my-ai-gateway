@@ -3,12 +3,15 @@ package com.myai.gateway.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.myai.gateway.entity.Channel;
 import com.myai.gateway.entity.ChannelModel;
+import com.myai.gateway.entity.ModelChannelRel;
 import com.myai.gateway.mapper.ChannelMapper;
 import com.myai.gateway.mapper.ChannelModelMapper;
+import com.myai.gateway.mapper.ModelChannelRelMapper;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 渠道模型查询 - 负责渠道模型的查询操作
@@ -17,9 +20,12 @@ import java.util.List;
 public class ChannelModelQuery {
 
     private final ChannelModelMapper channelModelMapper;
+    private final ModelChannelRelMapper modelChannelRelMapper;
 
-    public ChannelModelQuery(ChannelModelMapper channelModelMapper) {
+    public ChannelModelQuery(ChannelModelMapper channelModelMapper,
+                             ModelChannelRelMapper modelChannelRelMapper) {
         this.channelModelMapper = channelModelMapper;
+        this.modelChannelRelMapper = modelChannelRelMapper;
     }
 
     /**
@@ -42,16 +48,30 @@ public class ChannelModelQuery {
     }
 
     /**
-     * 删除单个渠道模型
+     * 删除单个渠道模型（同步清理其入口模型关联）
      */
     public void deleteChannelModel(Long modelId) {
+        modelChannelRelMapper.delete(
+                new LambdaQueryWrapper<ModelChannelRel>()
+                        .eq(ModelChannelRel::getChannelModelId, modelId));
         channelModelMapper.deleteById(modelId);
     }
 
     /**
-     * 删除渠道下的所有模型
+     * 删除渠道下的所有模型（同步清理其入口模型关联）
      */
     public int deleteAllChannelModels(Long channelId) {
+        List<Long> ids = channelModelMapper.selectList(
+                        new LambdaQueryWrapper<ChannelModel>()
+                                .eq(ChannelModel::getChannelId, channelId))
+                .stream()
+                .map(ChannelModel::getId)
+                .collect(Collectors.toList());
+        if (!ids.isEmpty()) {
+            modelChannelRelMapper.delete(
+                    new LambdaQueryWrapper<ModelChannelRel>()
+                            .in(ModelChannelRel::getChannelModelId, ids));
+        }
         return channelModelMapper.delete(
                 new LambdaQueryWrapper<ChannelModel>()
                         .eq(ChannelModel::getChannelId, channelId));

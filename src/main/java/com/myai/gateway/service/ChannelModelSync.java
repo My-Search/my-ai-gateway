@@ -7,11 +7,13 @@ import com.myai.gateway.entity.Channel;
 import com.myai.gateway.entity.ChannelModel;
 import com.myai.gateway.mapper.ChannelMapper;
 import com.myai.gateway.mapper.ChannelModelMapper;
+import com.myai.gateway.mapper.ModelChannelRelMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -28,13 +30,16 @@ public class ChannelModelSync {
 
     private final ChannelMapper channelMapper;
     private final ChannelModelMapper channelModelMapper;
+    private final ModelChannelRelMapper modelChannelRelMapper;
     private final ObjectMapper objectMapper;
     private final ChannelModelLoader modelLoader;
 
     public ChannelModelSync(ChannelMapper channelMapper, ChannelModelMapper channelModelMapper,
+                            ModelChannelRelMapper modelChannelRelMapper,
                             ObjectMapper objectMapper, ChannelModelLoader modelLoader) {
         this.channelMapper = channelMapper;
         this.channelModelMapper = channelModelMapper;
+        this.modelChannelRelMapper = modelChannelRelMapper;
         this.objectMapper = objectMapper;
         this.modelLoader = modelLoader;
     }
@@ -54,6 +59,11 @@ public class ChannelModelSync {
                         .eq(ChannelModel::getChannelId, channel.getId()));
 
         if (modelsJson == null || modelsJson.isEmpty() || "[]".equals(modelsJson)) {
+            List<Long> ids = existingModels.stream()
+                    .map(ChannelModel::getId)
+                    .collect(Collectors.toList());
+            // 删除被移除模型的入口模型关联，避免悬空
+            deleteRelsForModels(ids);
             for (ChannelModel cm : existingModels) {
                 channelModelMapper.deleteById(cm.getId());
             }
@@ -78,11 +88,17 @@ public class ChannelModelSync {
             }
 
             int deletedCount = 0;
+            List<Long> deletedIds = new ArrayList<>();
             for (ChannelModel cm : existingModels) {
                 if (!submittedNames.contains(cm.getModelName())) {
-                    channelModelMapper.deleteById(cm.getId());
-                    deletedCount++;
+                    deletedIds.add(cm.getId());
                 }
+            }
+            // 删除被移除模型的入口模型关联，避免悬空
+            deleteRelsForModels(deletedIds);
+            for (Long id : deletedIds) {
+                channelModelMapper.deleteById(id);
+                deletedCount++;
             }
 
             Set<String> existingNames = existingModels.stream()
@@ -140,5 +156,17 @@ public class ChannelModelSync {
         }
 
         return channel;
+    }
+
+    /**
+     * 删除指向指定渠道模型的入口模型关联记录（渠道模型被移除时同步清理，避免悬空）
+     */
+    private void deleteRelsForModels(List<Long> channelModelIds) {
+        if (channelModelIds == null || channelModelIds.isEmpty()) {
+            return;
+        }
+        modelChannelRelMapper.delete(
+                new LambdaQueryWrapper<com.myai.gateway.entity.ModelChannelRel>()
+                        .in(com.myai.gateway.entity.ModelChannelRel::getChannelModelId, channelModelIds));
     }
 }

@@ -109,8 +109,8 @@ public class AdminChannelController {
             channel.setChannelType((String) body.get("channelType"));
             channel.setBaseUrl((String) body.get("baseUrl"));
             channel.setEnabled(body.get("enabled") != null ? Integer.parseInt(body.get("enabled").toString()) : 1);
-            channel.setModelRefreshEnabled(body.get("model_refresh_enabled") != null
-                    ? Integer.parseInt(body.get("model_refresh_enabled").toString()) : 1);
+            Integer modelRefreshEnabled = extractModelRefreshEnabled(body);
+            channel.setModelRefreshEnabled(modelRefreshEnabled != null ? modelRefreshEnabled : 1);
 
             String manualModels = body.get("manualModels") != null ? body.get("manualModels").toString() : "[]";
             String apiKeysJson = body.get("apiKeysJson") != null ? body.get("apiKeysJson").toString() : "[]";
@@ -149,8 +149,9 @@ public class AdminChannelController {
             if (body.containsKey("channelType")) channel.setChannelType((String) body.get("channelType"));
             if (body.containsKey("baseUrl")) channel.setBaseUrl((String) body.get("baseUrl"));
             if (body.containsKey("enabled")) channel.setEnabled(Integer.parseInt(body.get("enabled").toString()));
-            if (body.containsKey("model_refresh_enabled")) {
-                channel.setModelRefreshEnabled(Integer.parseInt(body.get("model_refresh_enabled").toString()));
+            Integer modelRefreshEnabled = extractModelRefreshEnabled(body);
+            if (modelRefreshEnabled != null) {
+                channel.setModelRefreshEnabled(modelRefreshEnabled);
             }
 
             String manualModels = body.get("manualModels") != null ? body.get("manualModels").toString() : null;
@@ -415,6 +416,18 @@ public class AdminChannelController {
     }
 
     // ==================== Helpers ====================
+
+    /**
+     * 读取请求体中的模型刷新模式（1=自动刷新 0=不刷新），未传时返回 null。
+     * 兼容前端驼峰 modelRefreshEnabled 与历史下划线写法 model_refresh_enabled。
+     */
+    private Integer extractModelRefreshEnabled(Map<String, Object> body) {
+        Object v = body.get("modelRefreshEnabled");
+        if (v == null) {
+            v = body.get("model_refresh_enabled");
+        }
+        return v != null ? Integer.parseInt(v.toString()) : null;
+    }
 
     private List<ChannelApiKey> parseApiKeysJson(String json) {
         try {

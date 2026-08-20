@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myai.gateway.entity.Channel;
 import com.myai.gateway.entity.ChannelModel;
+import com.myai.gateway.entity.ModelChannelRel;
 import com.myai.gateway.mapper.ChannelMapper;
 import com.myai.gateway.mapper.ChannelApiKeyMapper;
 import com.myai.gateway.mapper.ChannelModelMapper;
@@ -21,6 +22,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -86,36 +88,62 @@ public class ChannelModelLoader {
 
     /**
      * 加载模型列表
+     * <p>从服务商重新拉取模型并替换该渠道下所有 source='api' 的模型。
+     * 被删除模型上已关联到入口模型（model_channel_rels）的，按模型名迁移到刷新后的
+     * 同名单模型，保证自动/手动刷新不丢失入口模型关联；服务商不再返回的模型则移除对应关联。
+     * 若本次拉取失败且渠道已有现役模型，则保留现有模型与关联不变，避免回退预设模型丢弃自定义模型。</p>
      */
     @Transactional
     public List<ChannelModel> loadModels(Channel channel, String apiKey) {
-        // 先删除该渠道下所有 source='api' 的模型
-        channelModelMapper.delete(
+        Long channelId = channel.getId();
+
+        // 预查将被替换的 api 模型（供刷新后按模型名恢复关联）
+        List<ChannelModel> apiModelsToDelete = channelModelMapper.selectList(
                 new LambdaQueryWrapper<ChannelModel>()
-                        .eq(ChannelModel::getChannelId, channel.getId())
+                        .eq(ChannelModel::getChannelId, channelId)
                         .eq(ChannelModel::getSource, "api"));
 
-        List<ChannelModel> newModels;
-        if (apiKey != null && !apiKey.isEmpty()) {
-            Channel tempChannel = new Channel();
-            tempChannel.setName(channel.getName());
-            tempChannel.setChannelType(channel.getChannelType());
-            tempChannel.setBaseUrl(channel.getBaseUrl());
-            tempChannel.setApiKey(apiKey);
-            newModels = fetchModelsFromProvider(tempChannel);
-        } else {
-            newModels = fetchModelsFromProvider(channel);
+        // 先拉取，成功后再删除替换，避免拉取失败时旧模型被清空
+        List<ChannelModel> newModels = fetchNewModels(channel, apiKey);
+        if (newModels.isEmpty()) {
+            long existingCount = channelModelMapper.selectCount(
+                    new LambdaQueryWrapper<ChannelModel>()
+                            .eq(ChannelModel::getChannelId, channelId));
+            if (existingCount == 0) {
+                // 新建渠道：拉取失败或未配置 Key 时回退预设模型
+                newModels = getDefaultModels(channel);
+            } else {
+                // 已有模型的刷新：保留现状，不做任何替换
+                log.warn("渠道 {} 刷新模型拉取失败或服务商未返回模型，保留现有模型", channel.getName());
+                return channelModelMapper.selectList(
+                        new LambdaQueryWrapper<ChannelModel>().eq(ChannelModel::getChannelId, channelId));
+            }
         }
 
-        // 如果 API 调用失败，使用预设模型
-        if (newModels.isEmpty()) {
-            newModels = getDefaultModels(channel);
+        // 收集将被删除的 api 模型及其入口模型关联，刷新后按模型名恢复
+        Map<Long, String> modelNameByDeletedId = apiModelsToDelete.stream()
+                .collect(Collectors.toMap(ChannelModel::getId, ChannelModel::getModelName));
+        List<ModelChannelRel> affectedRels;
+        if (modelNameByDeletedId.isEmpty()) {
+            affectedRels = Collections.emptyList();
+        } else {
+            affectedRels = modelChannelRelMapper.selectList(
+                    new LambdaQueryWrapper<ModelChannelRel>()
+                            .in(ModelChannelRel::getChannelModelId, modelNameByDeletedId.keySet()));
+            // 先删除旧关联，避免悬空
+            modelChannelRelMapper.delete(
+                    new LambdaQueryWrapper<ModelChannelRel>()
+                            .in(ModelChannelRel::getChannelModelId, modelNameByDeletedId.keySet()));
         }
+        channelModelMapper.delete(
+                new LambdaQueryWrapper<ChannelModel>()
+                        .eq(ChannelModel::getChannelId, channelId)
+                        .eq(ChannelModel::getSource, "api"));
 
         // 获取当前手动添加的模型名称
         List<ChannelModel> existingManualModels = channelModelMapper.selectList(
                 new LambdaQueryWrapper<ChannelModel>()
-                        .eq(ChannelModel::getChannelId, channel.getId()));
+                        .eq(ChannelModel::getChannelId, channelId));
         Set<String> existingManualModelNameSet = existingManualModels.stream()
                 .map(ChannelModel::getModelName)
                 .collect(Collectors.toSet());
@@ -124,7 +152,7 @@ public class ChannelModelLoader {
         int addedCount = 0;
         for (ChannelModel model : newModels) {
             if (!existingManualModelNameSet.contains(model.getModelName())) {
-                model.setChannelId(channel.getId());
+                model.setChannelId(channelId);
                 if (model.getSource() == null) {
                     model.setSource("api");
                 }
@@ -134,11 +162,65 @@ public class ChannelModelLoader {
             }
         }
 
+        // 按模型名恢复被刷新前删除的入口模型关联
+        if (!affectedRels.isEmpty()) {
+            restoreRelsAfterRefresh(channelId, affectedRels, modelNameByDeletedId);
+        }
+
         log.info("渠道 {} 重新加载了 {} 个模型（保留 {} 个手动模型）",
                 channel.getName(), addedCount, existingManualModels.size());
 
         return channelModelMapper.selectList(
-                new LambdaQueryWrapper<ChannelModel>().eq(ChannelModel::getChannelId, channel.getId()));
+                new LambdaQueryWrapper<ChannelModel>().eq(ChannelModel::getChannelId, channelId));
+    }
+
+    /**
+     * 刷新模型后按模型名恢复入口模型关联：
+     * 刷新前被删除模型上的关联迁移到刷新后同名的渠道模型；模型不再存在时丢弃该关联并记录日志。
+     */
+    private void restoreRelsAfterRefresh(Long channelId, List<ModelChannelRel> affectedRels,
+                                         Map<Long, String> modelNameByDeletedId) {
+        List<ChannelModel> currentModels = channelModelMapper.selectList(
+                new LambdaQueryWrapper<ChannelModel>().eq(ChannelModel::getChannelId, channelId));
+        Map<String, ChannelModel> currentByName = currentModels.stream()
+                .collect(Collectors.toMap(ChannelModel::getModelName, cm -> cm, (a, b) -> a));
+
+        int restored = 0;
+        int dropped = 0;
+        for (ModelChannelRel rel : affectedRels) {
+            String modelName = modelNameByDeletedId.get(rel.getChannelModelId());
+            ChannelModel target = currentByName.get(modelName);
+            if (target == null) {
+                dropped++;
+                continue;
+            }
+            rel.setId(null); // 重新插入，保留 weight/reasoningEffort/sortOrder/enabled
+            rel.setChannelModelId(target.getId());
+            modelChannelRelMapper.insert(rel);
+            restored++;
+        }
+        if (restored > 0) {
+            log.info("渠道 {} 刷新后按模型名恢复 {} 条入口模型关联", channelId, restored);
+        }
+        if (dropped > 0) {
+            log.warn("渠道 {} 刷新后有 {} 条关联的模型不再存在，已移除", channelId, dropped);
+        }
+    }
+
+    /**
+     * 从服务商获取模型列表；请求失败或未配置 API Key 时返回空列表（由调用方决定回退策略）。
+     * 包级可见，便于测试覆写以隔离真实 HTTP 调用。
+     */
+    List<ChannelModel> fetchNewModels(Channel channel, String apiKey) {
+        if (apiKey != null && !apiKey.isEmpty()) {
+            Channel tempChannel = new Channel();
+            tempChannel.setName(channel.getName());
+            tempChannel.setChannelType(channel.getChannelType());
+            tempChannel.setBaseUrl(channel.getBaseUrl());
+            tempChannel.setApiKey(apiKey);
+            return fetchModelsFromProvider(tempChannel);
+        }
+        return fetchModelsFromProvider(channel);
     }
 
     /**

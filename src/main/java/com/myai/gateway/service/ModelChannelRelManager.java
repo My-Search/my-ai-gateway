@@ -103,6 +103,19 @@ public class ModelChannelRelManager {
         }
     }
 
+    /**
+     * 删除指向指定渠道模型的关联记录（渠道模型被删除时同步清理，避免悬空关联）
+     */
+    @Transactional
+    public int deleteRelsByChannelModelIds(List<Long> channelModelIds) {
+        if (channelModelIds == null || channelModelIds.isEmpty()) {
+            return 0;
+        }
+        return relMapper.delete(
+                new LambdaQueryWrapper<ModelChannelRel>()
+                        .in(ModelChannelRel::getChannelModelId, channelModelIds));
+    }
+
     @Transactional
     public int batchAddChannelRels(Long modelId, List<Long> channelModelIds) {
         // 检查模式
