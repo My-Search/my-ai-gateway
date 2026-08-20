@@ -72,6 +72,7 @@ public class StatsService {
      * <p>
      * 按 channel_model_name 聚合成功请求的 token 用量和请求次数，
      * 额外返回今日/本周/本月的请求次数和 Token 用量（按 Asia/Shanghai 时区计算）。
+     * 响应时间统计为最近 30 条请求的首字节平均响应时间。
      * </p>
      *
      * @param channelName 渠道名称

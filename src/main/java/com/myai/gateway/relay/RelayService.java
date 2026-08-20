@@ -256,7 +256,7 @@ public class RelayService {
                 .flatMapMany(req -> candidateRouter.executeStreamRelay(traceId, authHeader, gatewayApiKeyId,
                         req, protocol, internalClient, finalStateLogged, new ProviderInvoker() {
                             @Override
-                            public Mono<String> invokeNonStream(String h, InternalRequest r, RoutingCandidate c, String p) {
+                            public Mono<String> invokeNonStream(String h, InternalRequest r, RoutingCandidate c, String p, String t) {
                                 throw new UnsupportedOperationException("Non-stream not supported in stream relay");
                             }
                             @Override
@@ -496,10 +496,12 @@ public class RelayService {
     /**
      * 调用上游非流式接口（包级可见，便于单元测试）
      * <p>使用 {@link CandidateRouter#callProviderNonStreamWithWebClient} 的默认实现。</p>
+     *
+     * @param traceId 链路追踪 ID，透传给 WebClient 实现以回传首字节响应时间
      */
     Mono<String> callProviderNonStream(String authHeader, InternalRequest req,
-                                        RoutingCandidate candidate, String provider) {
-        return candidateRouter.callProviderNonStreamWithWebClient(authHeader, req, candidate, provider);
+                                        RoutingCandidate candidate, String provider, String traceId) {
+        return candidateRouter.callProviderNonStreamWithWebClient(authHeader, req, candidate, provider, traceId);
     }
 
     /**

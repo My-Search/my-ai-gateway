@@ -11,6 +11,8 @@ export interface Channel {
   modelRefreshEnabled?: number
   createdAt?: string
   updatedAt?: string
+  /** 启用模型数（列表接口返回） */
+  modelCount?: number
   // 用量统计字段（列表接口返回）
   requestCount?: number
   promptTokens?: number
@@ -47,7 +49,7 @@ export interface ModelUsageStat {
   promptTokens: number
   completionTokens: number
   totalTokens: number
-  /** 最近30次请求的平均响应时间（毫秒） */
+  /** 最近30次请求的首字节平均响应时间（毫秒） */
   avgResponseTimeRecent30: number
   today: PeriodStat
   week: PeriodStat
@@ -65,7 +67,7 @@ export const channelApi = {
     return http.post<{ success: boolean; id?: number; error?: string }>('/channels', data)
   },
   update(id: number, data: Partial<Channel> & { manualModels?: string; apiKeysJson?: string }) {
-    return http.put<{ success: boolean; error?: string }>(`/channels/${id}`, data)
+    return http.put<{ success: boolean; error?: string; refreshCount?: number }>(`/channels/${id}`, data)
   },
   delete(id: number) {
     return http.delete<{ success: boolean }>(`/channels/${id}`)

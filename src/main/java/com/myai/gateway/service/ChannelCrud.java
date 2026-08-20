@@ -53,13 +53,16 @@ public class ChannelCrud {
     }
 
     /**
-     * 列出启用且开启模型自动刷新的渠道（供定时刷新任务使用）
+     * 列出启用、开启模型自动刷新、且至少有一个可用（启用）API Key 的渠道
+     * （供定时刷新任务使用；无可用 Key 的渠道刷新无意义，直接跳过）
      */
     public List<Channel> listAutoRefreshChannels() {
         return channelMapper.selectList(
                 new LambdaQueryWrapper<Channel>()
                         .eq(Channel::getEnabled, 1)
                         .eq(Channel::getModelRefreshEnabled, 1)
+                        .inSql(Channel::getId,
+                                "SELECT channel_id FROM channel_api_keys WHERE enabled = 1")
                         .orderByAsc(Channel::getSortOrder));
     }
 

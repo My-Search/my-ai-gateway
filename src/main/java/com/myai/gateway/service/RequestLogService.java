@@ -80,7 +80,7 @@ public class RequestLogService {
                     String channelModelName, String channelName,
                     String phase, String message, int retryIndex) {
         RequestLog record = buildLogRecord(traceId, apiKeyName, gatewayApiKeyId, modelName,
-                channelModelName, channelName, phase, "pending", message, null, retryIndex, 0, 0, 0);
+                channelModelName, channelName, phase, "pending", message, null, null, retryIndex, 0, 0, 0);
         asyncLogWriter.enqueue(record);
 
         String indent = "  ".repeat(retryIndex);
@@ -129,7 +129,7 @@ public class RequestLogService {
             pendingRequestData.put(traceId, new String[]{requestHeaders, requestBody});
         }
         RequestLog record = buildLogRecord(traceId, apiKeyName, gatewayApiKeyId, modelName,
-                channelModelName, channelName, "start", "pending", message, null, retryIndex, 0, 0, 0);
+                channelModelName, channelName, "start", "pending", message, null, null, retryIndex, 0, 0, 0);
         record.setRequestHeaders(null);
         record.setRequestBody(null);
         asyncLogWriter.enqueue(record);
@@ -153,7 +153,7 @@ public class RequestLogService {
                                     String phase, String message, int retryIndex, long responseTimeMs) {
         RequestLog record = buildLogRecord(traceId, apiKeyName, gatewayApiKeyId, modelName,
                 channelModelName, channelName, phase, "pending", message, (int) responseTimeMs,
-                retryIndex, 0, 0, 0);
+                null, retryIndex, 0, 0, 0);
         asyncLogWriter.enqueue(record);
 
         String indent = "  ".repeat(retryIndex);
@@ -173,18 +173,21 @@ public class RequestLogService {
                             String phase, String status, String message, long responseTimeMs,
                             int retryIndex, int promptTokens, int completionTokens, int totalTokens) {
         logComplete(traceId, apiKeyName, null, modelName, channelModelName, channelName,
-                phase, status, message, responseTimeMs, retryIndex, promptTokens, completionTokens, totalTokens);
+                phase, status, message, responseTimeMs, null, retryIndex, promptTokens, completionTokens, totalTokens);
     }
 
     /**
-     * 记录请求完成（带网关 API Key id）
+     * 记录请求完成（成功或最终失败），包含 token 用量
+     *
+     * @param firstByteMs 首字节响应时间（毫秒，相对请求路由开始），未收到响应字节时为 null
      */
     public void logComplete(String traceId, String apiKeyName, Long gatewayApiKeyId, String modelName,
                             String channelModelName, String channelName,
                             String phase, String status, String message, long responseTimeMs,
-                            int retryIndex, int promptTokens, int completionTokens, int totalTokens) {
+                            Long firstByteMs, int retryIndex, int promptTokens, int completionTokens, int totalTokens) {
         RequestLog record = buildLogRecord(traceId, apiKeyName, gatewayApiKeyId, modelName,
                 channelModelName, channelName, phase, status, message, (int) responseTimeMs,
+                firstByteMs != null ? (int) Math.max(0, firstByteMs) : null,
                 retryIndex, promptTokens, completionTokens, totalTokens);
         asyncLogWriter.enqueue(record);
 
@@ -230,7 +233,18 @@ public class RequestLogService {
                             String phase, String status, String message, long responseTimeMs,
                             int retryIndex) {
         logComplete(traceId, apiKeyName, gatewayApiKeyId, modelName, channelModelName, channelName,
-                phase, status, message, responseTimeMs, retryIndex, 0, 0, 0);
+                phase, status, message, responseTimeMs, null, retryIndex, 0, 0, 0);
+    }
+
+    /**
+     * 记录请求完成（带网关 API Key id，无 token 用量，指定 retryIndex，带首字节响应时间）
+     */
+    public void logComplete(String traceId, String apiKeyName, Long gatewayApiKeyId, String modelName,
+                            String channelModelName, String channelName,
+                            String phase, String status, String message, long responseTimeMs,
+                            Long firstByteMs, int retryIndex) {
+        logComplete(traceId, apiKeyName, gatewayApiKeyId, modelName, channelModelName, channelName,
+                phase, status, message, responseTimeMs, firstByteMs, retryIndex, 0, 0, 0);
     }
 
     // ──────────────────── 只读查询（委托） ────────────────────
@@ -347,11 +361,12 @@ public class RequestLogService {
     // ──────────────────── 私有辅助 ────────────────────
 
     /**
-     * 统一构建日志记录对象，避免各写入方法重复 setter；responseTimeMs 为 null 时不写该字段（阶段内不展示耗时）
+     * 统一构建日志记录对象，避免各写入方法重复 setter；responseTimeMs / firstByteMs 为 null 时不写该字段（阶段内不展示耗时）
      */
     private RequestLog buildLogRecord(String traceId, String apiKeyName, Long gatewayApiKeyId, String modelName,
                                       String channelModelName, String channelName,
                                       String phase, String status, String message, Integer responseTimeMs,
+                                      Integer firstByteMs,
                                       int retryIndex, int promptTokens, int completionTokens, int totalTokens) {
         RequestLog record = new RequestLog();
         record.setTraceId(traceId);
@@ -365,6 +380,9 @@ public class RequestLogService {
         record.setMessage(message);
         if (responseTimeMs != null) {
             record.setResponseTimeMs(responseTimeMs);
+        }
+        if (firstByteMs != null) {
+            record.setFirstByteMs(firstByteMs);
         }
         record.setRetryIndex(retryIndex);
         record.setPromptTokens(promptTokens);

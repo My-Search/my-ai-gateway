@@ -205,7 +205,7 @@ class RelayServiceTest {
         doReturn(Mono.error(new RuntimeException("fail 1")),
                 Mono.error(new RuntimeException("fail 2")),
                 Mono.just("{\"success\":true}"))
-                .when(spyService).callProviderNonStream(any(), any(), any(), any());
+                .when(spyService).callProviderNonStream(any(), any(), any(), any(), any());
         when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
                 .thenReturn("{\"success\":true}");
 
@@ -214,7 +214,7 @@ class RelayServiceTest {
         assertThat(result).isEqualTo("{\"success\":true}");
 
         // 验证对同一个候选尝试了 3 次
-        verify(spyService, times(3)).callProviderNonStream(any(), any(), eq(candidate), eq("openai"));
+        verify(spyService, times(3)).callProviderNonStream(any(), any(), eq(candidate), eq("openai"), any());
         // 成功后不应触发熔断
         verify(circuitBreakerService, never()).triggerCircuitBreak(any(), any(), any(), any());
     }
@@ -269,7 +269,7 @@ class RelayServiceTest {
         // 第二次成功（产生 1 条 retry 日志）
         doReturn(Mono.error(new RuntimeException("fail 1")),
                 Mono.just("{\"success\":true}"))
-                .when(spyService).callProviderNonStream(any(), any(), any(), any());
+                .when(spyService).callProviderNonStream(any(), any(), any(), any(), any());
         when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
                 .thenReturn("{\"success\":true}");
 
@@ -367,7 +367,7 @@ class RelayServiceTest {
 
         // 所有候选全部失败
         doReturn(Mono.error(new RuntimeException("fail")))
-                .when(spyService).callProviderNonStream(any(), any(), any(), any());
+                .when(spyService).callProviderNonStream(any(), any(), any(), any(), any());
         when(messageTransformer.buildErrorResponse(anyString(), anyString(), anyString(), anyInt()))
                 .thenReturn("{\"error\":true}");
 
@@ -376,7 +376,7 @@ class RelayServiceTest {
         assertThat(result).isEqualTo("{\"error\":true}");
 
         // 每个候选尝试 retryCount+1 = 2 次，共 4 次
-        verify(spyService, times(4)).callProviderNonStream(any(), any(), any(), eq("openai"));
+        verify(spyService, times(4)).callProviderNonStream(any(), any(), any(), eq("openai"), any());
         // 每个候选在重试耗尽后都触发了模型级熔断
         verify(circuitBreakerService).triggerCircuitBreak(1L, 10L, 1000L, 100L);
         verify(circuitBreakerService).triggerCircuitBreak(1L, 10L, 1001L, 101L);
@@ -428,7 +428,7 @@ class RelayServiceTest {
         req.setClientApiFormat("openai");
 
         doReturn(Mono.error(new RuntimeException("fail")))
-                .when(spyService).callProviderNonStream(any(), any(), any(), any());
+                .when(spyService).callProviderNonStream(any(), any(), any(), any(), any());
         when(messageTransformer.buildErrorResponse(anyString(), anyString(), anyString(), anyInt()))
                 .thenReturn("{\"error\":true}");
 
@@ -436,7 +436,7 @@ class RelayServiceTest {
                 .block(Duration.ofSeconds(5));
 
         // enabled=0 时，getRetryCount 返回 0，只尝试 1 次（不重试）
-        verify(spyService, times(1)).callProviderNonStream(any(), any(), any(), eq("openai"));
+        verify(spyService, times(1)).callProviderNonStream(any(), any(), any(), eq("openai"), any());
     }
 
     @Test
@@ -500,7 +500,7 @@ class RelayServiceTest {
         req.setClientApiFormat("openai");
 
         doReturn(Mono.just("{\"success\":true}"))
-                .when(spyService).callProviderNonStream(any(), any(), any(), any());
+                .when(spyService).callProviderNonStream(any(), any(), any(), any(), any());
         when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
                 .thenReturn("{\"success\":true}");
 
@@ -509,8 +509,8 @@ class RelayServiceTest {
         assertThat(result).isEqualTo("{\"success\":true}");
 
         // candidate1 被跳过（已熔断），只调用 candidate2
-        verify(spyService).callProviderNonStream(any(), any(), eq(candidate2), eq("openai"));
-        verify(spyService, times(1)).callProviderNonStream(any(), any(), any(), eq("openai"));
+        verify(spyService).callProviderNonStream(any(), any(), eq(candidate2), eq("openai"), any());
+        verify(spyService, times(1)).callProviderNonStream(any(), any(), any(), eq("openai"), any());
     }
 
     @Test
@@ -560,7 +560,7 @@ class RelayServiceTest {
         doReturn(Mono.error(new RuntimeException("fail")))
                 .doReturn(Mono.error(new RuntimeException("fail")))
                 .doReturn(Mono.just("{\"success\":true}"))
-                .when(spyService).callProviderNonStream(any(), any(), any(), any());
+                .when(spyService).callProviderNonStream(any(), any(), any(), any(), any());
         when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
                 .thenReturn("{\"success\":true}");
 
@@ -569,10 +569,10 @@ class RelayServiceTest {
         assertThat(result).isEqualTo("{\"success\":true}");
 
         // 验证严格按照 test -> deepseek-v4-flash-free -> deepseek-ai/DeepSeek-V4-Flash 顺序尝试
-        verify(spyService).callProviderNonStream(any(), any(), eq(candidate1), eq("openai"));
-        verify(spyService).callProviderNonStream(any(), any(), eq(candidate2), eq("openai"));
-        verify(spyService).callProviderNonStream(any(), any(), eq(candidate3), eq("openai"));
-        verify(spyService, times(3)).callProviderNonStream(any(), any(), any(), eq("openai"));
+        verify(spyService).callProviderNonStream(any(), any(), eq(candidate1), eq("openai"), any());
+        verify(spyService).callProviderNonStream(any(), any(), eq(candidate2), eq("openai"), any());
+        verify(spyService).callProviderNonStream(any(), any(), eq(candidate3), eq("openai"), any());
+        verify(spyService, times(3)).callProviderNonStream(any(), any(), any(), eq("openai"), any());
     }
 
     @Test
@@ -819,7 +819,7 @@ class RelayServiceTest {
                 Mono.error(new RuntimeException("fail")),
                 Mono.error(new RuntimeException("fail")),
                 Mono.just("{\"success\":true}")
-        ).when(spyService).callProviderNonStream(any(), any(), any(), any());
+        ).when(spyService).callProviderNonStream(any(), any(), any(), any(), any());
         when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
                 .thenReturn("{\"success\":true}");
 
@@ -828,15 +828,15 @@ class RelayServiceTest {
         assertThat(result).isEqualTo("{\"success\":true}");
 
         // 验证严格按照 (test,ak1)->(test,ak2)->(deepseek-v4-flash-free,ak1)->... 顺序尝试
-        verify(spyService).callProviderNonStream(any(), any(), eq(c1_k1), eq("openai"));
-        verify(spyService).callProviderNonStream(any(), any(), eq(c1_k2), eq("openai"));
-        verify(spyService).callProviderNonStream(any(), any(), eq(c2_k1), eq("openai"));
-        verify(spyService).callProviderNonStream(any(), any(), eq(c2_k2), eq("openai"));
-        verify(spyService).callProviderNonStream(any(), any(), eq(c3_k1), eq("openai"));
-        verify(spyService).callProviderNonStream(any(), any(), eq(c3_k2), eq("openai"));
-        verify(spyService).callProviderNonStream(any(), any(), eq(c4_k1), eq("openai"));
-        verify(spyService).callProviderNonStream(any(), any(), eq(c4_k2), eq("openai"));
-        verify(spyService, times(8)).callProviderNonStream(any(), any(), any(), eq("openai"));
+        verify(spyService).callProviderNonStream(any(), any(), eq(c1_k1), eq("openai"), any());
+        verify(spyService).callProviderNonStream(any(), any(), eq(c1_k2), eq("openai"), any());
+        verify(spyService).callProviderNonStream(any(), any(), eq(c2_k1), eq("openai"), any());
+        verify(spyService).callProviderNonStream(any(), any(), eq(c2_k2), eq("openai"), any());
+        verify(spyService).callProviderNonStream(any(), any(), eq(c3_k1), eq("openai"), any());
+        verify(spyService).callProviderNonStream(any(), any(), eq(c3_k2), eq("openai"), any());
+        verify(spyService).callProviderNonStream(any(), any(), eq(c4_k1), eq("openai"), any());
+        verify(spyService).callProviderNonStream(any(), any(), eq(c4_k2), eq("openai"), any());
+        verify(spyService, times(8)).callProviderNonStream(any(), any(), any(), eq("openai"), any());
 
         // 验证失败的候选都触发了模型级熔断
         verify(circuitBreakerService).triggerCircuitBreak(1L, 10L, 1000L, 100L);
@@ -1220,7 +1220,7 @@ class RelayServiceTest {
         when(latencyTracker.getTimeout(any(), any())).thenReturn(60_000L);
 
         RelayService spyService = spy(relayService);
-        doReturn(Mono.just("{\"success\":true}")).when(spyService).callProviderNonStream(any(), any(), any(), any());
+        doReturn(Mono.just("{\"success\":true}")).when(spyService).callProviderNonStream(any(), any(), any(), any(), any());
         when(messageTransformer.transformOpenAiResponseToClient(any(), eq("openai"), eq("x")))
                 .thenReturn("{\"success\":true}");
 

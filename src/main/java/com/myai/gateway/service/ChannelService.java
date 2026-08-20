@@ -8,7 +8,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 渠道服务门面
@@ -148,6 +150,15 @@ public class ChannelService {
      */
     public List<ChannelModel> getChannelModelsAll(Long channelId) {
         return modelQuery.getChannelModelsAll(channelId);
+    }
+
+    /**
+     * 按渠道 ID 批量统计启用模型数量（用于渠道列表"模型数"列）
+     *
+     * @return Map: channelId -> 模型数
+     */
+    public Map<Long, Integer> countEnabledModelsByChannelIds(Collection<Long> channelIds) {
+        return modelQuery.countEnabledModelsByChannelIds(channelIds);
     }
 
     /**

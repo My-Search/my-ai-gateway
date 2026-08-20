@@ -171,7 +171,7 @@ class TrendChartStatsCollector {
      * 获取指定渠道下各模型的用量统计（用于渠道模型详情页展示）
      *
      * @return Map: { modelStats: List[{ modelName, requestCount, promptTokens, completionTokens, totalTokens, avgResponseTimeRecent30, today, week, month }],
-     *                channelAvgResponseTimeRecent30: long }
+     *                channelAvgResponseTimeRecent30: long }（avgResponseTimeRecent30 为首字节平均响应时间）
      */
     Map<String, Object> collectChannelModelUsageStats(String channelName) {
         // Token 统计仅按 success 聚合
@@ -182,15 +182,15 @@ class TrendChartStatsCollector {
                         .isNotNull(RequestLog::getChannelModelName)
                         .ne(RequestLog::getChannelModelName, ""));
 
-        // 响应时间按 success+fail 聚合（失败请求也有响应时间），按时间倒序用于截取最近 N 条
-        List<RequestLog> responseTimeLogs = requestLogMapper.selectList(
+        // 首字节响应时间按 success+fail 聚合（失败请求也可能收到首个响应字节），按时间倒序用于截取最近 N 条
+        List<RequestLog> firstByteLogs = requestLogMapper.selectList(
                 new LambdaQueryWrapper<RequestLog>()
                         .in(RequestLog::getPhase, "success", "fail")
                         .eq(RequestLog::getChannelName, channelName)
                         .isNotNull(RequestLog::getChannelModelName)
                         .ne(RequestLog::getChannelModelName, "")
-                        .isNotNull(RequestLog::getResponseTimeMs)
-                        .gt(RequestLog::getResponseTimeMs, 0)
+                        .isNotNull(RequestLog::getFirstByteMs)
+                        .gt(RequestLog::getFirstByteMs, 0)
                         .orderByDesc(RequestLog::getCreatedAt));
 
         // 计算时间段边界（上海时区 -> UTC，created_at 存储为 UTC）
@@ -223,25 +223,25 @@ class TrendChartStatsCollector {
         Map<String, Long> monthCompletionSums = aggregateCompletionTokens(successLogs, monthStartUtc);
         Map<String, Long> monthTotalSums = aggregateTotalTokens(successLogs, monthStartUtc);
 
-        // 按模型分组（已按时间倒序），每组取最近 30 条计算平均响应时间
-        Map<String, List<RequestLog>> logsByModel = responseTimeLogs.stream()
+        // 按模型分组（已按时间倒序），每组取最近 30 条计算首字节平均响应时间
+        Map<String, List<RequestLog>> logsByModel = firstByteLogs.stream()
                 .collect(Collectors.groupingBy(RequestLog::getChannelModelName));
 
         Map<String, Long> modelAvgResponseTimeRecent30 = new LinkedHashMap<>();
         for (Map.Entry<String, List<RequestLog>> entry : logsByModel.entrySet()) {
             double avg = entry.getValue().stream()
                     .limit(30)
-                    .mapToInt(RequestLog::getResponseTimeMs)
+                    .mapToInt(RequestLog::getFirstByteMs)
                     .average()
                     .orElse(0.0);
             modelAvgResponseTimeRecent30.put(entry.getKey(), Math.round(avg));
         }
 
-        // 渠道级：所有模型合在一起取最近 30 条的平均响应时间
+        // 渠道级：所有模型合在一起取最近 30 条的首字节平均响应时间
         long channelAvgResponseTimeRecent30 = Math.round(
-                responseTimeLogs.stream()
+                firstByteLogs.stream()
                         .limit(30)
-                        .mapToInt(RequestLog::getResponseTimeMs)
+                        .mapToInt(RequestLog::getFirstByteMs)
                         .average()
                         .orElse(0.0));
 

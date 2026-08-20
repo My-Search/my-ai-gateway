@@ -17,9 +17,11 @@ public interface ProviderInvoker {
 
     /**
      * 调用上游非流式接口
+     *
+     * @param traceId 链路追踪 ID，用于回传首字节响应时间采集结果
      */
     Mono<String> invokeNonStream(String authHeader, InternalRequest req,
-                                  RoutingCandidate candidate, String provider);
+                                  RoutingCandidate candidate, String provider, String traceId);
 
     /**
      * 调用上游流式接口（默认实现，非流式路径无需覆盖）

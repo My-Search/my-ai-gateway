@@ -57,11 +57,11 @@ public class ModelChannelRel {
     @TableField(exist = false)
     private Integer apiKeyAvailable;
 
-    /** 该渠道模型的平均响应时间 ms（非数据库字段，从 TtftTracker 读取） */
+    /** 该渠道模型最近30次请求的首字节平均响应时间 ms（非数据库字段，从 request_logs.first_byte_ms 统计） */
     @TableField(exist = false)
     private Long ttftMs;
 
-    /** 样本数（非数据库字段，从 TtftTracker 读取） */
+    /** 样本数（非数据库字段，与 ttftMs 同批统计） */
     @TableField(exist = false)
     private Integer sampleCount;
 

@@ -10,7 +10,10 @@ import com.myai.gateway.mapper.ModelChannelRelMapper;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -45,6 +48,27 @@ public class ChannelModelQuery {
         return channelModelMapper.selectList(
                 new LambdaQueryWrapper<ChannelModel>()
                         .eq(ChannelModel::getChannelId, channelId));
+    }
+
+    /**
+     * 按渠道 ID 批量统计启用模型数量（一次查询，避免列表页逐渠道 N+1）。
+     * <p>与 {@link #getChannelModels} 口径一致（enabled=1），保证列表计数与"查看"页行数相符。</p>
+     *
+     * @return Map: channelId -> 模型数
+     */
+    public Map<Long, Integer> countEnabledModelsByChannelIds(Collection<Long> channelIds) {
+        if (channelIds == null || channelIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, Integer> counts = new HashMap<>();
+        for (ChannelModel cm : channelModelMapper.selectList(
+                new LambdaQueryWrapper<ChannelModel>()
+                        .select(ChannelModel::getChannelId)
+                        .in(ChannelModel::getChannelId, channelIds)
+                        .eq(ChannelModel::getEnabled, 1))) {
+            counts.merge(cm.getChannelId(), 1, Integer::sum);
+        }
+        return counts;
     }
 
     /**

@@ -40,7 +40,7 @@ export interface ModelChannelRel {
   channelEnabled?: number
   /** 是否有可用 API Key：0=无可用密钥（渠道无 Key 或全部禁用，含指定 Key 不可用） */
   apiKeyAvailable?: number
-  /** 该渠道模型的平均响应时间 (ms) */
+  /** 该渠道模型最近30次请求的首字节平均响应时间 (ms) */
   ttftMs?: number | null
   /** 样本数 */
   sampleCount?: number | null

@@ -54,6 +54,9 @@ public class RequestLog {
     /** 响应时间（毫秒） */
     private Integer responseTimeMs;
 
+    /** 首字节响应时间（毫秒）：从请求发出到收到首个响应字节，未收到响应字节时为 null */
+    private Integer firstByteMs;
+
     /** 输入 token 数 */
     private Integer promptTokens;
 
@@ -108,6 +111,9 @@ public class RequestLog {
 
     public Integer getResponseTimeMs() { return responseTimeMs; }
     public void setResponseTimeMs(Integer responseTimeMs) { this.responseTimeMs = responseTimeMs; }
+
+    public Integer getFirstByteMs() { return firstByteMs; }
+    public void setFirstByteMs(Integer firstByteMs) { this.firstByteMs = firstByteMs; }
 
     public Integer getPromptTokens() { return promptTokens; }
     public void setPromptTokens(Integer promptTokens) { this.promptTokens = promptTokens; }

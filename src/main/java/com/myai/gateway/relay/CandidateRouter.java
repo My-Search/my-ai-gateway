@@ -57,6 +57,14 @@ public class CandidateRouter {
     final ConcurrentHashMap<String, int[]> streamUsageMap;
 
     /**
+     * 首字节响应时间采集：traceId -> 收到首个响应字节的绝对时间戳（ms）
+     * <p>由上游调用实现（WebClient 默认实现）在首个 DataBuffer 到达时写入，
+     * 路由成功/失败落日志时读取并清空，用于"首字节平均响应"统计。
+     * 与 {@link #streamUsageMap} 相同的模式：同一 traceId 的多次尝试后写覆盖先写。</p>
+     */
+    private final ConcurrentHashMap<String, Long> firstByteArrivalMsByTraceId = new ConcurrentHashMap<>();
+
+    /**
      * 熔断状态短路缓存（可选能力，由 Spring 注入）。
      * <p>缓解 {@code circuitBreakScope} 对每个候选每个重试轮次的 selectCount 重复查询
      * （同一候选依次被选多次时，熔断状态在毫秒级内不变，无需反复查 DB）。
@@ -178,7 +186,10 @@ public class CandidateRouter {
                             "fail", "timeout", "请求总超时", System.currentTimeMillis() - startTime, 0);
                     return Mono.just(messageTransformer.buildErrorResponse(req.getClientApiFormat(),
                             "请求总超时（所有候选重试总耗时超过上限）", "api_error", 503));
-                });
+                })
+                // 兜底清理：正常成功/失败路径已在落日志时读取并移除首字节时间戳（幂等），
+                // 此处保证超时、客户端取消等未落日志的出口不残留 map 条目
+                .doFinally(signal -> firstByteArrivalMsByTraceId.remove(traceId));
     }
 
     /**
@@ -201,7 +212,8 @@ public class CandidateRouter {
         if (remaining.isEmpty()) {
             String failMsg = buildFailMessage(lastErrorMsg);
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, req.getModel(), null, null,
-                    "fail", "error", failMsg, System.currentTimeMillis() - startTime, retryIndex);
+                    "fail", "error", failMsg, System.currentTimeMillis() - startTime,
+                    firstByteMsSince(traceId, startTime), retryIndex);
             log.warn("所有候选均失败 - traceId={}, lastError={}", traceId, lastErrorMsg);
             recordRouteMetric(req.getModel(), null, "fail", startTime);
             return Mono.just(messageTransformer.buildErrorResponse(req.getClientApiFormat(),
@@ -260,7 +272,8 @@ public class CandidateRouter {
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(), gatewayApiKeyId,
                             req.getModel(), candidate.getChannelModel().getModelName(),
                             candidate.getChannel().getName(), "success", "success", "请求成功",
-                            System.currentTimeMillis() - startTime, retryIndex, usage[0], usage[1], usage[2]);
+                            System.currentTimeMillis() - startTime, firstByteMsSince(traceId, startTime),
+                            retryIndex, usage[0], usage[1], usage[2]);
                     log.info("候选请求成功 - traceId={} channel={} model={} key={}",
                             traceId, candidate.getChannel().getName(), candidate.getChannelModel().getModelName(),
                             candidate.getChannelApiKey().getKeyName());
@@ -298,7 +311,7 @@ public class CandidateRouter {
                                                      ProviderInvoker invoker) {
         long attemptStartTime = System.currentTimeMillis();
         long timeoutMs = latencyTracker.getTimeout(candidate.getChannel().getId(), candidate.getChannelModel().getId());
-        return invoker.invokeNonStream(authHeader, req, candidate, provider)
+        return invoker.invokeNonStream(authHeader, req, candidate, provider, traceId)
                 .flatMap(body -> {
                     if (body == null || body.isBlank()) {
                         log.warn("候选返回空响应 - traceId={} attempt={}/{} channel={} model={} key={}",
@@ -348,7 +361,10 @@ public class CandidateRouter {
             return Flux.error(new RuntimeException("没有可用的路由候选"));
         }
         return tryStreamCandidates(traceId, new ArrayList<>(candidates), authHeader, gatewayApiKeyId,
-                req, provider, 0, startTime, internalClient, ctx, null, finalStateLogged, invoker);
+                req, provider, 0, startTime, internalClient, ctx, null, finalStateLogged, invoker)
+                // 兜底清理：成功/全部失败路径已在落日志时读取并移除首字节时间戳（幂等），
+                // 此处保证客户端断开、取消订阅等未落日志的出口不残留 map 条目
+                .doFinally(signal -> firstByteArrivalMsByTraceId.remove(traceId));
     }
 
     /**
@@ -375,7 +391,8 @@ public class CandidateRouter {
             String extraInfo = req.isContextRetry() ? "（已拼接上下文但无剩余候选）" : "";
             String failMsg = buildFailMessage(lastErrorMsg);
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, req.getModel(), null, null,
-                    "fail", "error", failMsg, System.currentTimeMillis() - startTime, retryIndex);
+                    "fail", "error", failMsg, System.currentTimeMillis() - startTime,
+                    firstByteMsSince(traceId, startTime), retryIndex);
             log.warn("所有流式候选均失败 - traceId={}{}, lastError={}", traceId, extraInfo, lastErrorMsg);
             recordRouteMetric(req.getModel(), null, "fail", startTime);
             return Flux.error(new RuntimeException(failMsg));
@@ -459,7 +476,8 @@ public class CandidateRouter {
                     requestLogService.logComplete(traceId, candidate.getChannelApiKey().getKeyName(), gatewayApiKeyId,
                             req.getModel(), candidate.getChannelModel().getModelName(),
                             candidate.getChannel().getName(), "success", "success", resultMsg,
-                            System.currentTimeMillis() - startTime, retryIndex, pt, ct, tt);
+                            System.currentTimeMillis() - startTime, firstByteMsSince(traceId, startTime),
+                            retryIndex, pt, ct, tt);
                 })
                 .switchIfEmpty(Flux.defer(() -> {
                     log.warn("流式候选返回空响应（无SSE事件）- traceId={}", traceId);
@@ -552,9 +570,12 @@ public class CandidateRouter {
 
     /**
      * 调用上游非流式接口（使用 WebClient 的默认实现）
+     * <p>通过 DataBuffer 流感知首个响应字节（bodyToMono(String) 会等整个响应体接收完，
+     * 无法测出首字节时间），首字节到达时间按 traceId 暂存，供路由落日志时回填。</p>
      */
     Mono<String> callProviderNonStreamWithWebClient(String authHeader, InternalRequest req,
-                                                     RoutingCandidate candidate, String provider) {
+                                                     RoutingCandidate candidate, String provider,
+                                                     String traceId) {
         String endpoint = buildEndpoint(candidate, provider);
         String apiKey = candidate.getChannelApiKey().getApiKey();
         Map<String, String> headers = buildProviderHeaders(provider, apiKey, authHeader);
@@ -569,10 +590,11 @@ public class CandidateRouter {
                 .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                 .body(org.springframework.web.reactive.function.BodyInserters.fromValue(providerReqBody))
                 .exchangeToMono(resp -> {
-                    if (resp.statusCode().is2xxSuccessful()) {
-                        return resp.bodyToMono(String.class).flatMap(Mono::just);
-                    }
-                    return resp.bodyToMono(String.class).flatMap(body -> {
+                    boolean ok = resp.statusCode().is2xxSuccessful();
+                    return bodyToUtf8StringWithFirstByte(resp, traceId).flatMap(body -> {
+                        if (ok) {
+                            return Mono.just(body);
+                        }
                         log.warn("Provider returned error status {} for channel={} keyId={} keyMasked={} keyLen={}",
                                 resp.statusCode(), candidate.getChannel().getId(),
                                 candidate.getChannelApiKey().getId(),
@@ -582,6 +604,26 @@ public class CandidateRouter {
                         if (status == 400) return Mono.error(new NonRetryableProviderException(status, body));
                         return Mono.error(new RuntimeException("Provider error: " + resp.statusCode() + " body: " + body));
                     });
+                });
+    }
+
+    /**
+     * 读取响应体为 UTF-8 字符串，并在首个 DataBuffer 到达时记录首字节时间戳（按 traceId）
+     */
+    private Mono<String> bodyToUtf8StringWithFirstByte(org.springframework.web.reactive.function.client.ClientResponse resp,
+                                                       String traceId) {
+        return resp.bodyToFlux(org.springframework.core.io.buffer.DataBuffer.class)
+                .doOnNext(buf -> firstByteArrivalMsByTraceId.put(traceId, System.currentTimeMillis()))
+                .collectList()
+                .map(buffers -> {
+                    java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                    for (org.springframework.core.io.buffer.DataBuffer buf : buffers) {
+                        byte[] bytes = new byte[buf.readableByteCount()];
+                        buf.read(bytes);
+                        org.springframework.core.io.buffer.DataBufferUtils.release(buf);
+                        out.write(bytes, 0, bytes.length);
+                    }
+                    return out.toString(java.nio.charset.StandardCharsets.UTF_8);
                 });
     }
 
@@ -635,11 +677,21 @@ public class CandidateRouter {
                     // 随后 replaceModelInRawJson 调用 objectMapper.readTree 只解析第一个
                     // JSON 对象，导致后续 token 全部丢失。
                     return metaFlux.concatWith(sseHandler.extractCompleteEvents(
-                                    resp.bodyToFlux(org.springframework.core.io.buffer.DataBuffer.class))
+                                    resp.bodyToFlux(org.springframework.core.io.buffer.DataBuffer.class)
+                                            .doOnNext(buf -> firstByteArrivalMsByTraceId.put(traceId, System.currentTimeMillis())))
                             .map(chunk -> sseHandler.parseSseEventBlock(
                                     chunk, candidate, provider, req, traceId))
                             .flatMapSequential(Flux::fromIterable));
                 });
+    }
+
+    /**
+     * 读取并清空该 traceId 的首字节时间戳，换算为相对请求路由开始的时间（ms）。
+     * <p>未采集到首字节（如连接失败/超时）时返回 null，落日志后该条记录不参与首字节平均统计。</p>
+     */
+    private Long firstByteMsSince(String traceId, long startTime) {
+        Long arrival = firstByteArrivalMsByTraceId.remove(traceId);
+        return arrival != null ? Math.max(0, arrival - startTime) : null;
     }
 
     // ========== 辅助方法 ==========

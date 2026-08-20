@@ -140,7 +140,7 @@ public class AdminModelController {
         List<ModelChannelRel> rels = modelService.getChannelRels(id);
         List<ChannelModel> availableModels = modelService.getAllAvailableChannelModels();
 
-        // 按 (channelName, channelModelName) 分组计算最近 24h 内每个模型最近 30 条请求的平均响应时间
+        // 按 (channelName, channelModelName) 分组计算最近 24h 内每个模型最近 30 条请求的首字节平均响应时间
         // 加时间窗口避免全表扫描，24h 对个人网关足够覆盖低频访问场景
         LocalDateTime since = LocalDateTime.now().minusHours(24);
         Map<String, List<RequestLog>> logsByKey = new HashMap<>();
@@ -151,8 +151,8 @@ public class AdminModelController {
                         .isNotNull(RequestLog::getChannelModelName)
                         .ne(RequestLog::getChannelName, "")
                         .ne(RequestLog::getChannelModelName, "")
-                        .isNotNull(RequestLog::getResponseTimeMs)
-                        .gt(RequestLog::getResponseTimeMs, 0)
+                        .isNotNull(RequestLog::getFirstByteMs)
+                        .gt(RequestLog::getFirstByteMs, 0)
                         .ge(RequestLog::getCreatedAt, since)
                         .orderByDesc(RequestLog::getCreatedAt));
         for (RequestLog l : allLogs) {
@@ -181,7 +181,7 @@ public class AdminModelController {
                 .toList();
         Map<Long, List<ChannelApiKey>> enabledKeysByChannel = channelApiKeyService.listEnabledByChannelIds(relChannelIds);
 
-        // 为每个关联模型计算最近 30 条的平均响应时间和样本数，并填充熔断状态标记
+        // 为每个关联模型计算最近 30 条的首字节平均响应时间和样本数，并填充熔断状态标记
         for (ModelChannelRel rel : rels) {
             String channelName = rel.getChannelName();
             String channelModelName = rel.getChannelModelName();
@@ -191,7 +191,7 @@ public class AdminModelController {
                 List<RequestLog> recent30 = modelLogs.stream().limit(30).toList();
                 if (!recent30.isEmpty()) {
                     double avg = recent30.stream()
-                            .mapToInt(RequestLog::getResponseTimeMs)
+                            .mapToInt(RequestLog::getFirstByteMs)
                             .average()
                             .orElse(0.0);
                     rel.setTtftMs(Math.round(avg));

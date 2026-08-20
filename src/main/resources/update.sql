@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     status TEXT DEFAULT 'pending',
     message TEXT DEFAULT '',
     response_time_ms INTEGER DEFAULT 0,
+    first_byte_ms INTEGER,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -466,3 +467,12 @@ ALTER TABLE channels ADD COLUMN model_refresh_enabled INTEGER DEFAULT 1;
 UPDATE channels SET model_refresh_enabled = 1 WHERE model_refresh_enabled IS NULL;
 
 INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('channel_model_refresh_interval_minutes', '30', '渠道模型自动刷新间隔（分钟），默认 30 分钟');
+
+-- ========================================
+-- VERSION:v1.29.0
+-- 请求日志新增首字节响应时间字段
+-- first_byte_ms：从请求发出到收到首个响应字节的毫秒数（未收到响应字节时为 NULL）
+-- "模型关联/渠道模型"列表的"首字节平均响应"基于该字段统计
+-- ========================================
+
+ALTER TABLE request_logs ADD COLUMN first_byte_ms INTEGER;

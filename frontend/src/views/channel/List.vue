@@ -50,7 +50,10 @@
               <LoadingSpinner v-if="toggleLoading === ch.id" size="14" />
             </td>
             <td>
-              <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary">{{ t('channel.list.view') }}</router-link>
+              <div style="display:flex;align-items:center;justify-content:space-between;white-space:nowrap;gap:8px;">
+                <span style="font-weight:600;">{{ formatNumber(ch.modelCount ?? 0) }}</span>
+                <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary">{{ t('channel.list.view') }}</router-link>
+              </div>
             </td>
             <td style="text-align:right;font-variant-numeric:tabular-nums;">
               <span style="font-weight:600;">{{ formatNumber(ch.requestCount) }}</span>
@@ -115,6 +118,10 @@
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-stats">
+          <div class="mobile-card-stat">
+            <span class="mobile-card-stat-label">{{ t('channel.list.modelCount') }}</span>
+            <span class="mobile-card-stat-value">{{ formatNumber(ch.modelCount ?? 0) }}</span>
+          </div>
           <div class="mobile-card-stat">
             <span class="mobile-card-stat-label">{{ t('channel.list.requestCount') }}</span>
             <span class="mobile-card-stat-value">{{ formatNumber(ch.requestCount) }}</span>
@@ -382,9 +389,14 @@ async function toggleEnabled(ch: Channel) {
     onConfirm: async () => {
       toggleLoading.value = ch.id!
       try {
-        await channelApi.update(ch.id!, { enabled: newEnabled })
+        const res = await channelApi.update(ch.id!, { enabled: newEnabled })
         ch.enabled = newEnabled
-        open({ message: t('channel.list.toggleSuccess') })
+        // 由禁用转为启用时后端会自动刷新模型，成功则追加改动提示
+        if (newEnabled === 1 && typeof res.data.refreshCount === 'number') {
+          open({ message: `${t('channel.list.toggleSuccess')} ${t('channel.list.refreshAfterEnable', { count: res.data.refreshCount })}` })
+        } else {
+          open({ message: t('channel.list.toggleSuccess') })
+        }
       } catch (e: any) {
         open({ title: t('error.updateFailed'), message: e.message })
       } finally {

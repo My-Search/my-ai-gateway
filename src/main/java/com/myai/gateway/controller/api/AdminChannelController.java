@@ -24,6 +24,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -55,6 +57,11 @@ public class AdminChannelController {
     @GetMapping(value = "/channels", produces = "application/json;charset=UTF-8")
     public ResponseEntity<List<Map<String, Object>>> listChannels() {
         List<Channel> channels = channelService.listAll();
+        List<Long> channelIds = channels.stream()
+                .map(Channel::getId)
+                .filter(Objects::nonNull)
+                .toList();
+        Map<Long, Integer> modelCounts = channelService.countEnabledModelsByChannelIds(channelIds);
         Map<String, Map<String, Object>> usageStats = statsService.getChannelSummaryStats();
         List<Map<String, Object>> result = new ArrayList<>();
         for (Channel ch : channels) {
@@ -67,6 +74,7 @@ public class AdminChannelController {
             item.put("sortOrder", ch.getSortOrder());
             item.put("createdAt", ch.getCreatedAt());
             item.put("updatedAt", ch.getUpdatedAt());
+            item.put("modelCount", ch.getId() != null ? modelCounts.getOrDefault(ch.getId(), 0) : 0);
             // 附加用量统计
             Map<String, Object> usage = usageStats.get(ch.getName());
             if (usage != null) {
@@ -148,7 +156,12 @@ public class AdminChannelController {
             if (body.containsKey("name")) channel.setName((String) body.get("name"));
             if (body.containsKey("channelType")) channel.setChannelType((String) body.get("channelType"));
             if (body.containsKey("baseUrl")) channel.setBaseUrl((String) body.get("baseUrl"));
-            if (body.containsKey("enabled")) channel.setEnabled(Integer.parseInt(body.get("enabled").toString()));
+            boolean becomingEnabled = false;
+            if (body.containsKey("enabled")) {
+                int newEnabled = Integer.parseInt(body.get("enabled").toString());
+                becomingEnabled = channel.getEnabled() != null && channel.getEnabled() == 0 && newEnabled == 1;
+                channel.setEnabled(newEnabled);
+            }
             Integer modelRefreshEnabled = extractModelRefreshEnabled(body);
             if (modelRefreshEnabled != null) {
                 channel.setModelRefreshEnabled(modelRefreshEnabled);
@@ -165,6 +178,27 @@ public class AdminChannelController {
 
             if (apiKeysJson != null) {
                 channelApiKeyService.syncApiKeys(id, parseApiKeysJson(apiKeysJson));
+            }
+
+            // 由禁用转为启用：立即刷新一次模型（拉取失败时保留现有模型），并统计改动数。
+            // 同时提交了手动模型列表（编辑表单保存）时不自动刷新，避免服务商拉取的模型
+            // 覆盖手工维护的模型列表；列表页启用开关只提交 enabled，不在此列。
+            if (becomingEnabled && manualModels == null) {
+                try {
+                    Set<String> beforeNames = channelService.getChannelModelsAll(id).stream()
+                            .map(ChannelModel::getModelName)
+                            .collect(Collectors.toSet());
+                    channelService.reloadModels(id);
+                    Set<String> afterNames = channelService.getChannelModelsAll(id).stream()
+                            .map(ChannelModel::getModelName)
+                            .collect(Collectors.toSet());
+                    int changed = (int) beforeNames.stream().filter(n -> !afterNames.contains(n)).count()
+                            + (int) afterNames.stream().filter(n -> !beforeNames.contains(n)).count();
+                    result.put("refreshCount", changed);
+                    log.info("渠道 {} 已启用，模型已刷新，改动 {} 个模型", channel.getName(), changed);
+                } catch (Exception e) {
+                    log.warn("渠道 {} 启用后刷新模型失败: {}", channel.getName(), e.getMessage());
+                }
             }
 
             result.put("success", true);
@@ -207,8 +241,8 @@ public class AdminChannelController {
 
     /**
      * 获取指定渠道的模型用量统计
-     * 返回该渠道下每个模型的 token 用量、请求次数、最近30次平均响应时间
-     * 以及渠道整体最近30次平均响应时间
+     * 返回该渠道下每个模型的 token 用量、请求次数、最近30次首字节平均响应时间
+     * 以及渠道整体最近30次首字节平均响应时间
      */
     @GetMapping(value = "/channels/{id}/usage-stats", produces = "application/json;charset=UTF-8")
     public ResponseEntity<?> getChannelUsageStats(@PathVariable Long id) {
