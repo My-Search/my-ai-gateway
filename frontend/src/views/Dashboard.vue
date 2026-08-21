@@ -145,10 +145,10 @@
             <div class="monthly-label">{{ t('dashboard.monthlyRequests') }}</div>
             <div class="monthly-value">{{ hasMonthlyData ? formatNumber(stats.monthlyStats?.requests) : '-' }}</div>
             <div class="monthly-change" :class="getChangeClass('requests')">
+              <span class="change-label">{{ t('dashboard.vsLastMonth') }}</span>
               <span class="change-arrow">{{ getChangeArrow('requests') }}</span>
               {{ getChangePercent('requests') }}%
             </div>
-            <div class="monthly-change-label">{{ t('dashboard.vsLastMonth') }}</div>
           </div>
         </div>
         <div class="monthly-stat-item">
@@ -159,10 +159,10 @@
             <div class="monthly-label">{{ t('dashboard.monthlyTokens') }}</div>
             <div class="monthly-value">{{ hasMonthlyData ? formatTokens(stats.monthlyStats?.totalTokens) : '-' }}</div>
             <div class="monthly-change" :class="getChangeClass('totalTokens')">
+              <span class="change-label">{{ t('dashboard.vsLastMonth') }}</span>
               <span class="change-arrow">{{ getChangeArrow('totalTokens') }}</span>
               {{ getChangePercent('totalTokens') }}%
             </div>
-            <div class="monthly-change-label">{{ t('dashboard.vsLastMonth') }}</div>
           </div>
         </div>
         <div class="monthly-stat-item">
@@ -173,10 +173,10 @@
             <div class="monthly-label">{{ t('dashboard.monthlySuccessRate') }}</div>
             <div class="monthly-value">{{ hasMonthlyData ? (stats.monthlyStats?.successRate ?? 0) + '%' : '-' }}</div>
             <div class="monthly-change" :class="getChangeClass('successRate')">
+              <span class="change-label">{{ t('dashboard.vsLastMonth') }}</span>
               <span class="change-arrow">{{ getChangeArrow('successRate') }}</span>
               {{ getChangePercent('successRate') }}%
             </div>
-            <div class="monthly-change-label">{{ t('dashboard.vsLastMonth') }}</div>
           </div>
         </div>
         <div class="monthly-stat-item">
@@ -187,10 +187,10 @@
             <div class="monthly-label">{{ t('dashboard.monthlyAvgResponse') }}</div>
             <div class="monthly-value">{{ stats.monthlyStats?.avgResponseTime ? formatSeconds(stats.monthlyStats.avgResponseTime) : '-' }}</div>
             <div class="monthly-change" :class="getChangeClass('avgResponseTime', true)">
+              <span class="change-label">{{ t('dashboard.vsLastMonth') }}</span>
               <span class="change-arrow">{{ getChangeArrow('avgResponseTime', true) }}</span>
               {{ getChangePercent('avgResponseTime') }}%
             </div>
-            <div class="monthly-change-label">{{ t('dashboard.vsLastMonth') }}</div>
           </div>
         </div>
         <div class="monthly-stat-item">
@@ -201,10 +201,10 @@
             <div class="monthly-label">{{ t('dashboard.monthlyAvgOutputSpeed') }}</div>
             <div class="monthly-value">{{ stats.monthlyStats?.avgOutputSpeed ? stats.monthlyStats.avgOutputSpeed.toFixed(1) + ' t/s' : '-' }}</div>
             <div class="monthly-change" :class="getChangeClass('avgOutputSpeed')">
+              <span class="change-label">{{ t('dashboard.vsLastMonth') }}</span>
               <span class="change-arrow">{{ getChangeArrow('avgOutputSpeed') }}</span>
               {{ getChangePercent('avgOutputSpeed') }}%
             </div>
-            <div class="monthly-change-label">{{ t('dashboard.vsLastMonth') }}</div>
           </div>
         </div>
         <div class="monthly-stat-item">
@@ -215,10 +215,10 @@
             <div class="monthly-label">{{ t('dashboard.monthlyFailCount') }}</div>
             <div class="monthly-value">{{ hasMonthlyData ? (stats.monthlyStats?.failCount ?? 0) : '-' }}</div>
             <div class="monthly-change" :class="getChangeClass('failCount', true)">
+              <span class="change-label">{{ t('dashboard.vsLastMonth') }}</span>
               <span class="change-arrow">{{ getChangeArrow('failCount', true) }}</span>
               {{ getChangePercent('failCount') }}%
             </div>
-            <div class="monthly-change-label">{{ t('dashboard.vsLastMonth') }}</div>
           </div>
         </div>
       </div>
@@ -711,7 +711,7 @@ onUnmounted(() => {
   margin-top: 4px;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
 }
 
 .monthly-change.up {
@@ -722,14 +722,15 @@ onUnmounted(() => {
   color: var(--accent-red);
 }
 
-.change-arrow {
-  font-size: 10px;
+.change-label {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-right: 2px;
 }
 
-.monthly-change-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 2px;
+.change-arrow {
+  font-size: 10px;
 }
 
 /* Rank section */
@@ -807,11 +808,23 @@ onUnmounted(() => {
 @media (max-width: 1000px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 768px) {
   .stats-grid { grid-template-columns: 1fr; }
+  .monthly-body {
+    padding: 12px 0 4px;
+  }
   .monthly-stat-item {
     flex: 0 0 50%;
+    padding: 0 12px;
+    gap: 8px;
   }
   .monthly-stat-item::after {
     display: none;
+  }
+  .monthly-stat-icon {
+    width: 32px;
+    height: 32px;
+  }
+  .monthly-value {
+    font-size: 18px;
   }
   .rank-meta-time { display: none; }
   .rank-item { gap: 8px; }
@@ -819,6 +832,17 @@ onUnmounted(() => {
   .dashboard-header {
     flex-direction: column;
     gap: 12px;
+  }
+}
+@media (max-width: 400px) {
+  .monthly-stat-item {
+    padding: 0 8px;
+  }
+  .monthly-label {
+    font-size: 11px;
+  }
+  .monthly-value {
+    font-size: 16px;
   }
 }
 </style>
