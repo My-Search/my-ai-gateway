@@ -25,16 +25,19 @@
           </div>
           <div class="stat-body">
             <div class="stat-label">{{ t('dashboard.todayRequests') }}</div>
-            <div class="stat-value">{{ stats.todayRequests ?? '-' }}</div>
-            <div class="stat-hint" v-if="(stats.yesterdayRequests ?? 0) > 0">
-              {{ t('dashboard.yesterday') }} {{ stats.yesterdayRequests }}
-              <span class="hint-sep">|</span>
+            <div class="stat-value">{{ hasTodayData ? stats.todayRequests : '-' }}</div>
+            <div class="stat-hint">
+              <template v-if="(stats.yesterdayRequests ?? 0) > 0">
+                {{ t('dashboard.yesterday') }} {{ stats.yesterdayRequests }}
+                <span class="hint-sep">|</span>
+              </template>
               <SvgIcon name="token" :size="11" />
               {{ formatTokens(stats.todayTokenStats?.totalTokens) }} tokens
-            </div>
-            <div class="stat-hint" v-else>
-              <SvgIcon name="token" :size="11" />
-              {{ formatTokens(stats.todayTokenStats?.totalTokens) }} tokens
+              <span v-if="vsRequests.show && hasTodayData" class="stat-change" :class="vsRequests.css">
+                {{ t('dashboard.vsYesterday') }}
+                <span class="change-arrow">{{ vsRequests.arrow }}</span>
+                {{ vsRequests.percent }}%
+              </span>
             </div>
           </div>
         </div>
@@ -53,10 +56,15 @@
           </div>
           <div class="stat-body">
             <div class="stat-label">{{ t('dashboard.successRate') }}</div>
-            <div class="stat-value">{{ stats.successRate ?? '-' }}%</div>
+            <div class="stat-value">{{ hasTodayData ? (stats.successRate ?? 0) + '%' : '-' }}</div>
             <div class="stat-hint">
               <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ stats.todaySuccess ?? 0 }}</span>
               <span class="badge badge-danger" style="margin-left:4px;"><SvgIcon name="x-bold" :size="10" /> {{ stats.todayFail ?? 0 }}</span>
+              <span v-if="vsSuccessRate.show && hasTodayData" class="stat-change" :class="vsSuccessRate.css">
+                {{ t('dashboard.vsYesterday') }}
+                <span class="change-arrow">{{ vsSuccessRate.arrow }}</span>
+                {{ vsSuccessRate.percent }}%
+              </span>
             </div>
           </div>
         </div>
@@ -71,30 +79,53 @@
       <div class="stat-card">
         <div class="stat-card-main">
           <div class="stat-icon" style="background:linear-gradient(135deg,rgba(188,140,255,0.15),rgba(188,140,255,0.05));color:var(--accent-purple);">
-            <SvgIcon name="zap" :size="22" />
+            <SvgIcon name="clock" :size="22" />
           </div>
           <div class="stat-body">
             <div class="stat-label">{{ t('dashboard.avgResponse') }}</div>
-            <div class="stat-value">{{ formatSeconds(stats.avgResponseTime) }}</div>
-            <div class="stat-hint">{{ t('dashboard.basedOnToday') }}</div>
+            <div class="stat-value">{{ stats.avgResponseTime ? formatSeconds(stats.avgResponseTime) : '-' }}</div>
+            <div class="stat-hint">
+              {{ t('dashboard.basedOnToday') }}
+              <span v-if="vsAvgResponse.show && hasTodayData" class="stat-change" :class="vsAvgResponse.css">
+                {{ t('dashboard.vsYesterday') }}
+                <span class="change-arrow">{{ vsAvgResponse.arrow }}</span>
+                {{ vsAvgResponse.percent }}%
+              </span>
+            </div>
           </div>
+        </div>
+        <div class="stat-sparkline">
+          <svg viewBox="0 0 100 30" preserveAspectRatio="none">
+            <path :d="sparklinePaths(dailyAvgTimes).area" fill="rgba(188,140,255,0.12)" stroke="none" />
+            <path :d="sparklinePaths(dailyAvgTimes).line" fill="none" stroke="var(--accent-purple)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
+          </svg>
         </div>
       </div>
 
       <div class="stat-card">
         <div class="stat-card-main">
           <div class="stat-icon" style="background:linear-gradient(135deg,rgba(210,153,34,0.15),rgba(210,153,34,0.05));color:var(--accent-yellow);">
-            <SvgIcon name="monitor" :size="22" />
+            <SvgIcon name="zap" :size="22" />
           </div>
           <div class="stat-body">
-            <div class="stat-label">{{ t('dashboard.overview') }}</div>
-            <div class="stat-value resource-value">
-              {{ t('dashboard.channelCount').replace('{count}', stats.channelCount ?? 0) }} <span class="dot-sep">·</span>
-              {{ t('dashboard.modelCount').replace('{count}', stats.customModelCount ?? 0) }} <span class="dot-sep">·</span>
-              {{ t('dashboard.keyCount').replace('{count}', stats.apiKeyCount ?? 0) }}
+            <div class="stat-label">{{ t('dashboard.avgOutputSpeed') }}</div>
+            <div class="stat-value" v-if="stats.avgOutputSpeed">{{ stats.avgOutputSpeed.toFixed(1) }}<small> t/s</small></div>
+            <div class="stat-value" v-else>-</div>
+            <div class="stat-hint">
+              {{ t('dashboard.basedOnTodaySuccess') }}
+              <span v-if="vsOutputSpeed.show && hasTodayData" class="stat-change" :class="vsOutputSpeed.css">
+                {{ t('dashboard.vsYesterday') }}
+                <span class="change-arrow">{{ vsOutputSpeed.arrow }}</span>
+                {{ vsOutputSpeed.percent }}%
+              </span>
             </div>
-            <div class="stat-hint">{{ t('dashboard.resourceSummary') }}</div>
           </div>
+        </div>
+        <div class="stat-sparkline">
+          <svg viewBox="0 0 100 30" preserveAspectRatio="none">
+            <path :d="sparklinePaths(dailyOutputSpeeds).area" fill="rgba(210,153,34,0.12)" stroke="none" />
+            <path :d="sparklinePaths(dailyOutputSpeeds).line" fill="none" stroke="var(--accent-yellow)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
+          </svg>
         </div>
       </div>
     </div>
@@ -112,7 +143,7 @@
           </div>
           <div class="monthly-stat-info">
             <div class="monthly-label">{{ t('dashboard.monthlyRequests') }}</div>
-            <div class="monthly-value">{{ formatNumber(stats.monthlyStats?.requests) }}</div>
+            <div class="monthly-value">{{ hasMonthlyData ? formatNumber(stats.monthlyStats?.requests) : '-' }}</div>
             <div class="monthly-change" :class="getChangeClass('requests')">
               <span class="change-arrow">{{ getChangeArrow('requests') }}</span>
               {{ getChangePercent('requests') }}%
@@ -126,7 +157,7 @@
           </div>
           <div class="monthly-stat-info">
             <div class="monthly-label">{{ t('dashboard.monthlyTokens') }}</div>
-            <div class="monthly-value">{{ formatTokens(stats.monthlyStats?.totalTokens) }}</div>
+            <div class="monthly-value">{{ hasMonthlyData ? formatTokens(stats.monthlyStats?.totalTokens) : '-' }}</div>
             <div class="monthly-change" :class="getChangeClass('totalTokens')">
               <span class="change-arrow">{{ getChangeArrow('totalTokens') }}</span>
               {{ getChangePercent('totalTokens') }}%
@@ -140,7 +171,7 @@
           </div>
           <div class="monthly-stat-info">
             <div class="monthly-label">{{ t('dashboard.monthlySuccessRate') }}</div>
-            <div class="monthly-value">{{ stats.monthlyStats?.successRate ?? 0 }}%</div>
+            <div class="monthly-value">{{ hasMonthlyData ? (stats.monthlyStats?.successRate ?? 0) + '%' : '-' }}</div>
             <div class="monthly-change" :class="getChangeClass('successRate')">
               <span class="change-arrow">{{ getChangeArrow('successRate') }}</span>
               {{ getChangePercent('successRate') }}%
@@ -154,10 +185,24 @@
           </div>
           <div class="monthly-stat-info">
             <div class="monthly-label">{{ t('dashboard.monthlyAvgResponse') }}</div>
-            <div class="monthly-value">{{ formatSeconds(stats.monthlyStats?.avgResponseTime) }}</div>
+            <div class="monthly-value">{{ stats.monthlyStats?.avgResponseTime ? formatSeconds(stats.monthlyStats.avgResponseTime) : '-' }}</div>
             <div class="monthly-change" :class="getChangeClass('avgResponseTime', true)">
               <span class="change-arrow">{{ getChangeArrow('avgResponseTime', true) }}</span>
               {{ getChangePercent('avgResponseTime') }}%
+            </div>
+            <div class="monthly-change-label">{{ t('dashboard.vsLastMonth') }}</div>
+          </div>
+        </div>
+        <div class="monthly-stat-item">
+          <div class="monthly-stat-icon" style="background:linear-gradient(135deg,rgba(88,166,255,0.15),rgba(88,166,255,0.05));color:var(--accent-blue);">
+            <SvgIcon name="chart" :size="18" />
+          </div>
+          <div class="monthly-stat-info">
+            <div class="monthly-label">{{ t('dashboard.monthlyAvgOutputSpeed') }}</div>
+            <div class="monthly-value">{{ stats.monthlyStats?.avgOutputSpeed ? stats.monthlyStats.avgOutputSpeed.toFixed(1) + ' t/s' : '-' }}</div>
+            <div class="monthly-change" :class="getChangeClass('avgOutputSpeed')">
+              <span class="change-arrow">{{ getChangeArrow('avgOutputSpeed') }}</span>
+              {{ getChangePercent('avgOutputSpeed') }}%
             </div>
             <div class="monthly-change-label">{{ t('dashboard.vsLastMonth') }}</div>
           </div>
@@ -168,7 +213,7 @@
           </div>
           <div class="monthly-stat-info">
             <div class="monthly-label">{{ t('dashboard.monthlyFailCount') }}</div>
-            <div class="monthly-value">{{ stats.monthlyStats?.failCount ?? 0 }}</div>
+            <div class="monthly-value">{{ hasMonthlyData ? (stats.monthlyStats?.failCount ?? 0) : '-' }}</div>
             <div class="monthly-change" :class="getChangeClass('failCount', true)">
               <span class="change-arrow">{{ getChangeArrow('failCount', true) }}</span>
               {{ getChangePercent('failCount') }}%
@@ -332,11 +377,56 @@ const dailySuccessRates = computed(() => {
   })
 })
 
+const dailyAvgTimes = computed(() => {
+  return (stats.value.dailyTrend ?? []).map(d => d.avgTime ?? 0)
+})
+
+const dailyOutputSpeeds = computed(() => {
+  return (stats.value.dailyTrend ?? []).map(d => d.avgOutputSpeed ?? 0)
+})
+
+// 无数据判定：今日/本月无请求时主值显示 "-" 而非 0
+const hasTodayData = computed(() => (stats.value.todayRequests ?? 0) > 0)
+const hasMonthlyData = computed(() => (stats.value.monthlyStats?.requests ?? 0) > 0)
+
+// ===== 卡片"较昨日"环比 =====
+// 双零（今日与昨日均无数据）→ 隐藏；仅昨日无数据 → 视为 0，显示 +100.0%
+interface VsChange { show: boolean; arrow: string; percent: string; css: string }
+
+function buildVsChange(current: number | undefined, prev: number | undefined, invert = false): VsChange {
+  const c = current ?? 0
+  const p = prev ?? 0
+  if (p === 0 && c === 0) return { show: false, arrow: '→', percent: '0.0', css: '' }
+  if (p === 0) {
+    // 昨日无数据视为 0，今日有数据 → 上涨 100%
+    // invert=true 时"上涨"是坏事（首字节变慢），颜色翻转为 down
+    return { show: true, arrow: '↑', percent: '+100.0', css: invert ? 'down' : 'up' }
+  }
+  const change = ((c - p) / p) * 100
+  const isUp = c > p
+  return {
+    show: true,
+    arrow: isUp ? '↑' : '↓',
+    percent: (change > 0 ? '+' : '') + change.toFixed(1),
+    css: invert ? (isUp ? 'down' : 'up') : (isUp ? 'up' : 'down')
+  }
+}
+
+const vsRequests = computed(() =>
+  buildVsChange(stats.value.todayRequests, stats.value.yesterdayStats?.requests))
+const vsSuccessRate = computed(() =>
+  buildVsChange(stats.value.successRate, stats.value.yesterdayStats?.successRate))
+// 首字节时间：上升（变慢）为坏方向，颜色翻转
+const vsAvgResponse = computed(() =>
+  buildVsChange(stats.value.avgResponseTime, stats.value.yesterdayStats?.avgResponseTime, true))
+const vsOutputSpeed = computed(() =>
+  buildVsChange(stats.value.avgOutputSpeed, stats.value.yesterdayStats?.avgOutputSpeed))
+
 function formatTime(dateStr: string) {
   return formatLocalTime(dateStr)
 }
 
-function getChangePercent(key: 'requests' | 'totalTokens' | 'successRate' | 'avgResponseTime' | 'failCount'): string {
+function getChangePercent(key: 'requests' | 'totalTokens' | 'successRate' | 'avgResponseTime' | 'avgOutputSpeed' | 'failCount'): string {
   const current = (stats.value.monthlyStats as any)?.[key] ?? 0
   const prev = (stats.value.monthlyStats as any)?.prev?.[key] ?? 0
   if (prev === 0) return current === 0 ? '0.0' : '100.0'
@@ -344,7 +434,7 @@ function getChangePercent(key: 'requests' | 'totalTokens' | 'successRate' | 'avg
   return (change > 0 ? '+' : '') + change.toFixed(1)
 }
 
-function getChangeArrow(key: 'requests' | 'totalTokens' | 'successRate' | 'avgResponseTime' | 'failCount', invert = false): string {
+function getChangeArrow(key: 'requests' | 'totalTokens' | 'successRate' | 'avgResponseTime' | 'avgOutputSpeed' | 'failCount', invert = false): string {
   const current = (stats.value.monthlyStats as any)?.[key] ?? 0
   const prev = (stats.value.monthlyStats as any)?.prev?.[key] ?? 0
   if (prev === 0 && current === 0) return '→'
@@ -355,7 +445,7 @@ function getChangeArrow(key: 'requests' | 'totalTokens' | 'successRate' | 'avgRe
   return isUp ? '↑' : '↓'
 }
 
-function getChangeClass(key: 'requests' | 'totalTokens' | 'successRate' | 'avgResponseTime' | 'failCount', invert = false): string {
+function getChangeClass(key: 'requests' | 'totalTokens' | 'successRate' | 'avgResponseTime' | 'avgOutputSpeed' | 'failCount', invert = false): string {
   const current = (stats.value.monthlyStats as any)?.[key] ?? 0
   const prev = (stats.value.monthlyStats as any)?.prev?.[key] ?? 0
   if (prev === 0 && current === 0) return ''
@@ -506,10 +596,18 @@ onUnmounted(() => {
 .stat-label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500; }
 .stat-value { font-size: 28px; font-weight: 700; line-height: 1.2; color: var(--text-primary); }
 .stat-value small { font-size: 14px; font-weight: 400; color: var(--text-muted); margin-left: 2px; }
-.stat-value.resource-value { font-size: 15px; line-height: 1.6; }
-.dot-sep { color: var(--text-muted); margin: 0 6px; }
 .stat-hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
 .hint-sep { color: var(--border-color); margin: 0 4px; }
+
+/* 卡片"较昨日"环比 */
+.stat-change {
+  font-size: 12px; font-weight: 600;
+  display: inline-flex; align-items: center; gap: 3px;
+  margin-left: 8px; white-space: nowrap;
+}
+.stat-change.up { color: var(--accent-green); }
+.stat-change.down { color: var(--accent-red); }
+.stat-change .change-arrow { font-size: 10px; }
 
 .stat-sparkline {
   height: 30px;

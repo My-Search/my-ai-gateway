@@ -13,12 +13,14 @@ export interface MonthlyStats {
   totalTokens: number
   successRate: number
   avgResponseTime: number
+  avgOutputSpeed: number
   failCount: number
   prev: {
     requests: number
     totalTokens: number
     successRate: number
     avgResponseTime: number
+    avgOutputSpeed: number
     failCount: number
   }
 }
@@ -30,10 +32,12 @@ export interface DashboardStats {
   todayFail: number
   successRate: number
   avgResponseTime: number
+  avgOutputSpeed: number
   channelCount: number
   customModelCount: number
   apiKeyCount: number
-  dailyTrend: { label: string; requests: number; success: number; fail: number }[]
+  yesterdayStats: { requests: number; successRate: number; avgResponseTime: number; avgOutputSpeed: number }
+  dailyTrend: { label: string; requests: number; success: number; fail: number; avgTime: number; avgOutputSpeed: number }[]
   channelRank: { name: string; requests: number; success: number; avgTime: number; totalTokens: number }[]
   modelRank: { name: string; requests: number; success: number; totalTokens: number }[]
   channelModelRank: { name: string; channelName?: string; requests: number; success: number; totalTokens: number }[]

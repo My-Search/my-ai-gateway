@@ -45,6 +45,10 @@
         <div class="stat-label">{{ t('channel.models.avgResponse') }}</div>
         <div class="stat-value">{{ formatResponseTime(channelAvgResponseTimeRecent30) }}</div>
       </div>
+      <div class="stat-item">
+        <div class="stat-label">{{ t('channel.models.avgOutputSpeed') }}</div>
+        <div class="stat-value">{{ formatOutputSpeed(channelAvgOutputSpeedRecent30) }}</div>
+      </div>
     </div>
 
     <div v-if="!sortedModels.length" class="empty-state">{{ t('channel.models.noData') }}</div>
@@ -60,6 +64,7 @@
             <th>{{ t('channel.models.requestCount') }}</th>
             <th>{{ t('channel.models.tokenUsage') }}</th>
             <th style="text-align:center;">{{ t('channel.models.avgResponseShort') }}</th>
+            <th style="text-align:center;">{{ t('channel.models.avgOutputSpeedShort') }}</th>
           </tr>
         </thead>
         <tbody>
@@ -92,6 +97,12 @@
             <td style="text-align:center;font-variant-numeric:tabular-nums;">
               <span v-if="getModelStat(m.modelName)?.avgResponseTimeRecent30" style="font-weight:600;">
                 {{ formatResponseTime(getModelStat(m.modelName)?.avgResponseTimeRecent30) }}
+              </span>
+              <span v-else style="color:var(--text-muted);">-</span>
+            </td>
+            <td style="text-align:center;font-variant-numeric:tabular-nums;">
+              <span v-if="getModelStat(m.modelName)?.avgOutputSpeedRecent30" style="font-weight:600;">
+                {{ formatOutputSpeed(getModelStat(m.modelName)?.avgOutputSpeedRecent30) }}
               </span>
               <span v-else style="color:var(--text-muted);">-</span>
             </td>
@@ -129,6 +140,10 @@
             <div class="mobile-stat">
               <span class="mobile-stat-label">{{ t('channel.models.avgResponseShort') }}</span>
               <span class="mobile-stat-value">{{ formatResponseTime(getModelStat(m.modelName)?.avgResponseTimeRecent30) }}</span>
+            </div>
+            <div class="mobile-stat">
+              <span class="mobile-stat-label">{{ t('channel.models.avgOutputSpeedShort') }}</span>
+              <span class="mobile-stat-value">{{ formatOutputSpeed(getModelStat(m.modelName)?.avgOutputSpeedRecent30) }}</span>
             </div>
           </div>
         </div>
@@ -168,6 +183,7 @@ const channel = ref<Channel | null>(null)
 const models = ref<ChannelModel[]>([])
 const modelStats = ref<ModelUsageStat[]>([])
 const channelAvgResponseTimeRecent30 = ref<number>(0)
+const channelAvgOutputSpeedRecent30 = ref<number>(0)
 const loading = ref(false)
 
 /** Find usage stats by model name */
@@ -224,6 +240,12 @@ function formatResponseTime(ms: number | undefined): string {
   return (ms / 1000).toFixed(2) + 's'
 }
 
+/** Format output speed: tokens/s with 1 decimal */
+function formatOutputSpeed(speed: number | undefined): string {
+  if (speed == null || speed === 0) return '-'
+  return speed.toFixed(1) + ' t/s'
+}
+
 onMounted(async () => {
   const id = Number(route.params.id)
   loading.value = true
@@ -236,6 +258,7 @@ onMounted(async () => {
     models.value = modelsRes.data.models
     modelStats.value = statsRes.data.modelStats
     channelAvgResponseTimeRecent30.value = statsRes.data.channelAvgResponseTimeRecent30 ?? 0
+    channelAvgOutputSpeedRecent30.value = statsRes.data.channelAvgOutputSpeedRecent30 ?? 0
   } catch (e: any) {
     open({ title: t('error.loadFailed'), message: e.message })
     router.push('/admin/channel/list')
@@ -253,7 +276,7 @@ onMounted(async () => {
 
 .usage-summary {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 16px;
   padding: 16px 0;
   margin-bottom: 16px;

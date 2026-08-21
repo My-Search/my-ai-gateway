@@ -104,6 +104,7 @@
             <th>{{ t('model.rels.model') }}</th>
             <th>{{ t('model.rels.inputTypes') }}</th>
             <th>{{ t('model.rels.responseTime') }}</th>
+            <th>{{ t('model.rels.outputSpeed') }}</th>
             <th>{{ t('model.rels.circuitBreaker') }}</th>
             <th>{{ t('model.rels.reasoningEffort') }}</th>
             <th>{{ t('model.rels.actions') }}</th>
@@ -137,6 +138,12 @@
               <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
             </td>
             <td>
+              <span v-if="rel.outputSpeed != null" class="resp-time">
+                {{ rel.outputSpeed.toFixed(1) }} <span class="sample-count">tokens/s</span>
+              </span>
+              <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
+            </td>
+            <td>
               <span v-if="rel.circuitBroken === 1" class="cb-broken">
                 <span class="badge badge-broken">
                   {{ t('model.rels.broken') }}
@@ -144,7 +151,9 @@
                   <template v-else-if="rel.circuitBrokenScope === 'model'">（{{ t('model.rels.brokenModel') }}）</template>
                   <template v-else-if="rel.circuitBrokenScope === 'both'">（{{ t('model.rels.brokenBoth') }}）</template>
                 </span>
-                <span class="cb-expire">{{ t('model.rels.brokenExpire') }} {{ formatExpire(rel.circuitBrokenExpireAt) }}</span>
+                <span class="cb-hint" @click="toggleProbeHint">
+                  <SvgIcon name="question" :size="12" class="cb-hint-icon" />
+                </span>
                 <button class="btn btn-sm btn-secondary cb-recover-btn" @click="recoverRel(rel)">
                   <SvgIcon name="check" :size="12" /> {{ t('model.rels.recover') }}
                 </button>
@@ -175,7 +184,7 @@
             </td>
           </tr>
           <tr v-if="!rels.length">
-            <td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
+            <td colspan="8" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
           </tr>
         </tbody>
       </table>
@@ -203,10 +212,22 @@
   >
     {{ dialogMessage }}
   </Dialog>
+
+  <!-- 探测机制说明气泡：点击问号图标切换显示 -->
+  <Teleport to="body">
+    <div
+      v-if="probeHintVisible"
+      class="probe-hint-pop"
+      :class="{ below: probeHintPos.below }"
+      :style="{ left: probeHintPos.x + 'px', top: probeHintPos.y + 'px' }"
+    >
+      {{ t('model.rels.brokenProbeHint') }}
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
@@ -251,14 +272,49 @@ function effortLabel(value: string): string {
   return value // 直接显示原始值 low/medium/high/xhigh/max
 }
 
-function formatExpire(value?: string | null): string {
-  if (!value) return '--'
-  // 后端返回 ISO 格式，本地时间显示
-  const d = new Date(value)
-  if (isNaN(d.getTime())) return value
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+/** 探测说明气泡状态：visible 是否显示；pos 为 fixed 定位坐标（基于图标位置计算）及方位 */
+const probeHintVisible = ref(false)
+const probeHintPos = ref({ x: 0, y: 0, below: true })
+
+/**
+ * 点击问号图标切换探测说明气泡。
+ * 主流程：若气泡已显示则关闭；否则取图标位置，顶部空间不足时显示在下方，然后打开气泡。
+ * 图标点击在事件阶段被标记 stopPropagation，避免触发 document 上的关闭监听。
+ */
+function toggleProbeHint(e: MouseEvent) {
+  e.stopPropagation()
+  if (probeHintVisible.value) {
+    probeHintVisible.value = false
+    return
+  }
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const below = rect.top < 64
+  probeHintPos.value = {
+    x: rect.left + rect.width / 2,
+    y: below ? rect.bottom + 8 : rect.top - 8,
+    below
+  }
+  probeHintVisible.value = true
 }
+
+/** 关闭气泡（点击气泡外任意位置 / 滚动 / 窗口缩放时触发） */
+function closeProbeHint() {
+  probeHintVisible.value = false
+}
+
+// 气泡打开期间挂载全局关闭监听，关闭后移除；组件卸载时确保监听清理。
+watch(probeHintVisible, (visible) => {
+  if (visible) {
+    document.addEventListener('click', closeProbeHint)
+    document.addEventListener('scroll', closeProbeHint, true)
+    window.addEventListener('resize', closeProbeHint)
+  } else {
+    document.removeEventListener('click', closeProbeHint)
+    document.removeEventListener('scroll', closeProbeHint, true)
+    window.removeEventListener('resize', closeProbeHint)
+  }
+})
+onBeforeUnmount(closeProbeHint)
 
 function recoverRel(rel: ModelChannelRel) {
   openDialog({
@@ -863,10 +919,40 @@ table td {
   border: 1px solid rgba(248, 81, 73, 0.3);
 }
 
-.cb-expire {
-  font-size: 11px;
+.cb-hint {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 4px;
+  cursor: pointer;
   color: var(--text-muted);
-  white-space: nowrap;
+}
+
+.cb-hint-icon {
+  transition: opacity 0.15s ease;
+  opacity: 0.7;
+}
+.cb-hint:hover .cb-hint-icon {
+  opacity: 1;
+}
+
+/* 探测说明气泡：fixed 定位挂载到 body，z-index 高于页面层级 */
+.probe-hint-pop {
+  position: fixed;
+  z-index: 3000;
+  max-width: 280px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(30, 30, 35, 0.95);
+  color: #f0f0f0;
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+  white-space: normal;
+}
+.probe-hint-pop.below {
+  transform: translate(-50%, 0);
 }
 
 .cb-recover-btn {

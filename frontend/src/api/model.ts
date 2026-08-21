@@ -44,6 +44,8 @@ export interface ModelChannelRel {
   ttftMs?: number | null
   /** 样本数 */
   sampleCount?: number | null
+  /** 该渠道模型最近30次请求的平均生成速度 (tokens/s) */
+  outputSpeed?: number | null
   /** 默认思考强度（reasoning_effort） */
   reasoningEffort?: string | null
   /** 是否处于熔断状态：1=熔断中（模型级或渠道级） */
@@ -71,6 +73,7 @@ export interface ModelStatsItem {
   requests: number
   successRate: number
   avgResponseTime: number
+  avgOutputSpeed: number
 }
 
 export interface ModelStatsResponse {

@@ -51,6 +51,8 @@ export interface ModelUsageStat {
   totalTokens: number
   /** 最近30次请求的首字节平均响应时间（毫秒） */
   avgResponseTimeRecent30: number
+  /** 最近30次请求的平均生成速度（tokens/s） */
+  avgOutputSpeedRecent30: number
   today: PeriodStat
   week: PeriodStat
   month: PeriodStat
@@ -101,6 +103,6 @@ export const channelApi = {
     )
   },
   getUsageStats(id: number) {
-    return http.get<{ channel: Channel; modelStats: ModelUsageStat[]; channelAvgResponseTimeRecent30: number }>(`/channels/${id}/usage-stats`)
+    return http.get<{ channel: Channel; modelStats: ModelUsageStat[]; channelAvgResponseTimeRecent30: number; channelAvgOutputSpeedRecent30: number }>(`/channels/${id}/usage-stats`)
   }
 }

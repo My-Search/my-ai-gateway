@@ -52,6 +52,22 @@ class DashboardStatsCollector {
         // 2. 昨日唯一请求数（同比对比，trace-level 去重）
         long yesterdayRequests = requestLogMapper.selectYesterdayStartCount(yesterdayStart, todayStart);
 
+        // 2.1 昨日聚合（成功率/首字节/生成速度，口径与今日一致），供卡片"较昨日"环比
+        Map<String, Object> yesterdayAgg = requestLogMapper.selectRangeAggregatedStats(yesterdayStart, todayStart);
+        long yesterdayFail = requestLogMapper.countFailedTracesBetween(yesterdayStart, todayStart);
+        long yesterdaySuccess = Math.max(0, yesterdayRequests - yesterdayFail);
+        double yesterdaySuccessRate = yesterdayRequests > 0 ? (double) yesterdaySuccess / yesterdayRequests * 100 : 0;
+        double yesterdayAvgResponse = yesterdayAgg.get("avg_response_time") != null
+                ? ((Number) yesterdayAgg.get("avg_response_time")).doubleValue() : 0.0;
+        double yesterdayAvgOutputSpeed = yesterdayAgg.get("avg_output_speed") != null
+                ? ((Number) yesterdayAgg.get("avg_output_speed")).doubleValue() : 0.0;
+        Map<String, Object> yesterdayStats = new LinkedHashMap<>();
+        yesterdayStats.put("requests", yesterdayRequests);
+        yesterdayStats.put("successRate", Math.round(yesterdaySuccessRate * 10) / 10.0);
+        yesterdayStats.put("avgResponseTime", Math.round(yesterdayAvgResponse));
+        yesterdayStats.put("avgOutputSpeed", Math.round(yesterdayAvgOutputSpeed * 10.0) / 10.0);
+        stats.put("yesterdayStats", yesterdayStats);
+
         // 3. 以 trace-level 计算成功/失败数与成功率
         //    todayFail: 今日发起且从未 success（所有尝试均失败）的 trace 数
         //    todaySuccess: 今日发起且至少有一次 success 的 trace 数
@@ -64,6 +80,9 @@ class DashboardStatsCollector {
         stats.put("todaySuccess", todaySuccess);
         stats.put("todayFail", todayFail);
         stats.put("avgResponseTime", Math.round(avgResponseTime));
+        double avgOutputSpeed = todayAgg.get("avg_output_speed") != null
+                ? ((Number) todayAgg.get("avg_output_speed")).doubleValue() : 0.0;
+        stats.put("avgOutputSpeed", Math.round(avgOutputSpeed * 10.0) / 10.0);
         stats.put("successRate", Math.round(successRate * 10) / 10.0);
 
         // 4. Token 用量
@@ -91,6 +110,9 @@ class DashboardStatsCollector {
         monthlyStats.put("totalTokens", toLong(monthAgg.get("monthly_total_tokens")));
         monthlyStats.put("successRate", Math.round(monthlySuccessRate * 10) / 10.0);
         monthlyStats.put("avgResponseTime", Math.round(monthlyAvgResponse));
+        double monthlyAvgOutputSpeed = monthAgg.get("avg_output_speed") != null
+                ? ((Number) monthAgg.get("avg_output_speed")).doubleValue() : 0.0;
+        monthlyStats.put("avgOutputSpeed", Math.round(monthlyAvgOutputSpeed * 10.0) / 10.0);
         monthlyStats.put("failCount", monthlyFail);
 
         // 5.1 上月统计（用于环比）
@@ -109,6 +131,9 @@ class DashboardStatsCollector {
         prevMonthlyStats.put("totalTokens", toLong(prevMonthAgg.get("monthly_total_tokens")));
         prevMonthlyStats.put("successRate", Math.round(prevMonthlySuccessRate * 10) / 10.0);
         prevMonthlyStats.put("avgResponseTime", Math.round(prevMonthlyAvgResponse));
+        double prevMonthlyAvgOutputSpeed = prevMonthAgg.get("avg_output_speed") != null
+                ? ((Number) prevMonthAgg.get("avg_output_speed")).doubleValue() : 0.0;
+        prevMonthlyStats.put("avgOutputSpeed", Math.round(prevMonthlyAvgOutputSpeed * 10.0) / 10.0);
         prevMonthlyStats.put("failCount", prevMonthlyFail);
 
         monthlyStats.put("prev", prevMonthlyStats);
@@ -187,10 +212,18 @@ class DashboardStatsCollector {
                 day.put("requests", toLong(row.get("requests")));
                 day.put("success", toLong(row.get("success")));
                 day.put("fail", toLong(row.get("fail")));
+                // 首字节平均时间：毫秒取整；平均生成速度：保留一位小数
+                double avgTime = row.get("avg_time") != null ? ((Number) row.get("avg_time")).doubleValue() : 0.0;
+                day.put("avgTime", Math.round(avgTime));
+                double avgOutputSpeed = row.get("avg_output_speed") != null
+                        ? ((Number) row.get("avg_output_speed")).doubleValue() : 0.0;
+                day.put("avgOutputSpeed", Math.round(avgOutputSpeed * 10.0) / 10.0);
             } else {
                 day.put("requests", 0L);
                 day.put("success", 0L);
                 day.put("fail", 0L);
+                day.put("avgTime", 0L);
+                day.put("avgOutputSpeed", 0.0);
             }
             result.add(day);
         }

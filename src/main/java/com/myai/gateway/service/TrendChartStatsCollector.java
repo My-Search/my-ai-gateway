@@ -245,6 +245,36 @@ class TrendChartStatsCollector {
                         .average()
                         .orElse(0.0));
 
+        // 按模型分组计算最近 30 条的平均生成速度 (tokens/s)
+        // 分母使用总耗时而非(总耗时-首字节耗时)：非流式请求 (response_time_ms - first_byte_ms) 趋近 0，会得到异常大的速度值
+        Map<String, List<RequestLog>> successLogsByModel = successLogs.stream()
+                .filter(l -> l.getChannelModelName() != null && !l.getChannelModelName().isEmpty())
+                .filter(l -> l.getResponseTimeMs() != null && l.getCompletionTokens() != null)
+                .filter(l -> l.getCompletionTokens() > 0 && l.getResponseTimeMs() > 0)
+                .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
+                .collect(Collectors.groupingBy(RequestLog::getChannelModelName));
+
+        Map<String, Double> modelAvgOutputSpeedRecent30 = new LinkedHashMap<>();
+        for (Map.Entry<String, List<RequestLog>> entry : successLogsByModel.entrySet()) {
+            double avgSpeed = entry.getValue().stream()
+                    .limit(30)
+                    .mapToDouble(l -> l.getCompletionTokens() * 1000.0 / l.getResponseTimeMs())
+                    .average()
+                    .orElse(0.0);
+            modelAvgOutputSpeedRecent30.put(entry.getKey(), Math.round(avgSpeed * 10.0) / 10.0);
+        }
+
+        // 渠道级平均生成速度
+        double channelAvgOutputSpeedRecent30 = Math.round(
+                successLogs.stream()
+                        .filter(l -> l.getResponseTimeMs() != null && l.getCompletionTokens() != null)
+                        .filter(l -> l.getCompletionTokens() > 0 && l.getResponseTimeMs() > 0)
+                        .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
+                        .limit(30)
+                        .mapToDouble(l -> l.getCompletionTokens() * 1000.0 / l.getResponseTimeMs())
+                        .average()
+                        .orElse(0.0) * 10.0) / 10.0;
+
         Set<String> allModels = new LinkedHashSet<>();
         allModels.addAll(requestCounts.keySet());
         allModels.addAll(todayRequestCounts.keySet());
@@ -263,6 +293,7 @@ class TrendChartStatsCollector {
                     item.put("completionTokens", completionSums.getOrDefault(modelName, 0L));
                     item.put("totalTokens", totalSums.getOrDefault(modelName, 0L));
                     item.put("avgResponseTimeRecent30", modelAvgResponseTimeRecent30.getOrDefault(modelName, 0L));
+                    item.put("avgOutputSpeedRecent30", modelAvgOutputSpeedRecent30.getOrDefault(modelName, 0.0));
 
                     item.put("today", buildPeriodMap(
                             todayRequestCounts.getOrDefault(modelName, 0L),
@@ -287,6 +318,7 @@ class TrendChartStatsCollector {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("modelStats", modelStatsList);
         result.put("channelAvgResponseTimeRecent30", channelAvgResponseTimeRecent30);
+        result.put("channelAvgOutputSpeedRecent30", channelAvgOutputSpeedRecent30);
         return result;
     }
 
@@ -406,12 +438,15 @@ class TrendChartStatsCollector {
             long success = toLong(row.get("success"));
             double avgResponse = row.get("avg_response_time") != null
                     ? ((Number) row.get("avg_response_time")).doubleValue() : 0.0;
+            double avgOutputSpeed = row.get("avg_output_speed") != null
+                    ? ((Number) row.get("avg_output_speed")).doubleValue() : 0.0;
             double successRate = requests > 0 ? (double) success / requests * 100 : 0.0;
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("modelName", name);
             item.put("requests", requests);
             item.put("successRate", Math.round(successRate * 10) / 10.0);
             item.put("avgResponseTime", Math.round(avgResponse));
+            item.put("avgOutputSpeed", Math.round(avgOutputSpeed * 10.0) / 10.0);
             statsMap.put(name, item);
         }
 

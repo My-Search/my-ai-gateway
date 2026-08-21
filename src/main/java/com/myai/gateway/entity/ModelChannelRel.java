@@ -65,6 +65,10 @@ public class ModelChannelRel {
     @TableField(exist = false)
     private Integer sampleCount;
 
+    /** 该渠道模型最近30次请求的平均生成速度 tokens/s（非数据库字段，从 request_logs 统计：completion_tokens * 1000 / response_time_ms） */
+    @TableField(exist = false)
+    private Double outputSpeed;
+
     /** 模型支持的输入类型（非数据库字段，从 ChannelModel 读取），如 'text' 或 'text,image' */
     @TableField(exist = false)
     private String input;
@@ -140,6 +144,9 @@ public class ModelChannelRel {
 
     public Integer getSampleCount() { return sampleCount; }
     public void setSampleCount(Integer sampleCount) { this.sampleCount = sampleCount; }
+
+    public Double getOutputSpeed() { return outputSpeed; }
+    public void setOutputSpeed(Double outputSpeed) { this.outputSpeed = outputSpeed; }
 
     public String getInput() { return input; }
     public void setInput(String input) { this.input = input; }

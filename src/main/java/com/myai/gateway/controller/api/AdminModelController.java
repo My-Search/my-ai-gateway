@@ -200,6 +200,26 @@ public class AdminModelController {
                     rel.setTtftMs(null);
                     rel.setSampleCount(null);
                 }
+
+                // 计算平均生成速度 (tokens/s)：completion_tokens * 1000 / 总响应耗时。
+                // 注意分母使用总耗时而非(总耗时-首字节耗时)：非流式请求首字节与末字节同时到达，
+                // (response_time_ms - first_byte_ms) 趋近 0 会得到异常大的速度值。
+                double speedSum = 0;
+                int speedCount = 0;
+                for (RequestLog rl : recent30) {
+                    Integer rt = rl.getResponseTimeMs();
+                    Integer ct = rl.getCompletionTokens();
+                    if (rt != null && ct != null && rt > 0 && ct > 0) {
+                        double speed = ct * 1000.0 / rt;
+                        speedSum += speed;
+                        speedCount++;
+                    }
+                }
+                if (speedCount > 0) {
+                    rel.setOutputSpeed(Math.round(speedSum / speedCount * 10.0) / 10.0);
+                } else {
+                    rel.setOutputSpeed(null);
+                }
             }
             CircuitBreakerService.RelBrokenMark mark = brokenMarks.get(rel.getId());
             if (mark == null) {

@@ -133,7 +133,9 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as monthly_total_tokens, " +
             "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as monthly_success, " +
             "AVG(CASE WHEN first_byte_ms > 0 THEN first_byte_ms ELSE NULL END) as avg_response_time, " +
-            "COUNT(DISTINCT CASE WHEN phase = 'fail' THEN trace_id END) as monthly_fail " +
+            "COUNT(DISTINCT CASE WHEN phase = 'fail' THEN trace_id END) as monthly_fail, " +
+            "AVG(CASE WHEN phase = 'success' AND completion_tokens > 0 AND response_time_ms > 0 " +
+            "THEN completion_tokens * 1000.0 / response_time_ms ELSE NULL END) as avg_output_speed " +
             "FROM request_logs WHERE created_at >= #{monthStart} AND created_at < #{monthEnd}")
     Map<String, Object> selectMonthlyAggregatedStats(@Param("monthStart") LocalDateTime monthStart,
                                                       @Param("monthEnd") LocalDateTime monthEnd);
@@ -153,7 +155,9 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "AVG(CASE WHEN first_byte_ms > 0 THEN first_byte_ms ELSE NULL END) as avg_response_time, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(prompt_tokens, 0) ELSE 0 END), 0) as prompt_tokens, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(completion_tokens, 0) ELSE 0 END), 0) as completion_tokens, " +
-            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as total_tokens " +
+            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as total_tokens, " +
+            "AVG(CASE WHEN phase = 'success' AND completion_tokens > 0 AND response_time_ms > 0 " +
+            "THEN completion_tokens * 1000.0 / response_time_ms ELSE NULL END) as avg_output_speed " +
             "FROM request_logs WHERE created_at >= #{todayStart}")
     Map<String, Object> selectTodayAggregatedStats(@Param("todayStart") LocalDateTime todayStart);
 
@@ -164,12 +168,35 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
     long selectYesterdayStartCount(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
 
     /**
+     * 窗口内聚合统计（trace-level 去重口径与今日一致，用于昨日环比对比）
+     * <p>
+     * range_requests:      窗口内发起请求的唯一 trace 数
+     * avg_response_time:   窗口内首字节平均响应时间（毫秒）
+     * avg_output_speed:    窗口内平均生成速度（tokens/秒）
+     * </p>
+     */
+    @Select("SELECT " +
+            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as range_requests, " +
+            "AVG(CASE WHEN first_byte_ms > 0 THEN first_byte_ms ELSE NULL END) as avg_response_time, " +
+            "AVG(CASE WHEN phase = 'success' AND completion_tokens > 0 AND response_time_ms > 0 " +
+            "THEN completion_tokens * 1000.0 / response_time_ms ELSE NULL END) as avg_output_speed " +
+            "FROM request_logs WHERE created_at >= #{start} AND created_at < #{end}")
+    Map<String, Object> selectRangeAggregatedStats(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    /**
      * 近 N 天每日趋势（trace-level 去重），一次 GROUP BY 替代逐日循环
+     * <p>
+     * avg_time:          每日首字节平均响应时间（毫秒，仅统计 first_byte_ms > 0 的记录）
+     * avg_output_speed:  每日平均生成速度（tokens/秒，仅统计 success 且 token 数 &gt; 0 的记录）
+     * </p>
      */
     @Select("SELECT DATE(created_at) as date, " +
             "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
             "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
-            "COUNT(DISTINCT CASE WHEN phase = 'fail' THEN trace_id END) as fail " +
+            "COUNT(DISTINCT CASE WHEN phase = 'fail' THEN trace_id END) as fail, " +
+            "AVG(CASE WHEN first_byte_ms > 0 THEN first_byte_ms ELSE NULL END) as avg_time, " +
+            "AVG(CASE WHEN phase = 'success' AND completion_tokens > 0 AND response_time_ms > 0 " +
+            "THEN completion_tokens * 1000.0 / response_time_ms ELSE NULL END) as avg_output_speed " +
             "FROM request_logs WHERE created_at >= #{since} " +
             "GROUP BY DATE(created_at) ORDER BY date ASC")
     List<Map<String, Object>> selectDailyTrend(@Param("since") LocalDateTime since);
@@ -227,6 +254,15 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "WHERE r1.phase = 'start' AND r1.created_at >= #{since} " +
             "AND NOT EXISTS (SELECT 1 FROM request_logs r2 WHERE r2.trace_id = r1.trace_id AND r2.phase = 'success')")
     long countFailedTraces(@Param("since") LocalDateTime since);
+
+    /**
+     * 统计指定窗口内发起的请求中从未 success（完全失败）的 trace 数
+     * 口径与 {@link #countFailedTraces} 一致，仅增加窗口上界（用于昨日环比）
+     */
+    @Select("SELECT COUNT(DISTINCT r1.trace_id) FROM request_logs r1 " +
+            "WHERE r1.phase = 'start' AND r1.created_at >= #{start} AND r1.created_at < #{end} " +
+            "AND NOT EXISTS (SELECT 1 FROM request_logs r2 WHERE r2.trace_id = r1.trace_id AND r2.phase = 'success')")
+    long countFailedTracesBetween(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
 
     // ==================== 渠道列表用量统计 ====================
 
@@ -375,7 +411,9 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "model_name, " +
             "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
             "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
-            "AVG(CASE WHEN first_byte_ms > 0 THEN first_byte_ms ELSE NULL END) as avg_response_time " +
+            "AVG(CASE WHEN first_byte_ms > 0 THEN first_byte_ms ELSE NULL END) as avg_response_time, " +
+            "AVG(CASE WHEN phase = 'success' AND completion_tokens > 0 AND response_time_ms > 0 " +
+            "THEN completion_tokens * 1000.0 / response_time_ms ELSE NULL END) as avg_output_speed " +
             "FROM request_logs WHERE created_at >= #{since} " +
             "AND model_name IS NOT NULL AND model_name != '' " +
             "GROUP BY model_name")

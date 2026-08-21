@@ -121,6 +121,11 @@
               <span class="stat-label">{{ t('model.list.avgResponse') }}</span>
               <span class="stat-value">{{ card.stats?.avgResponseTime != null ? formatSeconds(card.stats.avgResponseTime) : '-' }}</span>
             </div>
+            <div class="stat-divider"></div>
+            <div class="stat-item">
+              <span class="stat-label">{{ t('model.list.avgOutputSpeed') }}</span>
+              <span class="stat-value">{{ card.stats?.avgOutputSpeed > 0 ? card.stats.avgOutputSpeed.toFixed(1) + ' t/s' : '-' }}</span>
+            </div>
           </div>
 
           <!-- Sparkline -->
