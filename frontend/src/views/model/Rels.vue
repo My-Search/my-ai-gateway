@@ -95,6 +95,12 @@
       </div>
     </div>
 
+    <!-- Loading state -->
+    <div v-if="loading" class="page-loading">
+      <LoadingSpinner :size="18" :text="t('common.loading')" />
+    </div>
+
+    <template v-else>
     <div class="table-container">
       <table>
         <thead>
@@ -184,11 +190,12 @@
             </td>
           </tr>
           <tr v-if="!rels.length">
-            <td colspan="8" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
+            <td colspan="9" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
           </tr>
         </tbody>
       </table>
     </div>
+    </template>
   </div>
 
   <!-- 模式切换二次确认 -->
@@ -234,6 +241,7 @@ import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel, type ModelChannelRel, type RelMode } from '@/api/model'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
 import Dialog from '@/components/common/Dialog.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Sortable from 'sortablejs'
 
 const { t } = useI18n()
@@ -242,6 +250,7 @@ const router = useRouter()
 const { visible: dialogVisible, title: dialogTitle, message: dialogMessage, type: dialogType, confirmClass: dialogConfirmClass, onConfirm: onDialogConfirm, open: openDialog } = useDialog()
 const model = ref<CustomModel | null>(null)
 const rels = ref<ModelChannelRel[]>([])
+const loading = ref(true)
 const availableModels = ref<any[]>([])
 const inheritableModels = ref<CustomModel[]>([])
 const inheritFromModelName = ref<string | null>(null)
@@ -411,6 +420,7 @@ const uiMode = computed<RelMode>(() => {
 
 async function loadData() {
   const id = Number(route.params.id)
+  loading.value = true
   try {
     const res = await modelApi.getRels(id)
     model.value = res.data.model
@@ -436,6 +446,8 @@ async function loadData() {
       type: 'confirm',
       onConfirm: () => loadData()
     })
+  } finally {
+    loading.value = false
   }
 }
 
@@ -658,6 +670,16 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* Page loading state */
+.page-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 /* Ensure all table cells are vertically centered */
 table td {
   vertical-align: middle;

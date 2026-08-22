@@ -335,16 +335,23 @@ class TrendChartStatsCollector {
         // 4. 遍历聚合行：累加到 modelTotals（用于排序）和 modelValues（按日填充）
         //    使用 LinkedHashMap 保证遍历顺序稳定（与数据库返回顺序一致）
         Map<String, long[]> modelValues = new LinkedHashMap<>();
+        Map<String, long[]> modelTokenValues = new LinkedHashMap<>();
+        Map<String, long[]> modelRequestValues = new LinkedHashMap<>();
         Map<String, Long> modelTotals = new HashMap<>();
         for (Map<String, Object> row : rows) {
             String date = (String) row.get("date");
             String model = (String) row.get("model_name");
             long tokens = toLong(row.get("total_tokens"));
+            long requests = toLong(row.get("request_count"));
             Integer idx = dateIndex.get(date);
             if (idx == null || model == null || model.isEmpty()) continue;
             long[] bucket = modelValues.computeIfAbsent(model, k -> new long[daysInMonth]);
-            bucket[idx] += tokens;
-            modelTotals.merge(model, tokens, Long::sum);
+            long[] tokenBucket = modelTokenValues.computeIfAbsent(model, k -> new long[daysInMonth]);
+            long[] requestBucket = modelRequestValues.computeIfAbsent(model, k -> new long[daysInMonth]);
+            bucket[idx] += isChannel ? requests : tokens;
+            tokenBucket[idx] += tokens;
+            requestBucket[idx] += requests;
+            modelTotals.merge(model, isChannel ? requests : tokens, Long::sum);
         }
 
         // 5. 按月总用量降序排序模型列表（保证前端颜色映射稳定：TopN 模型固定拿主色）
@@ -354,19 +361,27 @@ class TrendChartStatsCollector {
 
         // 6. 构建 values 矩阵（model -> List<Long>）+ 累计 maxValue/totalValue
         Map<String, Object> values = new LinkedHashMap<>();
+        Map<String, Object> tokenValues = new LinkedHashMap<>();
+        Map<String, Object> requestValues = new LinkedHashMap<>();
         long maxValue = 0L;
         long totalValue = 0L;
         long[] dailyTotals = new long[daysInMonth];
         for (String model : sortedModels) {
             long[] bucket = modelValues.get(model);
             List<Long> series = new ArrayList<>(daysInMonth);
+            List<Long> tokenSeries = new ArrayList<>(daysInMonth);
+            List<Long> requestSeries = new ArrayList<>(daysInMonth);
             for (int i = 0; i < daysInMonth; i++) {
                 long v = bucket[i];
                 series.add(v);
+                tokenSeries.add(modelTokenValues.get(model)[i]);
+                requestSeries.add(modelRequestValues.get(model)[i]);
                 dailyTotals[i] += v;
                 totalValue += v;
             }
             values.put(model, series);
+            tokenValues.put(model, tokenSeries);
+            requestValues.put(model, requestSeries);
         }
         for (long dt : dailyTotals) {
             if (dt > maxValue) maxValue = dt;
@@ -379,6 +394,8 @@ class TrendChartStatsCollector {
         result.put("days", days);
         result.put("models", sortedModels);
         result.put("values", values);
+        result.put("tokenValues", tokenValues);
+        result.put("requestValues", requestValues);
         result.put("maxValue", maxValue);
         result.put("totalValue", totalValue);
         return result;

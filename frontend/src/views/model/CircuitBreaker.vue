@@ -4,7 +4,13 @@
       <div class="card-title">{{ t('cb.title').replace('{name}', model?.modelName || '') }}</div>
       <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
     </div>
-    <form @submit.prevent="handleSave" style="max-width:600px;">
+
+    <!-- Loading state -->
+    <div v-if="loading" class="page-loading">
+      <LoadingSpinner :size="18" :text="t('common.loading')" />
+    </div>
+
+    <form v-else @submit.prevent="handleSave" style="max-width:600px;">
       <div class="form-group">
         <label>{{ t('cb.enabled') }}</label>
         <select v-model.number="config.enabled" class="form-control">
@@ -48,19 +54,20 @@
   </Dialog>
 </template>
 
-<script setup lang="ts">
-import { ref, onMounted } from 'vue'
+<script setup lang="ts">import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel, type CircuitBreakerConfig } from '@/api/model'
 import Dialog from '@/components/common/Dialog.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 const model = ref<CustomModel | null>(null)
+const loading = ref(true)
 const saving = ref(false)
 const config = ref<CircuitBreakerConfig>({
   modelId: 0, enabled: 0, retryCount: 3,
@@ -80,6 +87,8 @@ onMounted(async () => {
   } catch (e: any) {
     open({ title: t('error.loadFailed'), message: e.message })
     router.push('/admin/model/list')
+  } finally {
+    loading.value = false
   }
 })
 
@@ -95,3 +104,15 @@ async function handleSave() {
   }
 }
 </script>
+
+<style scoped>
+/* Page loading state */
+.page-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+</style>

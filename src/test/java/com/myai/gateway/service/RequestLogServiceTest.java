@@ -321,4 +321,90 @@ class RequestLogServiceTest {
         verify(requestLogMapper, never()).selectList(any(Wrapper.class));
         verify(requestLogMapper, never()).update(any(), any());
     }
+
+    // ──────────────────── 原始请求数据保存级别（saveRequestDataIfNeeded） ────────────────────
+
+    private void startWithRequestData(String traceId) {
+        service.logStart(traceId, "ak1", 1L, "model-x", null, null,
+                "请求开始", 0, "{\"Content-Type\":\"application/json\"}", "{\"model\":\"x\"}");
+    }
+
+    @Test
+    void saveLevel_info_successWithoutRetry_persistsRequestData() {
+        when(adminConfigService.getValueByKey(AdminConfigService.KEY_REQUEST_DATA_SAVE_LEVEL))
+                .thenReturn("info");
+        startWithRequestData("trace-1");
+
+        service.logComplete("trace-1", "ak1", "model-x", "channel-m", "channel-c",
+                "success", "success", "请求成功", 100L, 0);
+
+        verify(requestLogMapper).update(isNull(), any(Wrapper.class));
+    }
+
+    @Test
+    void saveLevel_warn_successWithoutRetryButSkippedCandidates_discardsRequestData() {
+        // 用户报告的缺陷场景：仅熔断跳过等导致 retryIndex > 0，从未发生真实重试，不应保存
+        when(adminConfigService.getValueByKey(AdminConfigService.KEY_REQUEST_DATA_SAVE_LEVEL))
+                .thenReturn("warn");
+        startWithRequestData("trace-1");
+
+        // skip 导致 CandidateRouter 递增 retryIndex，最终成功时 retryIndex=3
+        service.logComplete("trace-1", "ak1", "model-x", "channel-m", "channel-c",
+                "success", "success", "请求成功", 100L, 3);
+
+        verify(requestLogMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void saveLevel_warn_successAfterRealRetry_persistsRequestData() {
+        when(adminConfigService.getValueByKey(AdminConfigService.KEY_REQUEST_DATA_SAVE_LEVEL))
+                .thenReturn("warn");
+        startWithRequestData("trace-1");
+
+        // 真实重试：记录过 retry 阶段日志（最终成功，retryIndex 保持 0）
+        service.logWithResponseTime("trace-1", "ak1", "model-x", "channel-m", "channel-c",
+                "retry", "第 1 次失败，准备第 2 次重试", 0, 1234L);
+        service.logComplete("trace-1", "ak1", "model-x", "channel-m", "channel-c",
+                "success", "success", "请求成功", 100L, 0);
+
+        verify(requestLogMapper).update(isNull(), any(Wrapper.class));
+    }
+
+    @Test
+    void saveLevel_warn_fail_persistsRequestData() {
+        when(adminConfigService.getValueByKey(AdminConfigService.KEY_REQUEST_DATA_SAVE_LEVEL))
+                .thenReturn("warn");
+        startWithRequestData("trace-1");
+
+        service.logComplete("trace-1", null, 1L, "model-x", null, null,
+                "fail", "error", "所有候选均失败", 200L, 0);
+
+        verify(requestLogMapper).update(isNull(), any(Wrapper.class));
+    }
+
+    @Test
+    void saveLevel_error_successEvenWithRealRetry_discardsRequestData() {
+        when(adminConfigService.getValueByKey(AdminConfigService.KEY_REQUEST_DATA_SAVE_LEVEL))
+                .thenReturn("error");
+        startWithRequestData("trace-1");
+
+        service.logWithResponseTime("trace-1", "ak1", "model-x", "channel-m", "channel-c",
+                "retry", "第 1 次失败，准备第 2 次重试", 0, 1234L);
+        service.logComplete("trace-1", "ak1", "model-x", "channel-m", "channel-c",
+                "success", "success", "请求成功", 100L, 1);
+
+        verify(requestLogMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void saveLevel_error_fail_persistsRequestData() {
+        when(adminConfigService.getValueByKey(AdminConfigService.KEY_REQUEST_DATA_SAVE_LEVEL))
+                .thenReturn("error");
+        startWithRequestData("trace-1");
+
+        service.logComplete("trace-1", null, 1L, "model-x", null, null,
+                "fail", "error", "所有候选均失败", 200L, 0);
+
+        verify(requestLogMapper).update(isNull(), any(Wrapper.class));
+    }
 }

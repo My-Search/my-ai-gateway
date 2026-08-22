@@ -441,7 +441,8 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
     @Select("<script>" +
             "SELECT DATE(created_at) as date, " +
             "model_name, " +
-            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as total_tokens " +
+            "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as total_tokens, " +
+            "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as request_count " +
             "FROM request_logs " +
             "WHERE created_at &gt;= #{since} AND created_at &lt; #{until} " +
             "AND model_name IS NOT NULL AND model_name != '' " +
@@ -474,14 +475,19 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
      * @return 每行包含 date (yyyy-MM-dd)、model_name、total_tokens（此处表示请求数）
      */
     @Select("<script>" +
-            "SELECT date, model_name, COUNT(1) as total_tokens " +
+            "SELECT date, model_name, COUNT(1) as request_count, " +
+            "       COALESCE(SUM(total_tokens), 0) as total_tokens " +
             "FROM ( " +
             "  SELECT r.trace_id, " +
             "         DATE(MIN(r.created_at)) as date, " +
             "         CASE WHEN MAX(CASE WHEN r.phase = 'success' THEN 1 ELSE 0 END) = 1 " +
             "              THEN MAX(CASE WHEN r.phase = 'success' THEN r.channel_model_name END) " +
             "              ELSE '\u8bf7\u6c42\u5931\u8d25' " +
-            "         END as model_name " +
+            "         END as model_name, " +
+            "         CASE WHEN MAX(CASE WHEN r.phase = 'success' THEN 1 ELSE 0 END) = 1 " +
+            "              THEN MAX(CASE WHEN r.phase = 'success' THEN COALESCE(r.total_tokens, 0) ELSE 0 END) " +
+            "              ELSE 0 " +
+            "         END as total_tokens " +
             "  FROM request_logs r " +
             "  WHERE r.trace_id IN ( " +
             "    SELECT DISTINCT trace_id FROM request_logs " +
@@ -494,7 +500,7 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "  GROUP BY r.trace_id " +
             ") t " +
             "GROUP BY date, model_name " +
-            "ORDER BY date ASC, total_tokens DESC" +
+            "ORDER BY date ASC, request_count DESC" +
             "</script>")
     List<Map<String, Object>> selectDailyChannelModelTokenUsage(@Param("since") LocalDateTime since,
                                                                 @Param("until") LocalDateTime until,

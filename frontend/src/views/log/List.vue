@@ -61,7 +61,7 @@
           <rect v-for="(seg, i) in bar.segments" :key="`seg-${bar.date}-${i}`"
                 :x="bar.x" :y="seg.y" :width="CHART_BAR_WIDTH" :height="Math.max(seg.h, 0.5)"
                 :fill="seg.color" class="chart-bar-seg">
-            <title>{{ bar.date }} {{ seg.model }}: {{ seg.value }} tokens</title>
+            <title>{{ bar.date }} {{ seg.model }}: {{ formatCompactNumber(seg.value) }} {{ chartModelType === 'channel' ? t('log.chart.requestsUnit') : t('log.chart.tokensUnit') }}</title>
           </rect>
         </g>
         <!-- 透明 hover 探测区（每列一个，用于精确定位 tooltip） -->
@@ -90,14 +90,23 @@
         <div class="chart-tooltip-date">{{ usageTooltip.date }}</div>
         <div v-if="usageTooltip.rows.length === 0" class="chart-tooltip-empty">—</div>
         <div v-else class="chart-tooltip-rows">
+          <div class="chart-tooltip-row chart-tooltip-head">
+            <span></span>
+            <span class="chart-tooltip-model">{{ t('log.chart.colModel') }}</span>
+            <span class="chart-tooltip-value">{{ t('log.chart.colTokens') }}</span>
+            <span class="chart-tooltip-value">{{ t('log.chart.colRequests') }}</span>
+          </div>
           <div v-for="row in usageTooltip.rows" :key="`tt-${row.model}`" class="chart-tooltip-row">
             <span class="chart-legend-swatch" :style="{ background: row.color }"></span>
             <span class="chart-tooltip-model" :title="row.model">{{ row.model }}</span>
-            <span class="chart-tooltip-value">{{ formatCompactNumber(row.value) }}</span>
+            <span class="chart-tooltip-value">{{ formatCompactNumber(row.tokens) }}</span>
+            <span class="chart-tooltip-value">{{ formatCompactNumber(row.requests) }}</span>
           </div>
-          <div class="chart-tooltip-total">
-            <span>{{ chartModelType === 'channel' ? t('log.chart.totalRequests') : t('log.chart.totalTokens') }}</span>
-            <span>{{ formatCompactNumber(usageTooltip.total) }}</span>
+          <div class="chart-tooltip-row chart-tooltip-total-row">
+            <span></span>
+            <span class="chart-tooltip-model">{{ t('log.chart.total') }}</span>
+            <span class="chart-tooltip-value">{{ formatCompactNumber(usageTooltip.totalTokens) }}</span>
+            <span class="chart-tooltip-value">{{ formatCompactNumber(usageTooltip.totalRequests) }}</span>
           </div>
         </div>
       </div>
@@ -441,23 +450,32 @@ const usageTooltip = reactive({
   x: 0,
   y: 0,
   date: '',
-  rows: [] as { model: string; color: string; value: number }[],
-  total: 0,
+  rows: [] as { model: string; color: string; tokens: number; requests: number }[],
+  totalTokens: 0,
+  totalRequests: 0,
 })
 
-function onBarHover(bar: { date: string; segments: { model: string; color: string; value: number }[]; totalValue: number }, evt: MouseEvent) {
+function onBarHover(bar: { date: string; segments: { model: string; color: string; value: number }[]; totalValue: number; dayIdx: number }, evt: MouseEvent) {
   const target = evt.currentTarget as Element
   const container = target.closest('.chart-wrapper') as HTMLElement | null
   if (!container) return
   const rect = container.getBoundingClientRect()
   // 限定 tooltip 在容器内（避免超出右侧）
-  const x = Math.min(evt.clientX - rect.left + 12, rect.width - 220)
+  const x = Math.min(evt.clientX - rect.left + 12, rect.width - 240)
   const y = Math.min(evt.clientY - rect.top + 12, rect.height - 140)
   usageTooltip.x = Math.max(0, x)
   usageTooltip.y = Math.max(0, y)
   usageTooltip.date = bar.date
-  usageTooltip.rows = bar.segments.map(s => ({ model: s.model, color: s.color, value: s.value }))
-  usageTooltip.total = bar.totalValue
+  const data = usageChartData.value
+  // 无论入口/渠道模式，每行都同时给出该模型的 token 用量与请求次数
+  usageTooltip.rows = bar.segments.map(s => ({
+    model: s.model,
+    color: s.color,
+    tokens: data?.tokenValues[s.model]?.[bar.dayIdx] ?? 0,
+    requests: data?.requestValues[s.model]?.[bar.dayIdx] ?? 0,
+  }))
+  usageTooltip.totalTokens = data?.models.reduce((sum, model) => sum + (data.tokenValues[model]?.[bar.dayIdx] ?? 0), 0) ?? 0
+  usageTooltip.totalRequests = data?.models.reduce((sum, model) => sum + (data.requestValues[model]?.[bar.dayIdx] ?? 0), 0) ?? 0
   usageTooltip.visible = bar.segments.length > 0
 }
 
@@ -1319,8 +1337,8 @@ onUnmounted(() => {
   border: 1px solid var(--border-color);
   border-radius: 6px;
   padding: 8px 10px;
-  min-width: 180px;
-  max-width: 280px;
+  min-width: 220px;
+  max-width: 300px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
   font-size: 12px;
   z-index: 10;
@@ -1343,9 +1361,14 @@ onUnmounted(() => {
 }
 .chart-tooltip-row {
   display: grid;
-  grid-template-columns: 12px 1fr auto;
+  grid-template-columns: 12px minmax(0, 1fr) 52px 40px;
   align-items: center;
   gap: 6px;
+}
+.chart-tooltip-head {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-bottom: 2px;
 }
 .chart-tooltip-row .chart-legend-swatch {
   width: 8px;
@@ -1361,13 +1384,20 @@ onUnmounted(() => {
   color: var(--text-primary);
   font-family: 'SF Mono', 'Fira Code', monospace;
   font-weight: 500;
+  text-align: right;
 }
-.chart-tooltip-total {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 6px;
+.chart-tooltip-head .chart-tooltip-model,
+.chart-tooltip-head .chart-tooltip-value {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.chart-tooltip-total-row {
+  margin-top: 5px;
   padding-top: 6px;
   border-top: 1px solid var(--border-color);
+}
+.chart-tooltip-total-row .chart-tooltip-model,
+.chart-tooltip-total-row .chart-tooltip-value {
   color: var(--text-primary);
   font-weight: 600;
 }

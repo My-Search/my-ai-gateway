@@ -524,8 +524,12 @@ export default {
   'log.chart.empty': '当月暂无使用数据',
   'log.chart.loadFailed': '使用历史加载失败',
   'log.chart.monthLabel': '{year} 年 {month} 月',
-  'log.chart.totalTokens': '当日 Token 总量',
-  'log.chart.totalRequests': '当天请求数',
+  'log.chart.tokensUnit': 'tokens',
+  'log.chart.requestsUnit': '次',
+  'log.chart.colModel': '模型',
+  'log.chart.colTokens': 'tokens',
+  'log.chart.colRequests': '次数',
+  'log.chart.total': '合计',
 
   /* ========== Playground ========== */
   'playground.title': '入口模型测试',

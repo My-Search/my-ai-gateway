@@ -4,7 +4,13 @@
       <div class="card-title">{{ t('model.advanced.title').replace('{name}', model?.modelName || '') }}</div>
       <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
     </div>
-    <form @submit.prevent="handleSave" style="max-width:600px;">
+
+    <!-- Loading state -->
+    <div v-if="loading" class="page-loading">
+      <LoadingSpinner :size="18" :text="t('common.loading')" />
+    </div>
+
+    <form v-else @submit.prevent="handleSave" style="max-width:600px;">
       <div class="form-section">
         <div class="section-title">{{ t('model.advanced.mediaInvalidate') }}</div>
         <div class="section-desc">{{ t('model.advanced.mediaInvalidateHint') }}</div>
@@ -117,12 +123,14 @@ import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel } from '@/api/model'
 import Dialog from '@/components/common/Dialog.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { visible: dialogVisible, title: dialogTitle, message: dialogMessage, type: dialogType, confirmClass: dialogConfirmClass, onConfirm: onDialogConfirm, open: openDialog } = useDialog()
 const model = ref<CustomModel | null>(null)
+const loading = ref(true)
 const saving = ref(false)
 const form = ref({
   imageInvalidateCount: 0,
@@ -173,6 +181,8 @@ onMounted(async () => {
   } catch (e: any) {
     openDialog({ title: t('error.loadFailed'), message: e.message })
     router.push('/admin/model/list')
+  } finally {
+    loading.value = false
   }
 })
 
@@ -195,6 +205,16 @@ async function handleSave() {
 </script>
 
 <style scoped>
+/* Page loading state */
+.page-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .form-section {
   border: 1px solid var(--border-color);
   border-radius: 8px;

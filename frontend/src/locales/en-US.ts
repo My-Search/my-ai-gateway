@@ -524,8 +524,12 @@ export default {
   'log.chart.empty': 'No usage data this month',
   'log.chart.loadFailed': 'Failed to load usage history',
   'log.chart.monthLabel': '{year}-{month}',
-  'log.chart.totalTokens': 'Total tokens this day',
-  'log.chart.totalRequests': 'Requests',
+  'log.chart.tokensUnit': 'tokens',
+  'log.chart.requestsUnit': 'requests',
+  'log.chart.colModel': 'Model',
+  'log.chart.colTokens': 'Tokens',
+  'log.chart.colRequests': 'Reqs',
+  'log.chart.total': 'Total',
 
   /* ========== Playground ========== */
   'playground.title': 'Entry Model Test',

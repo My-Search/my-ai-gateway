@@ -16,6 +16,12 @@
       </div>
     </div>
 
+    <!-- Loading state -->
+    <div v-if="loading" class="page-loading">
+      <LoadingSpinner :size="18" :text="t('common.loading')" />
+    </div>
+
+    <template v-else>
     <!-- Injection Rules Table -->
     <div class="table-container">
       <table>
@@ -120,6 +126,7 @@
         </div>
       </div>
     </div>
+    </template>
   </div>
 
   <!-- Add/Edit Rule Dialog -->
@@ -209,6 +216,7 @@ import { promptInjectionApi, type PromptInjection, type InjectRole, type InjectP
 import { modelApi, type CustomModel } from '@/api/model'
 import Dialog from '@/components/common/Dialog.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -217,6 +225,7 @@ const modelId = computed(() => Number(route.params.id))
 const modelName = ref('')
 
 const rules = ref<PromptInjection[]>([])
+const loading = ref(true)
 const toggleLoading = ref<number | null>(null)
 const saving = ref(false)
 
@@ -282,11 +291,14 @@ async function loadModelName() {
 }
 
 async function loadRules() {
+  loading.value = true
   try {
     const res = await promptInjectionApi.listByModelId(modelId.value)
     rules.value = res.data
   } catch (e: any) {
     openDialog({ title: t('error.loadFailed'), message: e.message })
+  } finally {
+    loading.value = false
   }
 }
 
@@ -386,6 +398,16 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* Page loading state */
+.page-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 /* ---------- Badges ---------- */
 .role-badge {
   font-size: 11px;

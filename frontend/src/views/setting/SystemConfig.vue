@@ -10,6 +10,12 @@
         <SvgIcon name="alert" :size="16" /> {{ error }}
       </div>
 
+      <!-- Loading state -->
+      <div v-if="loading" class="page-loading">
+        <LoadingSpinner :size="18" :text="t('common.loading')" />
+      </div>
+
+      <template v-else>
       <!-- Log Management -->
       <div class="section">
         <div class="section-header">
@@ -190,6 +196,7 @@
           <SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('common.save') }}
         </button>
       </div>
+      </template>
     </div>
   </div>
 
@@ -211,14 +218,15 @@ import { systemApi } from '@/api/system'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import Dialog from '@/components/common/Dialog.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 
 const { t } = useI18n()
 const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 
-const loading = ref(false)
+// 初始为 true：首次渲染即显示加载态，避免表单默认值闪现
+const loading = ref(true)
 const saving = ref(false)
-const error = ref('')
-/** 用于检测表单是否变更的初始快照（JSON 字符串） */
+const error = ref('')/** 用于检测表单是否变更的初始快照（JSON 字符串） */
 const originalForm = ref('')
 
 const form = reactive({
@@ -364,6 +372,16 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* Page loading state */
+.page-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 .section {
   border: 1px solid var(--border-color);
   border-radius: 8px;

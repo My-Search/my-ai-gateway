@@ -32,8 +32,12 @@ public class RequestLogService {
     private final RequestLogQuerySupport querySupport;
     private final RequestLogCleanupSupport cleanupSupport;
 
-    /** 等待写入的原始请求数据：traceId -> [requestHeaders, requestBody] */
-    private final ConcurrentHashMap<String, String[]> pendingRequestData = new ConcurrentHashMap<>();
+    /**
+     * 等待写入的原始请求数据：traceId -> 原始请求头/体 + 是否出现过真实重试。
+     * <p>retryIndex 会被候选跳过（skip）递增，不能作为"发生过重试"的依据；
+     * 因此在记录 retry 阶段日志时单独打标。</p>
+     */
+    private final ConcurrentHashMap<String, PendingRequestData> pendingRequestData = new ConcurrentHashMap<>();
 
     public RequestLogService(RequestLogMapper requestLogMapper, AsyncLogWriter asyncLogWriter,
                              AdminConfigService adminConfigService) {
@@ -82,6 +86,7 @@ public class RequestLogService {
         RequestLog record = buildLogRecord(traceId, apiKeyName, gatewayApiKeyId, modelName,
                 channelModelName, channelName, phase, "pending", message, null, null, retryIndex, 0, 0, 0);
         asyncLogWriter.enqueue(record);
+        markRetryIfNeeded(traceId, phase);
 
         String indent = "  ".repeat(retryIndex);
         String logMsg = "[{}] {}[{}] {} -> {} -> {}: {}";
@@ -126,7 +131,7 @@ public class RequestLogService {
                          String requestHeaders, String requestBody) {
         // 暂存原始请求数据，待请求完成后根据 save level 决定是否写入 DB
         if (requestHeaders != null || requestBody != null) {
-            pendingRequestData.put(traceId, new String[]{requestHeaders, requestBody});
+            pendingRequestData.put(traceId, new PendingRequestData(requestHeaders, requestBody));
         }
         RequestLog record = buildLogRecord(traceId, apiKeyName, gatewayApiKeyId, modelName,
                 channelModelName, channelName, "start", "pending", message, null, null, retryIndex, 0, 0, 0);
@@ -155,6 +160,7 @@ public class RequestLogService {
                 channelModelName, channelName, phase, "pending", message, (int) responseTimeMs,
                 null, retryIndex, 0, 0, 0);
         asyncLogWriter.enqueue(record);
+        markRetryIfNeeded(traceId, phase);
 
         String indent = "  ".repeat(retryIndex);
         String logMsg = "[{}] {}[{}] {} -> {} -> {}: {} ({}ms)";
@@ -202,7 +208,7 @@ public class RequestLogService {
         // 请求完成后根据 save level 决定是否持久化原始请求数据
         // 仅在 success/fail 终态时检查，避免中间状态被误处理
         if ("success".equals(phase) || "fail".equals(phase)) {
-            saveRequestDataIfNeeded(traceId, phase, retryIndex);
+            saveRequestDataIfNeeded(traceId, phase);
         }
     }
 
@@ -400,18 +406,17 @@ public class RequestLogService {
      * 根据配置的保存级别决定是否写入数据库中的 start 记录：
      * <ul>
      *   <li>info：始终写入</li>
-     *   <li>warn：仅在出现重试（retryIndex > 0）或请求失败时写入</li>
+     *   <li>warn：仅出现真实重试（retry 阶段日志）或请求最终失败时写入；仅跳过（skip）候选不算</li>
      *   <li>error：仅在请求最终失败时写入</li>
      * </ul>
      * </p>
      *
      * @param traceId    追踪 ID
      * @param finalPhase 最终阶段（success / fail）
-     * @param retryIndex 最终重试索引
      */
-    private void saveRequestDataIfNeeded(String traceId, String finalPhase, int retryIndex) {
-        String[] data = pendingRequestData.remove(traceId);
-        if (data == null) {
+    private void saveRequestDataIfNeeded(String traceId, String finalPhase) {
+        PendingRequestData pending = pendingRequestData.remove(traceId);
+        if (pending == null) {
             return;
         }
 
@@ -420,15 +425,16 @@ public class RequestLogService {
             level = "info";
         }
 
+        boolean failed = "fail".equals(finalPhase);
         boolean shouldKeep;
         switch (level) {
             case "error":
                 // 仅整体请求失败才保留
-                shouldKeep = "fail".equals(finalPhase);
+                shouldKeep = failed;
                 break;
             case "warn":
-                // 有重试或请求失败才保留
-                shouldKeep = "fail".equals(finalPhase) || retryIndex > 0;
+                // 仅出现真实重试或最终失败才保留；仅跳过候选不算重试
+                shouldKeep = failed || pending.hasRetry;
                 break;
             default: // "info"
                 shouldKeep = true;
@@ -440,13 +446,40 @@ public class RequestLogService {
             requestLogMapper.update(null, new LambdaUpdateWrapper<RequestLog>()
                     .eq(RequestLog::getTraceId, traceId)
                     .eq(RequestLog::getPhase, "start")
-                    .set(RequestLog::getRequestHeaders, data[0])
-                    .set(RequestLog::getRequestBody, data[1]));
-            log.debug("原始请求数据已持久化（saveLevel={}, phase={}, retryIndex={}） - traceId={}",
-                    level, finalPhase, retryIndex, traceId);
+                    .set(RequestLog::getRequestHeaders, pending.headers)
+                    .set(RequestLog::getRequestBody, pending.body));
+            log.debug("原始请求数据已持久化（saveLevel={}, finalPhase={}, hasRetry={}） - traceId={}",
+                    level, finalPhase, pending.hasRetry, traceId);
         } else {
-            log.debug("原始请求数据已丢弃（saveLevel={}, phase={}, retryIndex={}） - traceId={}",
-                    level, finalPhase, retryIndex, traceId);
+            log.debug("原始请求数据已丢弃（saveLevel={}, finalPhase={}, hasRetry={}） - traceId={}",
+                    level, finalPhase, pending.hasRetry, traceId);
+        }
+    }
+
+    /**
+     * 记录 retry 阶段日志时，标记该 trace 出现过真实重试。
+     * <p>跳过（skip）阶段不计入：熔断跳过、400 跳过、媒体类型不支持跳过等
+     * 虽会递增路由的 retryIndex，但不属于"对上游的重试"，warn 级别不应据此保存原始数据。</p>
+     */
+    private void markRetryIfNeeded(String traceId, String phase) {
+        if (!"retry".equals(phase)) {
+            return;
+        }
+        PendingRequestData data = pendingRequestData.get(traceId);
+        if (data != null) {
+            data.hasRetry = true;
+        }
+    }
+
+    /** 请求过程中的暂存状态：原始请求头/体 + 是否出现过真实重试（retry 阶段） */
+    private static final class PendingRequestData {
+        final String headers;
+        final String body;
+        volatile boolean hasRetry;
+
+        PendingRequestData(String headers, String body) {
+            this.headers = headers;
+            this.body = body;
         }
     }
 }

@@ -7,6 +7,13 @@
     <div class="alert alert-info">
       {{ t('apikey.list.desc') }}
     </div>
+
+    <!-- Loading state -->
+    <div v-if="loading" class="loading-container">
+      <LoadingSpinner :size="32" />
+    </div>
+
+    <template v-else>
     <div class="table-container">
       <table>
         <thead>
@@ -134,6 +141,7 @@
         {{ t('apikey.list.empty') }}
       </div>
     </div>
+    </template>
   </div>
 
   <!-- Common Dialog -->
@@ -186,6 +194,7 @@ import { apikeyApi, type ApiKey, type ApiKeyUsageStats, type ApiKeyPeriodStats }
 import { shareApi } from '@/api/share'
 import Dialog from '@/components/common/Dialog.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
@@ -200,6 +209,7 @@ const router = useRouter()
 
 const apiKeys = ref<ApiKey[]>([])
 const usageStats = ref<Record<number, ApiKeyUsageStats>>({})
+const loading = ref(true)
 const showToken = ref(true) // true=显示Token, false=显示请求次数
 
 /** 获取某 API Key 的指定周期统计 */
@@ -375,6 +385,7 @@ function confirmDelete(key: ApiKey) {
 }
 
 async function loadKeys() {
+  loading.value = true
   try {
     const [keysRes, statsRes] = await Promise.all([
       apikeyApi.list(),
@@ -384,6 +395,8 @@ async function loadKeys() {
     usageStats.value = statsRes.data
   } catch (e: any) {
     open({ title: t('error.loadFailed'), message: e.message })
+  } finally {
+    loading.value = false
   }
 }
 
@@ -400,6 +413,14 @@ onActivated(() => {
 </script>
 
 <style scoped>
+/* Loading state */
+.loading-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 0;
+}
+
 /* Warning button (revoke share) */
 :deep(.btn-warning) {
   background: #f59e0b; color: #fff; border-color: #d97706;

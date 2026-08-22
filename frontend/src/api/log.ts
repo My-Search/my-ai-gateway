@@ -103,6 +103,8 @@ export interface LogUsageChart {
   days: string[]
   models: string[]
   values: Record<string, number[]>
+  tokenValues: Record<string, number[]>
+  requestValues: Record<string, number[]>
   maxValue: number
   totalValue: number
 }
