@@ -348,7 +348,10 @@ public class AdminChannelController {
             if (availableKey == null) {
                 List<ChannelApiKey> keys = channelApiKeyService.listByChannelId(channel.getId());
                 if (keys != null && !keys.isEmpty()) {
-                    availableKey = keys.get(0);
+                    availableKey = keys.stream()
+                            .filter(key -> key.getEnabled() != null && key.getEnabled() == 1)
+                            .findFirst()
+                            .orElse(keys.get(0));
                 }
             }
             if (availableKey == null) {

@@ -267,7 +267,10 @@ const modelSelectOptions = computed(() =>
   testModels.value.map(m => ({ value: m.id, label: m.displayName || m.modelName }))
 )
 const apiKeySelectOptions = computed(() =>
-  testApiKeys.value.map(k => ({ value: k.id!, label: k.keyName }))
+  testApiKeys.value.map(k => ({
+    value: k.id!,
+    label: k.enabled === 1 ? k.keyName : `${k.keyName}（${t('common.disabled')}）`
+  }))
 )
 
 /* 首字节响应时间格式化：秒保留 1 位小数，无效值显示 - */
@@ -314,11 +317,12 @@ async function quickTest(ch: Channel) {
       if (testModels.value.length > 0) {
         selectedModelId.value = testModels.value[0].id
       }
-      // 加载 API Keys，默认选中第一个
+      // 加载 API Keys，优先默认选中未禁用的
       const keys = channelRes.data.apiKeys || []
       testApiKeys.value = keys
       if (keys.length > 0) {
-        selectedApiKeyId.value = keys[0].id
+        const enabled = keys.find(k => k.enabled === 1)
+        selectedApiKeyId.value = (enabled ?? keys[0]).id
       }
     } catch {
       // 忽略加载失败，使用空列表

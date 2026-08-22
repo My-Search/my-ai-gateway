@@ -17,7 +17,7 @@
     <TodayTrendChart :date="selectedDate" />
 
     <!-- Stats Grid -->
-    <div class="stats-grid">
+    <div class="stats-grid" v-if="!loading">
       <div class="stat-card">
         <div class="stat-card-main">
           <div class="stat-icon" style="background:linear-gradient(135deg,rgba(88,166,255,0.15),rgba(88,166,255,0.05));color:var(--accent-blue);">
@@ -127,6 +127,11 @@
             <path :d="sparklinePaths(dailyOutputSpeeds).line" fill="none" stroke="var(--accent-yellow)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
           </svg>
         </div>
+      </div>
+    </div>
+    <div class="stats-grid stats-grid-loading" v-else>
+      <div class="stat-card stat-card-loading" v-for="i in 4" :key="i">
+        <LoadingSpinner :text="t('common.loading')" />
       </div>
     </div>
 
@@ -618,6 +623,13 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   overflow: visible;
+}
+
+.stat-card-loading {
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Monthly Stats */

@@ -11,35 +11,42 @@
  * showToast('复制失败', { isError: true })
  * ```
  */
+import { ref } from 'vue'
+
+export interface ToastOptions {
+  isError?: boolean
+  duration?: number
+  onClose?: () => void
+}
+
+export interface ToastItem {
+  id: number
+  message: string
+  isError: boolean
+  duration: number
+  timer: ReturnType<typeof setTimeout>
+  onClose?: () => void
+}
+
+export const toasts = ref<ToastItem[]>([])
+let nextToastId = 1
+
+export function closeToast(id: number) {
+  const index = toasts.value.findIndex(toast => toast.id === id)
+  if (index === -1) return
+  const [toast] = toasts.value.splice(index, 1)
+  clearTimeout(toast.timer)
+  toast.onClose?.()
+}
+
 export function useToast() {
-  /**
-   * 显示一条 toast 通知
-   * @param msg 要显示的消息文本
-   * @param opts 选项（isError: 错误模式红色背景；duration: 显示时长 ms，默认 1500）
-   */
-  function showToast(msg: string, opts?: { isError?: boolean; duration?: number }) {
-    const { isError, duration } = { isError: false, duration: 1500, ...opts }
-    const toast = document.createElement('div')
-    toast.textContent = msg
-    Object.assign(toast.style, {
-      position: 'fixed',
-      bottom: '24px',
-      left: '50%',
-      transform: 'translateX(-50%)',
-      background: isError ? '#f87171' : '#10b981',
-      color: '#fff',
-      padding: '8px 20px',
-      borderRadius: '8px',
-      fontSize: '14px',
-      zIndex: '9999',
-      transition: 'opacity .3s',
-    } as CSSStyleDeclaration)
-    document.body.appendChild(toast)
-    setTimeout(() => {
-      toast.style.opacity = '0'
-      setTimeout(() => toast.remove(), 300)
-    }, duration)
+  function showToast(msg: string, opts?: ToastOptions) {
+    const { isError = false, duration = 1500, onClose } = opts ?? {}
+    const id = nextToastId++
+    const timer = setTimeout(() => closeToast(id), duration)
+    toasts.value.push({ id, message: msg, isError, duration, timer, onClose })
+    return id
   }
 
-  return { showToast }
+  return { showToast, closeToast }
 }

@@ -10,11 +10,6 @@
         <SvgIcon name="alert" :size="16" /> {{ error }}
       </div>
 
-      <!-- Success alert -->
-      <div v-if="successMsg" class="alert alert-success">
-        <SvgIcon name="check" :size="16" /> {{ successMsg }}
-      </div>
-
       <!-- Log Management -->
       <div class="section">
         <div class="section-header">
@@ -197,6 +192,16 @@
       </div>
     </div>
   </div>
+
+  <Dialog
+    v-model="visible"
+    :title="title"
+    :type="type"
+    :confirm-class="confirmClass"
+    @confirm="onConfirm"
+  >
+    {{ message }}
+  </Dialog>
 </template>
 
 <script setup lang="ts">
@@ -204,13 +209,15 @@ import { ref, reactive, onMounted, computed, onBeforeUnmount } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { systemApi } from '@/api/system'
 import { useI18n } from '@/composables/useI18n'
+import { useDialog } from '@/composables/useDialog'
+import Dialog from '@/components/common/Dialog.vue'
 
 const { t } = useI18n()
+const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
-const successMsg = ref('')
 /** 用于检测表单是否变更的初始快照（JSON 字符串） */
 const originalForm = ref('')
 
@@ -248,7 +255,6 @@ function onBeforeUnload(e: BeforeUnloadEvent) {
 async function loadConfig() {
   loading.value = true
   error.value = ''
-  successMsg.value = ''
   try {
     const res = await systemApi.getConfig()
     if (res.data.success && res.data.data) {
@@ -311,7 +317,6 @@ async function handleSave() {
 
   saving.value = true
   error.value = ''
-  successMsg.value = ''
   try {
     const res = await systemApi.updateConfig({
       log_retention_days: String(form.log_retention_days),
@@ -326,8 +331,7 @@ async function handleSave() {
       channel_model_refresh_interval_minutes: String(form.channel_model_refresh_interval_minutes)
     })
     if (res.data.success) {
-      successMsg.value = t('systemConfig.saveSuccess')
-      // 保存成功后更新快照，清除"未保存"状态
+      open({ title: t('common.success'), message: t('systemConfig.saveSuccess') })
       snapshotForm()
     } else {
       error.value = res.data.error || t('error.saveFailed')
