@@ -325,7 +325,7 @@ public class AdminChannelController {
                 return ResponseEntity.ok(result);
             }
 
-            // 获取渠道的可用 API Key（优先从 channel_api_keys 表获取）
+            // 测试不受禁用状态影响：渠道或 API Key 被禁用也应允许测试（测试用于验证连通性）
             // 支持前端传入 apiKeyId 来指定测试使用的 API Key
             ChannelApiKey availableKey = null;
             Object apiKeyIdObj = body.get("apiKeyId");
@@ -344,14 +344,12 @@ public class AdminChannelController {
                     result.put("error", "指定的 API Key 不存在或不属于该渠道");
                     return ResponseEntity.ok(result);
                 }
-                if (availableKey.getEnabled() == null || availableKey.getEnabled() != 1) {
-                    result.put("success", false);
-                    result.put("error", "指定的 API Key 已被禁用");
-                    return ResponseEntity.ok(result);
-                }
             }
             if (availableKey == null) {
-                availableKey = channelApiKeyService.getAvailableApiKey(channel.getId());
+                List<ChannelApiKey> keys = channelApiKeyService.listByChannelId(channel.getId());
+                if (keys != null && !keys.isEmpty()) {
+                    availableKey = keys.get(0);
+                }
             }
             if (availableKey == null) {
                 result.put("success", false);

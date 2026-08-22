@@ -785,6 +785,8 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
   }
 
   let fullContent = ''
+  /** 流内 error 帧文案（如"所有候选均失败"）：网关发完该帧会正常结束流，不抛异常 */
+  let lastErrorText = ''
   let startTime = Date.now()
   let tokenNum = 0
   /** 是否拿到上游的准确 usage（流末尾 usage chunk / anthropic message_delta） */
@@ -838,7 +840,8 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
             firstByteAt = Date.now()
           }
           if (json.error) {
-            targetMsg.content = t('playground.error') + ': ' + (typeof json.error === 'object' ? json.error.message : json.error)
+            lastErrorText = typeof json.error === 'object' ? json.error.message : json.error
+            targetMsg.content = t('playground.error') + ': ' + lastErrorText
             continue
           }
           // OpenAI 格式：流末尾的 usage-only chunk（choices 为空数组）携带准确的 token 统计
@@ -945,6 +948,12 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
   }
 
   const elapsedMs = Date.now() - startTime
+  // 流内收到过 error 帧且没有任何正常内容时，保留错误文案（转为系统消息气泡），不能被空内容覆盖
+  if (lastErrorText && !fullContent) {
+    targetMsg.content = t('playground.error') + ': ' + lastErrorText
+    targetMsg.role = 'system-msg'
+    return
+  }
   targetMsg.content = fullContent
   // 首字节响应时间（请求发出到收到第一个响应字节），未收到有效内容时为 undefined
   const ttfb = firstByteAt !== null ? firstByteAt - requestStart : undefined
