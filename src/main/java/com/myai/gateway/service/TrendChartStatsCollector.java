@@ -1,7 +1,5 @@
 package com.myai.gateway.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.myai.gateway.entity.RequestLog;
 import com.myai.gateway.mapper.RequestLogMapper;
 
 import java.time.DayOfWeek;
@@ -21,12 +19,9 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.myai.gateway.service.StatsSupport.SHANGHAI;
-import static com.myai.gateway.service.StatsSupport.aggregateCompletionTokens;
-import static com.myai.gateway.service.StatsSupport.aggregatePromptTokens;
-import static com.myai.gateway.service.StatsSupport.aggregateRequestCounts;
-import static com.myai.gateway.service.StatsSupport.aggregateTotalTokens;
 import static com.myai.gateway.service.StatsSupport.buildPeriodMap;
 import static com.myai.gateway.service.StatsSupport.emptyToNull;
+import static com.myai.gateway.service.StatsSupport.toDouble;
 import static com.myai.gateway.service.StatsSupport.toLong;
 import static com.myai.gateway.service.StatsSupport.toUtc;
 
@@ -169,112 +164,88 @@ class TrendChartStatsCollector {
 
     /**
      * 获取指定渠道下各模型的用量统计（用于渠道模型详情页展示）
+     * <p>
+     * 性能优化：全量/今日/本周/本月四组 token 与请求数聚合下推为单条 GROUP BY SQL，
+     * "最近 30 条"首字节/生成速度均值用窗口函数下推，仅回传每模型一行，
+     * 替代原来的两处全量实体加载 + Java 多次流聚合（不再拉取大字段行进内存）。
+     * 输出结构与口径与原实现完全一致。
+     * </p>
      *
      * @return Map: { modelStats: List[{ modelName, requestCount, promptTokens, completionTokens, totalTokens, avgResponseTimeRecent30, today, week, month }],
      *                channelAvgResponseTimeRecent30: long }（avgResponseTimeRecent30 为首字节平均响应时间）
      */
     Map<String, Object> collectChannelModelUsageStats(String channelName) {
-        // Token 统计仅按 success 聚合
-        List<RequestLog> successLogs = requestLogMapper.selectList(
-                new LambdaQueryWrapper<RequestLog>()
-                        .eq(RequestLog::getPhase, "success")
-                        .eq(RequestLog::getChannelName, channelName)
-                        .isNotNull(RequestLog::getChannelModelName)
-                        .ne(RequestLog::getChannelModelName, ""));
-
-        // 首字节响应时间按 success+fail 聚合（失败请求也可能收到首个响应字节），按时间倒序用于截取最近 N 条
-        List<RequestLog> firstByteLogs = requestLogMapper.selectList(
-                new LambdaQueryWrapper<RequestLog>()
-                        .in(RequestLog::getPhase, "success", "fail")
-                        .eq(RequestLog::getChannelName, channelName)
-                        .isNotNull(RequestLog::getChannelModelName)
-                        .ne(RequestLog::getChannelModelName, "")
-                        .isNotNull(RequestLog::getFirstByteMs)
-                        .gt(RequestLog::getFirstByteMs, 0)
-                        .orderByDesc(RequestLog::getCreatedAt));
-
-        // 计算时间段边界（上海时区 -> UTC，created_at 存储为 UTC）
+        // 时间段边界（上海时区 -> UTC，created_at 存储为 UTC）
         LocalDate nowSh = LocalDate.now(SHANGHAI);
-        LocalDateTime todayStartUtc = nowSh.atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime();
-        LocalDateTime weekStartUtc = nowSh.with(DayOfWeek.MONDAY).atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime();
-        LocalDateTime monthStartUtc = nowSh.withDayOfMonth(1).atStartOfDay().atZone(SHANGHAI).withZoneSameInstant(java.time.ZoneOffset.UTC).toLocalDateTime();
+        LocalDateTime todayStartUtc = toUtc(nowSh);
+        LocalDateTime weekStartUtc = toUtc(nowSh.with(DayOfWeek.MONDAY));
+        LocalDateTime monthStartUtc = toUtc(nowSh.withDayOfMonth(1));
 
-        // 全量统计
-        Map<String, Long> requestCounts = aggregateRequestCounts(successLogs, null);
-        Map<String, Long> promptSums = aggregatePromptTokens(successLogs, null);
-        Map<String, Long> completionSums = aggregateCompletionTokens(successLogs, null);
-        Map<String, Long> totalSums = aggregateTotalTokens(successLogs, null);
+        // 1. 用量聚合（SQL 一次 GROUP BY 返回全量/今日/本周/本月四组指标）
+        List<Map<String, Object>> aggRows = requestLogMapper.selectChannelModelUsageAgg(
+                channelName, todayStartUtc, weekStartUtc, monthStartUtc);
 
-        // 今日统计
-        Map<String, Long> todayRequestCounts = aggregateRequestCounts(successLogs, todayStartUtc);
-        Map<String, Long> todayPromptSums = aggregatePromptTokens(successLogs, todayStartUtc);
-        Map<String, Long> todayCompletionSums = aggregateCompletionTokens(successLogs, todayStartUtc);
-        Map<String, Long> todayTotalSums = aggregateTotalTokens(successLogs, todayStartUtc);
+        Map<String, Long> requestCounts = new LinkedHashMap<>();
+        Map<String, Long> promptSums = new LinkedHashMap<>();
+        Map<String, Long> completionSums = new LinkedHashMap<>();
+        Map<String, Long> totalSums = new LinkedHashMap<>();
+        Map<String, Long> todayRequestCounts = new LinkedHashMap<>();
+        Map<String, Long> todayPromptSums = new LinkedHashMap<>();
+        Map<String, Long> todayCompletionSums = new LinkedHashMap<>();
+        Map<String, Long> todayTotalSums = new LinkedHashMap<>();
+        Map<String, Long> weekRequestCounts = new LinkedHashMap<>();
+        Map<String, Long> weekPromptSums = new LinkedHashMap<>();
+        Map<String, Long> weekCompletionSums = new LinkedHashMap<>();
+        Map<String, Long> weekTotalSums = new LinkedHashMap<>();
+        Map<String, Long> monthRequestCounts = new LinkedHashMap<>();
+        Map<String, Long> monthPromptSums = new LinkedHashMap<>();
+        Map<String, Long> monthCompletionSums = new LinkedHashMap<>();
+        Map<String, Long> monthTotalSums = new LinkedHashMap<>();
 
-        // 本周统计
-        Map<String, Long> weekRequestCounts = aggregateRequestCounts(successLogs, weekStartUtc);
-        Map<String, Long> weekPromptSums = aggregatePromptTokens(successLogs, weekStartUtc);
-        Map<String, Long> weekCompletionSums = aggregateCompletionTokens(successLogs, weekStartUtc);
-        Map<String, Long> weekTotalSums = aggregateTotalTokens(successLogs, weekStartUtc);
+        for (Map<String, Object> row : aggRows) {
+            String modelName = (String) row.get("model_name");
+            if (modelName == null || modelName.isEmpty()) continue;
+            requestCounts.put(modelName, toLong(row.get("request_count")));
+            promptSums.put(modelName, toLong(row.get("prompt_tokens")));
+            completionSums.put(modelName, toLong(row.get("completion_tokens")));
+            totalSums.put(modelName, toLong(row.get("total_tokens")));
+            todayRequestCounts.put(modelName, toLong(row.get("today_request_count")));
+            todayPromptSums.put(modelName, toLong(row.get("today_prompt_tokens")));
+            todayCompletionSums.put(modelName, toLong(row.get("today_completion_tokens")));
+            todayTotalSums.put(modelName, toLong(row.get("today_total_tokens")));
+            weekRequestCounts.put(modelName, toLong(row.get("week_request_count")));
+            weekPromptSums.put(modelName, toLong(row.get("week_prompt_tokens")));
+            weekCompletionSums.put(modelName, toLong(row.get("week_completion_tokens")));
+            weekTotalSums.put(modelName, toLong(row.get("week_total_tokens")));
+            monthRequestCounts.put(modelName, toLong(row.get("month_request_count")));
+            monthPromptSums.put(modelName, toLong(row.get("month_prompt_tokens")));
+            monthCompletionSums.put(modelName, toLong(row.get("month_completion_tokens")));
+            monthTotalSums.put(modelName, toLong(row.get("month_total_tokens")));
+        }
 
-        // 本月统计
-        Map<String, Long> monthRequestCounts = aggregateRequestCounts(successLogs, monthStartUtc);
-        Map<String, Long> monthPromptSums = aggregatePromptTokens(successLogs, monthStartUtc);
-        Map<String, Long> monthCompletionSums = aggregateCompletionTokens(successLogs, monthStartUtc);
-        Map<String, Long> monthTotalSums = aggregateTotalTokens(successLogs, monthStartUtc);
-
-        // 按模型分组（已按时间倒序），每组取最近 30 条计算首字节平均响应时间
-        Map<String, List<RequestLog>> logsByModel = firstByteLogs.stream()
-                .collect(Collectors.groupingBy(RequestLog::getChannelModelName));
-
+        // 2. 最近 30 条首字节平均响应时间（success+fail，窗口函数下推）
         Map<String, Long> modelAvgResponseTimeRecent30 = new LinkedHashMap<>();
-        for (Map.Entry<String, List<RequestLog>> entry : logsByModel.entrySet()) {
-            double avg = entry.getValue().stream()
-                    .limit(30)
-                    .mapToInt(RequestLog::getFirstByteMs)
-                    .average()
-                    .orElse(0.0);
-            modelAvgResponseTimeRecent30.put(entry.getKey(), Math.round(avg));
+        for (Map<String, Object> row : requestLogMapper.selectChannelModelRecent30FirstByte(channelName)) {
+            String modelName = (String) row.get("model_name");
+            if (modelName == null || modelName.isEmpty()) continue;
+            modelAvgResponseTimeRecent30.put(modelName, Math.round(toDouble(row.get("avg_first_byte"))));
         }
-
-        // 渠道级：所有模型合在一起取最近 30 条的首字节平均响应时间
+        Map<String, Object> channelFirstByteRow = requestLogMapper.selectChannelRecent30FirstByte(channelName);
         long channelAvgResponseTimeRecent30 = Math.round(
-                firstByteLogs.stream()
-                        .limit(30)
-                        .mapToInt(RequestLog::getFirstByteMs)
-                        .average()
-                        .orElse(0.0));
+                channelFirstByteRow != null ? toDouble(channelFirstByteRow.get("avg_first_byte")) : 0.0);
 
-        // 按模型分组计算最近 30 条的平均生成速度 (tokens/s)
-        // 分母使用总耗时而非(总耗时-首字节耗时)：非流式请求 (response_time_ms - first_byte_ms) 趋近 0，会得到异常大的速度值
-        Map<String, List<RequestLog>> successLogsByModel = successLogs.stream()
-                .filter(l -> l.getChannelModelName() != null && !l.getChannelModelName().isEmpty())
-                .filter(l -> l.getResponseTimeMs() != null && l.getCompletionTokens() != null)
-                .filter(l -> l.getCompletionTokens() > 0 && l.getResponseTimeMs() > 0)
-                .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
-                .collect(Collectors.groupingBy(RequestLog::getChannelModelName));
-
+        // 3. 最近 30 条平均生成速度（tokens/s，仅 success 且 token/耗时均 > 0，窗口函数下推）
         Map<String, Double> modelAvgOutputSpeedRecent30 = new LinkedHashMap<>();
-        for (Map.Entry<String, List<RequestLog>> entry : successLogsByModel.entrySet()) {
-            double avgSpeed = entry.getValue().stream()
-                    .limit(30)
-                    .mapToDouble(l -> l.getCompletionTokens() * 1000.0 / l.getResponseTimeMs())
-                    .average()
-                    .orElse(0.0);
-            modelAvgOutputSpeedRecent30.put(entry.getKey(), Math.round(avgSpeed * 10.0) / 10.0);
+        for (Map<String, Object> row : requestLogMapper.selectChannelModelRecent30Speed(channelName)) {
+            String modelName = (String) row.get("model_name");
+            if (modelName == null || modelName.isEmpty()) continue;
+            modelAvgOutputSpeedRecent30.put(modelName, Math.round(toDouble(row.get("avg_speed")) * 10.0) / 10.0);
         }
-
-        // 渠道级平均生成速度
+        Map<String, Object> channelSpeedRow = requestLogMapper.selectChannelRecent30Speed(channelName);
         double channelAvgOutputSpeedRecent30 = Math.round(
-                successLogs.stream()
-                        .filter(l -> l.getResponseTimeMs() != null && l.getCompletionTokens() != null)
-                        .filter(l -> l.getCompletionTokens() > 0 && l.getResponseTimeMs() > 0)
-                        .sorted((a, b) -> b.getCreatedAt().compareTo(a.getCreatedAt()))
-                        .limit(30)
-                        .mapToDouble(l -> l.getCompletionTokens() * 1000.0 / l.getResponseTimeMs())
-                        .average()
-                        .orElse(0.0) * 10.0) / 10.0;
+                (channelSpeedRow != null ? toDouble(channelSpeedRow.get("avg_speed")) : 0.0) * 10.0) / 10.0;
 
+        // 4. 组装模型统计列表（按全量请求数降序，与原实现一致）
         Set<String> allModels = new LinkedHashSet<>();
         allModels.addAll(requestCounts.keySet());
         allModels.addAll(todayRequestCounts.keySet());

@@ -218,7 +218,7 @@ const form = reactive({
   log_retention_days: 30,
   log_cleanup_enabled: '1',
   request_body_ttl_hours: 4,
-  retry_fail_ttl_hours: 48,
+  retry_fail_ttl_hours: 0,
   request_data_save_level: 'info',
   timeout_min_seconds: 20,
   timeout_max_seconds: 60,

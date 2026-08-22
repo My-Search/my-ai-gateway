@@ -1,11 +1,13 @@
 package com.myai.gateway.service;
 
+import com.myai.gateway.entity.RequestLog;
 import com.myai.gateway.mapper.RequestLogMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,7 +48,8 @@ class DashboardStatsCollectorTest {
         when(requestLogMapper.selectChannelRank(any(), any())).thenReturn(List.of());
         when(requestLogMapper.selectEntryModelRank(any(), any())).thenReturn(List.of());
         when(requestLogMapper.selectChannelModelRank(any(), any())).thenReturn(List.of());
-        when(requestLogMapper.selectRecentTraces()).thenReturn(List.of());
+        when(requestLogMapper.selectRecentTraces(any())).thenReturn(List.of());
+        when(requestLogMapper.fallbackRecentTraces()).thenReturn(List.of());
     }
 
     @SuppressWarnings("unchecked")
@@ -153,6 +156,35 @@ class DashboardStatsCollectorTest {
         assertThat(yesterday.get("successRate")).isEqualTo(0.0);
         assertThat(yesterday.get("avgResponseTime")).isEqualTo(0L);
         assertThat(yesterday.get("avgOutputSpeed")).isEqualTo(0.0);
+    }
+
+    @Test
+    void recentLogs_windowShortOfTen_fallsBackToFullScan() {
+        // 时间窗内不足 10 个 trace → 回退全量口径查询，展示行为与旧版一致
+        List<RequestLog> windowLogs = List.of(new RequestLog(), new RequestLog());
+        List<RequestLog> fallbackLogs = List.of(new RequestLog(), new RequestLog(),
+                new RequestLog(), new RequestLog());
+        when(requestLogMapper.selectRecentTraces(any())).thenReturn(windowLogs);
+        when(requestLogMapper.fallbackRecentTraces()).thenReturn(fallbackLogs);
+
+        Map<String, Object> stats = collector.collect("today", "today", null);
+
+        assertThat((List<?>) stats.get("recentLogs")).isSameAs(fallbackLogs);
+    }
+
+    @Test
+    void recentLogs_windowHasTenTraces_usesWindowResult() {
+        // 时间窗内已有 10 个 trace → 直接使用窗口结果，不触发回退查询
+        List<RequestLog> windowLogs = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            windowLogs.add(new RequestLog());
+        }
+        when(requestLogMapper.selectRecentTraces(any())).thenReturn(windowLogs);
+
+        Map<String, Object> stats = collector.collect("today", "today", null);
+
+        assertThat((List<?>) stats.get("recentLogs")).isSameAs(windowLogs);
+        org.mockito.Mockito.verify(requestLogMapper, org.mockito.Mockito.never()).fallbackRecentTraces();
     }
 
     /** 构造 selectDailyTrend 的 SQL 返回行；avgTime/avgOutputSpeed 可为 null 模拟无有效记录 */

@@ -156,7 +156,12 @@ class DashboardStatsCollector {
         stats.put("maxDailyRequests", maxDailyRequests);
 
         // 8. 最近 10 条独特 trace 的最新日志条目（trace-level 去重）
-        List<RequestLog> recentLogs = requestLogMapper.selectRecentTraces();
+        // 先在近 48h 时间窗内取（基于当前时间，避免全表 GROUP BY），不足 10 个 trace 时回退全量口径，展示行为与旧版一致
+        LocalDateTime recentSince = LocalDateTime.now(ZoneOffset.UTC).minusHours(48);
+        List<RequestLog> recentLogs = requestLogMapper.selectRecentTraces(recentSince);
+        if (recentLogs.size() < 10) {
+            recentLogs = requestLogMapper.fallbackRecentTraces();
+        }
         stats.put("recentLogs", recentLogs);
 
         return stats;

@@ -249,19 +249,32 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
 
     /**
      * 统计今日发起的请求中从未 success（完全失败）的 trace 数
+     * <p>
+     * 单次范围扫描 + GROUP BY/HAVING 替代相关子查询（原 NOT EXISTS 逐行回探为 O(N×logN)）。
+     * 仅扫描 start/success 两类行（覆盖索引零回表），口径与原实现一致：
+     * 失败 trace = 有 start 行且所有行均无 success 的 trace_id。
+     * </p>
      */
-    @Select("SELECT COUNT(DISTINCT r1.trace_id) FROM request_logs r1 " +
-            "WHERE r1.phase = 'start' AND r1.created_at >= #{since} " +
-            "AND NOT EXISTS (SELECT 1 FROM request_logs r2 WHERE r2.trace_id = r1.trace_id AND r2.phase = 'success')")
+    @Select("SELECT COUNT(*) FROM (" +
+            "SELECT trace_id FROM request_logs " +
+            "WHERE created_at >= #{since} AND phase IN ('start', 'success') " +
+            "GROUP BY trace_id HAVING MAX(phase = 'success') = 0)")
     long countFailedTraces(@Param("since") LocalDateTime since);
 
     /**
      * 统计指定窗口内发起的请求中从未 success（完全失败）的 trace 数
-     * 口径与 {@link #countFailedTraces} 一致，仅增加窗口上界（用于昨日环比）
+     * <p>
+     * 口径与 {@link #countFailedTraces} 不同点：NOT EXISTS 检查的是 trace 全历史，
+     * 跨窗口完成的请求（如昨日发起、今日凌晨成功）仍算昨日成功，与原实现语义一致。
+     * 先对窗口内 start 行做 DISTINCT 再逐 trace 探测，探测次数从"每条日志行"降为"每个 trace 一次"
+     * （消除重试链路的重复探测放大）。
+     * </p>
      */
-    @Select("SELECT COUNT(DISTINCT r1.trace_id) FROM request_logs r1 " +
-            "WHERE r1.phase = 'start' AND r1.created_at >= #{start} AND r1.created_at < #{end} " +
-            "AND NOT EXISTS (SELECT 1 FROM request_logs r2 WHERE r2.trace_id = r1.trace_id AND r2.phase = 'success')")
+    @Select("SELECT COUNT(*) FROM (" +
+            "SELECT DISTINCT trace_id FROM request_logs " +
+            "WHERE phase = 'start' AND created_at >= #{start} AND created_at < #{end}) s " +
+            "WHERE NOT EXISTS (" +
+            "SELECT 1 FROM request_logs r2 WHERE r2.trace_id = s.trace_id AND r2.phase = 'success')")
     long countFailedTracesBetween(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
 
     // ==================== 渠道列表用量统计 ====================
@@ -287,10 +300,117 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
     List<Map<String, Object>> selectChannelSummaryStats();
 
     /**
+     * 渠道模型用量聚合（单次 GROUP BY 窗口聚合，替代全量实体加载 + Java 多次流聚合）
+     * <p>
+     * 仅扫描 phase='success' 且属于指定渠道的行，按 channel_model_name 分组，
+     * 一次返回全量/今日/本周/本月四组指标（请求数 + prompt/completion/total tokens）。
+     * 时间窗与 Java 版 {@code aggregateXxx(logs, since)} 口径一致：按 created_at 过滤。
+     * </p>
+     *
+     * @return 每行包含 model_name、request_count、prompt_tokens、completion_tokens、total_tokens
+     *         及 today_/week_/month_ 前缀的同名四项
+     */
+    @Select("SELECT channel_model_name as model_name, " +
+            "COUNT(*) as request_count, " +
+            "COALESCE(SUM(COALESCE(prompt_tokens, 0)), 0) as prompt_tokens, " +
+            "COALESCE(SUM(COALESCE(completion_tokens, 0)), 0) as completion_tokens, " +
+            "COALESCE(SUM(COALESCE(total_tokens, 0)), 0) as total_tokens, " +
+            "COUNT(CASE WHEN created_at >= #{todayStart} THEN 1 END) as today_request_count, " +
+            "COALESCE(SUM(CASE WHEN created_at >= #{todayStart} THEN COALESCE(prompt_tokens, 0) ELSE 0 END), 0) as today_prompt_tokens, " +
+            "COALESCE(SUM(CASE WHEN created_at >= #{todayStart} THEN COALESCE(completion_tokens, 0) ELSE 0 END), 0) as today_completion_tokens, " +
+            "COALESCE(SUM(CASE WHEN created_at >= #{todayStart} THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as today_total_tokens, " +
+            "COUNT(CASE WHEN created_at >= #{weekStart} THEN 1 END) as week_request_count, " +
+            "COALESCE(SUM(CASE WHEN created_at >= #{weekStart} THEN COALESCE(prompt_tokens, 0) ELSE 0 END), 0) as week_prompt_tokens, " +
+            "COALESCE(SUM(CASE WHEN created_at >= #{weekStart} THEN COALESCE(completion_tokens, 0) ELSE 0 END), 0) as week_completion_tokens, " +
+            "COALESCE(SUM(CASE WHEN created_at >= #{weekStart} THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as week_total_tokens, " +
+            "COUNT(CASE WHEN created_at >= #{monthStart} THEN 1 END) as month_request_count, " +
+            "COALESCE(SUM(CASE WHEN created_at >= #{monthStart} THEN COALESCE(prompt_tokens, 0) ELSE 0 END), 0) as month_prompt_tokens, " +
+            "COALESCE(SUM(CASE WHEN created_at >= #{monthStart} THEN COALESCE(completion_tokens, 0) ELSE 0 END), 0) as month_completion_tokens, " +
+            "COALESCE(SUM(CASE WHEN created_at >= #{monthStart} THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as month_total_tokens " +
+            "FROM request_logs " +
+            "WHERE phase = 'success' AND channel_name = #{channelName} " +
+            "AND channel_model_name IS NOT NULL AND channel_model_name != '' " +
+            "GROUP BY channel_model_name")
+    List<Map<String, Object>> selectChannelModelUsageAgg(@Param("channelName") String channelName,
+                                                         @Param("todayStart") LocalDateTime todayStart,
+                                                         @Param("weekStart") LocalDateTime weekStart,
+                                                         @Param("monthStart") LocalDateTime monthStart);
+
+    /**
+     * 渠道下各模型的最近 30 条首字节平均响应时间（窗口函数下推，仅回传每模型一行）
+     * <p>
+     * 口径与原 Java 实现（success+fail、first_byte_ms &gt; 0、按 created_at 倒序取每模型前 30 条）一致。
+     * </p>
+     */
+    @Select("SELECT model_name, AVG(first_byte_ms) as avg_first_byte FROM (" +
+            "SELECT channel_model_name as model_name, first_byte_ms, " +
+            "ROW_NUMBER() OVER (PARTITION BY channel_model_name ORDER BY created_at DESC, id DESC) as rn " +
+            "FROM request_logs " +
+            "WHERE phase IN ('success', 'fail') AND channel_name = #{channelName} " +
+            "AND channel_model_name IS NOT NULL AND channel_model_name != '' " +
+            "AND first_byte_ms IS NOT NULL AND first_byte_ms > 0) t " +
+            "WHERE rn <= 30 GROUP BY model_name")
+    List<Map<String, Object>> selectChannelModelRecent30FirstByte(@Param("channelName") String channelName);
+
+    /**
+     * 渠道级最近 30 条首字节平均响应时间（所有模型合并取最近 30 条）
+     */
+    @Select("SELECT AVG(first_byte_ms) as avg_first_byte FROM (" +
+            "SELECT first_byte_ms, ROW_NUMBER() OVER (ORDER BY created_at DESC, id DESC) as rn " +
+            "FROM request_logs " +
+            "WHERE phase IN ('success', 'fail') AND channel_name = #{channelName} " +
+            "AND channel_model_name IS NOT NULL AND channel_model_name != '' " +
+            "AND first_byte_ms IS NOT NULL AND first_byte_ms > 0) t " +
+            "WHERE rn <= 30")
+    Map<String, Object> selectChannelRecent30FirstByte(@Param("channelName") String channelName);
+
+    /**
+     * 渠道下各模型的最近 30 条平均生成速度（tokens/s，仅 success 且 token/耗时均 &gt; 0）
+     */
+    @Select("SELECT model_name, AVG(completion_tokens * 1000.0 / response_time_ms) as avg_speed FROM (" +
+            "SELECT channel_model_name as model_name, completion_tokens, response_time_ms, " +
+            "ROW_NUMBER() OVER (PARTITION BY channel_model_name ORDER BY created_at DESC, id DESC) as rn " +
+            "FROM request_logs " +
+            "WHERE phase = 'success' AND channel_name = #{channelName} " +
+            "AND channel_model_name IS NOT NULL AND channel_model_name != '' " +
+            "AND completion_tokens > 0 AND response_time_ms > 0) t " +
+            "WHERE rn <= 30 GROUP BY model_name")
+    List<Map<String, Object>> selectChannelModelRecent30Speed(@Param("channelName") String channelName);
+
+    /**
+     * 渠道级最近 30 条平均生成速度（tokens/s）
+     */
+    @Select("SELECT AVG(completion_tokens * 1000.0 / response_time_ms) as avg_speed FROM (" +
+            "SELECT completion_tokens, response_time_ms, ROW_NUMBER() OVER (ORDER BY created_at DESC, id DESC) as rn " +
+            "FROM request_logs " +
+            "WHERE phase = 'success' AND channel_name = #{channelName} " +
+            "AND channel_model_name IS NOT NULL AND channel_model_name != '' " +
+            "AND completion_tokens > 0 AND response_time_ms > 0) t " +
+            "WHERE rn <= 30")
+    Map<String, Object> selectChannelRecent30Speed(@Param("channelName") String channelName);
+
+    /**
      * 获取最近 10 个独特 trace 的最新日志条目（trace-level 去重）
      * <p>
      * 替代原来的 LIMIT 10 原始日志，确保"最近活动"面板显示不同的请求而非被同一条 trace 刷屏。
-     * 子查询取每个 trace_id 的最新 id，再 JOIN 回全表获取完整行。
+     * 子查询先按时间窗（默认近 48 小时）过滤再按 trace_id 分组取最新 id，避免全表 GROUP BY；
+     * 窗口内不足 10 个 trace 时返回不足 10 条，由调用方 {@code fallbackRecentTraces} 回退全量口径。
+     * </p>
+     */
+    @Select("SELECT r.* FROM request_logs r " +
+            "INNER JOIN (" +
+            "  SELECT MAX(id) as id FROM request_logs " +
+            "  WHERE created_at >= #{since} " +
+            "  GROUP BY trace_id " +
+            "  ORDER BY MAX(created_at) DESC LIMIT 10" +
+            ") latest ON r.id = latest.id " +
+            "ORDER BY r.created_at DESC")
+    List<RequestLog> selectRecentTraces(@Param("since") LocalDateTime since);
+
+    /**
+     * 最近活动回退查询（全量口径，与原 {@code selectRecentTraces} 行为一致）
+     * <p>
+     * 仅当时间窗内不足 10 个 trace（低频/新库场景）时调用，保证展示行为与旧版完全一致。
      * </p>
      */
     @Select("SELECT r.* FROM request_logs r " +
@@ -300,7 +420,7 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "  ORDER BY MAX(created_at) DESC LIMIT 10" +
             ") latest ON r.id = latest.id " +
             "ORDER BY r.created_at DESC")
-    List<RequestLog> selectRecentTraces();
+    List<RequestLog> fallbackRecentTraces();
 
     // ==================== 请求日志使用图表（按日 + 入口模型聚合） ====================
 

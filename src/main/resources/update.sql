@@ -388,13 +388,11 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_gateway_api_key_id ON request_logs(g
 -- ========================================
 -- VERSION:v1.22.0
 -- 系统配置：重试/失败请求数据保留时长（retry_fail_ttl_hours）
--- 默认保留 48 小时，便于调试排查重试/失败问题
 -- 普通请求数据保留时长为 request_body_ttl_hours（默认 4 小时）
--- 重试/失败请求数据保留时长为 retry_fail_ttl_hours（默认 48 小时）
--- 0=永久保留
+-- 重试/失败请求数据保留时长为 retry_fail_ttl_hours（默认 0 = 跟随日志保留天数）
 -- ========================================
 
-INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('retry_fail_ttl_hours', '48', '重试/失败请求数据保留时长（小时），超过此时间的失败/重试记录的 request_headers/body 将被清理，0=永久保留');
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('retry_fail_ttl_hours', '0', '重试/失败请求数据保留时长（小时），超过此时间的失败/重试记录的 request_headers/body 将被清理，0=跟随日志保留天数');
 
 -- ========================================
 -- VERSION:v1.23.0
@@ -476,3 +474,23 @@ INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUE
 -- ========================================
 
 ALTER TABLE request_logs ADD COLUMN first_byte_ms INTEGER;
+
+-- ========================================
+-- VERSION:v1.30.0
+-- 统计查询性能优化：新增覆盖索引
+-- idx_request_logs_created_at_phase_trace：
+--   覆盖 Dashboard 各类按时间范围 + phase 过滤的 trace 去重计数聚合
+--   （COUNT(DISTINCT CASE WHEN phase=... THEN trace_id END)），纯索引扫描零回表
+--   同时覆盖原 idx_request_logs_created_at 与 idx_request_logs_created_at_phase 的场景，后两者删除以降低写入放大
+-- idx_request_logs_channel_phase：
+--   覆盖渠道维度用量聚合（phase='success' + channel_name 过滤的 GROUP BY channel_model_name）
+-- retry_fail_ttl_hours 语义变更：0 从"永久保留"改为"跟随日志保留天数"，
+--   同步更新存量库中的配置描述（INSERT OR IGNORE 对已存在的行不会生效）
+-- ========================================
+
+CREATE INDEX IF NOT EXISTS idx_request_logs_created_at_phase_trace ON request_logs(created_at, phase, trace_id);
+CREATE INDEX IF NOT EXISTS idx_request_logs_channel_phase ON request_logs(channel_name, phase);
+DROP INDEX IF EXISTS idx_request_logs_created_at;
+DROP INDEX IF EXISTS idx_request_logs_created_at_phase;
+
+UPDATE admin_config SET description = '重试/失败请求数据保留时长（小时），超过此时间的失败/重试记录的 request_headers/body 将被清理，0=跟随日志保留天数' WHERE config_key = 'retry_fail_ttl_hours';

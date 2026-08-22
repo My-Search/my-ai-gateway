@@ -601,7 +601,7 @@ export default {
   'systemConfig.requestBodyTtl': '请求数据保留时长（小时）',
   'systemConfig.requestBodyTtlHint': '原始请求头和请求体将在超过此时长后被自动清除。设置为 0 表示永久保留。',
   'systemConfig.retryFailTtl': '重试/失败数据保留时长（小时）',
-  'systemConfig.retryFailTtlHint': '重试或失败请求的原始请求头和请求体将在超过此时长后被清除。默认 48 小时，方便调试排查。设置为 0 表示永久保留。',
+  'systemConfig.retryFailTtlHint': '重试或失败请求的原始请求头和请求体将在超过此时长后被清除。默认 0，表示跟随日志保留天数，日志删除时一并清理。',
   'systemConfig.requestDataSaveLevel': '原始请求数据保存级别',
   'systemConfig.requestDataSaveLevelHint': '控制原始请求头和请求体的保存策略。INFO=全部保存，WARN=仅重试或失败时保存，ERROR=仅整体请求失败时保存。',
   'systemConfig.saveLevelInfo': 'INFO',

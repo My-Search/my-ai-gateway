@@ -352,7 +352,8 @@ public class RequestLogService {
      * 清理过期的原始请求数据（request_headers / request_body） - 新接口，区分重试/失败与普通记录
      *
      * @param ttlHours          普通原始请求数据保留时长（小时），<=0 表示永久保留不清除
-     * @param retryFailTtlHours 重试/失败请求数据保留时长（小时），<=0 表示永久保留不清除
+     * @param retryFailTtlHours 重试/失败请求数据保留时长（小时），<=0 表示永久保留不清除；
+     *                          调用方（LogCleanupTask）在值为 0 时已换算为 日志保留天数×24 传入
      */
     public void cleanExpiredRequestData(int ttlHours, int retryFailTtlHours) {
         cleanupSupport.cleanExpiredRequestData(ttlHours, retryFailTtlHours);

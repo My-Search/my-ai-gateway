@@ -108,7 +108,7 @@ public class AdminConfigController {
                     int hours = Integer.parseInt(val);
                     if (hours < 0 || hours > 8760) {
                         result.put("success", false);
-                        result.put("error", "重试/失败请求保留时长必须在0-8760小时之间（0=永久保留）");
+                        result.put("error", "重试/失败请求保留时长必须在0-8760小时之间（0=跟随日志保留天数）");
                         return ResponseEntity.ok(result);
                     }
                 } catch (NumberFormatException e) {

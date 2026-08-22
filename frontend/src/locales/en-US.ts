@@ -601,7 +601,7 @@ export default {
   'systemConfig.requestBodyTtl': 'Request Data TTL (hours)',
   'systemConfig.requestBodyTtlHint': 'Raw request headers and body will be cleared after this many hours. Set to 0 to keep permanently.',
   'systemConfig.retryFailTtl': 'Retry/Fail Data TTL (hours)',
-  'systemConfig.retryFailTtlHint': 'Raw request data for retry or failed requests will be cleared after this many hours. Default 48h for debugging. Set to 0 to keep permanently.',
+  'systemConfig.retryFailTtlHint': 'Raw request data for retry or failed requests will be cleared after this many hours. Default 0, which follows the log retention days and is cleaned together when logs are deleted.',
   'systemConfig.requestDataSaveLevel': 'Request Data Save Level',
   'systemConfig.requestDataSaveLevelHint': 'Controls when raw request headers/body are saved. INFO=save all, WARN=save only on retry/error, ERROR=save only on final failure.',
   'systemConfig.saveLevelInfo': 'INFO',

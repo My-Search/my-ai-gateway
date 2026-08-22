@@ -20,7 +20,8 @@ import org.springframework.stereotype.Component;
  * 2. 若开关关闭则跳过本次执行
  * 3. 读取日志保留天数（log_retention_days），调用 cleanOldLogs() 清理过期日志
  * 4. 读取普通原始请求数据保留时长（request_body_ttl_hours），调用 cleanExpiredRequestData() 清理普通记录
- * 5. 读取重试/失败请求数据保留时长（retry_fail_ttl_hours），调用 cleanExpiredRequestData() 清理重试/失败记录
+ * 5. 读取重试/失败请求数据保留时长（retry_fail_ttl_hours），调用 cleanExpiredRequestData() 清理重试/失败记录；
+ *    该值为 0 时跟随日志保留天数（换算为 天数×24 小时），日志删除时原始请求数据随之一并清理
  * 6. 记录本次清理结果
  * </pre>
  */
@@ -89,7 +90,7 @@ public class LogCleanupTask {
             ttlHours = 0;
         }
 
-        // 4. 读取重试/失败请求数据保留时长
+        // 4. 读取重试/失败请求数据保留时长（0 = 跟随日志保留天数）
         String retryFailTtlStr = adminConfigService.getValueByKey(AdminConfigService.KEY_RETRY_FAIL_TTL_HOURS);
         int retryFailTtlHours;
         try {
@@ -99,6 +100,10 @@ public class LogCleanupTask {
             }
         } catch (NumberFormatException e) {
             retryFailTtlHours = 0;
+        }
+        if (retryFailTtlHours == 0) {
+            retryFailTtlHours = retentionDays * 24;
+            log.debug("重试/失败数据保留时长为 0，跟随日志保留天数（{} 天）清理", retentionDays);
         }
 
         // 5. 清理过期的原始请求数据（同时处理普通记录与重试/失败记录）

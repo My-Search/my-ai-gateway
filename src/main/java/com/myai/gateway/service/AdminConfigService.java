@@ -201,7 +201,7 @@ public class AdminConfigService {
         if (retentionDays == null) retentionDays = "7";
         if (cleanupEnabled == null) cleanupEnabled = "1";
         if (requestBodyTtlHours == null) requestBodyTtlHours = "4";
-        if (retryFailTtlHours == null) retryFailTtlHours = "48";
+        if (retryFailTtlHours == null) retryFailTtlHours = "0";
         if (timeoutMinSeconds == null) timeoutMinSeconds = "20";
         if (timeoutMaxSeconds == null) timeoutMaxSeconds = "60";
         if (requestDataSaveLevel == null) requestDataSaveLevel = "info";
