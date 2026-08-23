@@ -156,7 +156,7 @@
             <template v-if="group.logs[0].channelName">{{ group.logs[0].channelName }}/</template>
             <template v-if="group.logs[0].apiKeyName">{{ group.logs[0].apiKeyName }}/</template>
             <template v-if="group.logs[0].channelModelName">{{ group.logs[0].channelModelName }}</template>
-            <template v-else-if="group.logs[0].modelName">{{ group.logs[0].modelName }}</template>
+            <template v-else-if="group.logs[0].modelName">{{ group.logs[0].modelName }}</template><span v-if="group.logs[0].reasoningEffort" class="reasoning-effort">({{ group.logs[0].reasoningEffort }})</span>{{ ' ' }}
             {{ groupDurationText(group) }}
             <span v-if="group.logs[0].message" class="log-message" :class="{ 'log-message-error': group.logs[0].phase === 'fail' }"> — {{ group.logs[0].message }}</span>
           </span>
@@ -992,6 +992,7 @@ onUnmounted(() => {
 .log-time { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 .log-message { color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; flex-shrink: 1; }
 .log-message-error { color: var(--accent-red); }
+.reasoning-effort { color: var(--accent-purple); font-size: 11px; white-space: nowrap; margin-left: 2px; }
 
 .dialog-pre {
   margin: 0;

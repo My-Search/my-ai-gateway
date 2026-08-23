@@ -48,6 +48,9 @@ public class RequestLog {
     /** 日志消息 */
     private String message;
 
+    /** 思考强度：请求开始记录客户端传入值，路由记录实际使用值 */
+    private String reasoningEffort;
+
     /** 重试索引（0=首次请求，>0=第N次重试，用于日志缩进显示） */
     private Integer retryIndex;
 
@@ -105,6 +108,9 @@ public class RequestLog {
 
     public String getMessage() { return message; }
     public void setMessage(String message) { this.message = message; }
+
+    public String getReasoningEffort() { return reasoningEffort; }
+    public void setReasoningEffort(String reasoningEffort) { this.reasoningEffort = reasoningEffort; }
 
     public Integer getRetryIndex() { return retryIndex; }
     public void setRetryIndex(Integer retryIndex) { this.retryIndex = retryIndex; }

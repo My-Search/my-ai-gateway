@@ -47,6 +47,14 @@
           <input v-model.number="maxTokens" type="number" class="form-control" min="1" max="256000" />
         </div>
 
+        <div class="form-group">
+          <label>{{ t('playground.reasoningEffort') }}</label>
+          <select v-model="reasoningEffort" class="form-control">
+            <option value="">{{ t('playground.reasoningEffortDefault') }}</option>
+            <option v-for="e in REASONING_EFFORT_OPTIONS" :key="e" :value="e">{{ e }}</option>
+          </select>
+        </div>
+
         <button class="btn btn-secondary" style="width:100%;" @click="clearChat">
           <SvgIcon name="trash" :size="14" /> {{ t('playground.clearChat') }}
         </button>
@@ -295,12 +303,17 @@ interface PastedImage {
 
 const isShareMode = ref(!!props.fixedShareCode)
 
+/** 思考强度可选项（与模型关联配置的默认思考强度选项一致） */
+const REASONING_EFFORT_OPTIONS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+
 const chatRef = ref<HTMLElement | null>(null)
 const apiKeys = ref<ApiKey[]>([])
 const selectedModel = ref('')
 const selectedApiKey = ref(0)
 const temperature = ref(0.7)
 const maxTokens = ref(65536)
+/** 思考强度：'' 表示不传（跟随请求/关联默认） */
+const reasoningEffort = ref('')
 const protocol = ref('openai')
 const userInput = ref('')
 // 使用 shallowRef 避免深层响应式追踪，配合 triggerRef 实现精确控制的流式渲染
@@ -504,6 +517,7 @@ function saveConfig() {
     protocol: protocol.value,
     temperature: temperature.value,
     maxTokens: maxTokens.value,
+    reasoningEffort: reasoningEffort.value,
   }
   localStorage.setItem('playground_config', JSON.stringify(config))
 }
@@ -532,13 +546,17 @@ function restoreConfig() {
     if (typeof config.maxTokens === 'number' && config.maxTokens >= 1) {
       maxTokens.value = config.maxTokens
     }
+    if (typeof config.reasoningEffort === 'string' &&
+        (config.reasoningEffort === '' || (REASONING_EFFORT_OPTIONS as readonly string[]).includes(config.reasoningEffort))) {
+      reasoningEffort.value = config.reasoningEffort
+    }
   } catch {
     // ignore parse errors
   }
 }
 
 /** 任一配置字段变化时自动保存 */
-watch([selectedModel, selectedApiKey, protocol, temperature, maxTokens], () => {
+watch([selectedModel, selectedApiKey, protocol, temperature, maxTokens, reasoningEffort], () => {
   saveConfig()
 }, { deep: false })
 
@@ -687,6 +705,9 @@ function buildRequestBody() {
     if (temperature.value !== undefined) {
       body.temperature = temperature.value
     }
+    if (reasoningEffort.value) {
+      body.reasoning_effort = reasoningEffort.value
+    }
     return body
   }
 
@@ -718,6 +739,9 @@ function buildRequestBody() {
     stream: true,
     temperature: temperature.value,
     max_tokens: maxTokens.value
+  }
+  if (reasoningEffort.value) {
+    body.reasoning_effort = reasoningEffort.value
   }
   return body
 }

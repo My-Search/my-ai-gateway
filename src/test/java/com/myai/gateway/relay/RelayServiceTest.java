@@ -276,10 +276,11 @@ class RelayServiceTest {
         spyService.tryCandidates("trace-1", candidates, "auth", null, req, "openai", 0, System.currentTimeMillis())
                 .block(Duration.ofSeconds(5));
 
-        // 1 次失败重试 → 应调用 1 次 logWithResponseTime 写入带耗时的 retry 日志
+        // 1 次失败重试 → 应调用 1 次 logWithResponseTimeAndReasoning 写入带耗时的 retry 日志
+        // （思考强度参数为 null：retry 日志不携带思考强度）
         // attemptDuration 实际计算自 System.currentTimeMillis()，不能精确断言具体值，
         // 因此只验证：被调用了 1 次、retryIndex=0、phase="retry"、responseTimeMs >= 0
-        verify(requestLogService, times(1)).logWithResponseTime(
+        verify(requestLogService, times(1)).logWithResponseTimeAndReasoning(
                 eq("trace-1"),
                 eq("ak1"),
                 eq((Long) null),  // gatewayApiKeyId：测试未传网关 Key
@@ -289,10 +290,11 @@ class RelayServiceTest {
                 eq("retry"),
                 anyString(),
                 eq(0),
-                longThat(ms -> ms >= 0L)
+                longThat(ms -> ms >= 0L),
+                isNull()
         );
-        // start 日志走普通 log()（不带耗时）
-        verify(requestLogService, atLeastOnce()).log(
+        // start 日志走 logWithReasoningEffort()（不带耗时；思考强度为 null 因测试请求未携带）
+        verify(requestLogService, atLeastOnce()).logWithReasoningEffort(
                 eq("trace-1"),
                 eq("ak1"),
                 eq((Long) null),  // gatewayApiKeyId
@@ -301,7 +303,8 @@ class RelayServiceTest {
                 eq("A"),
                 eq("start"),
                 anyString(),
-                eq(0)
+                eq(0),
+                isNull()
         );
     }
 

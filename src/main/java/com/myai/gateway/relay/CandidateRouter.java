@@ -254,7 +254,8 @@ public class CandidateRouter {
                 candidate.getChannelModel().getModelName(), candidate.getChannelApiKey().getKeyName(), remaining.size());
 
         relayLogger.logPhase(traceId, gatewayApiKeyId, candidate, req, "start",
-                "路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+                "路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex,
+                resolveEffectiveReasoningEffort(req, candidate));
 
         int maxAttempts = ctx.maxAttempts();
         String actualProvider = resolveProvider(candidate, provider);
@@ -440,7 +441,8 @@ public class CandidateRouter {
                 req.isContextRetry() ? " [已拼接]" : "");
 
         relayLogger.logPhase(traceId, gatewayApiKeyId, candidate, req, "start",
-                "流式路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex);
+                "流式路由到 " + candidate.getChannel().getName() + "/" + candidate.getChannelApiKey().getKeyName() + "/" + candidate.getChannelModel().getModelName(), retryIndex,
+                resolveEffectiveReasoningEffort(req, candidate));
 
         int maxAttempts = ctx.maxAttempts();
         String actualProvider = resolveProvider(candidate, provider);
@@ -701,6 +703,18 @@ public class CandidateRouter {
     }
 
     // ========== 辅助方法 ==========
+
+    /**
+     * 解析路由到该候选时实际使用的思考强度：请求未携带时回退到关联关系配置的默认值。
+     * <p>仅用于日志展示，与 {@link #buildProviderRequestBody} 的实际取值逻辑保持一致。</p>
+     */
+    private String resolveEffectiveReasoningEffort(InternalRequest req, RoutingCandidate candidate) {
+        if (req.getReasoningEffort() != null && !req.getReasoningEffort().isEmpty()) {
+            return req.getReasoningEffort();
+        }
+        if (candidate.getRel() == null) return null;
+        return candidate.getRel().getReasoningEffort();
+    }
 
     String buildProviderRequestBody(InternalRequest req, RoutingCandidate candidate, String provider) {
         String originalModel = req.getModel();

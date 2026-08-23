@@ -570,6 +570,8 @@ export default {
   'playground.protocol': 'API 协议',
   'playground.protocolOpenai': 'OpenAI',
   'playground.protocolAnthropic': 'Anthropic',
+  'playground.reasoningEffort': '思考强度',
+  'playground.reasoningEffortDefault': '默认（不传）',
   'playground.entryProtocol': '入口:',
   'playground.channelProtocol': '渠道:',
 

@@ -5,28 +5,32 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 自适应超时追踪器
  *
- * <p>维护每个 {@code (channelId, channelModelId)} 组合的首字节平均延迟（EMA），
- * 用于计算自适应超时时间。测量输入为请求收到首个响应字节的耗时（首字节语义：
- * 流式为首个 SSE 事件到达耗时；非流式响应一次到位，首字节耗时即完整响应耗时）。</p>
+ * <p>维护每个 {@code (channelId, channelModelId)} 组合的<strong>最近 {@value #WINDOW_SIZE} 次
+ * 首字节响应时间的简单平均</strong>（滑动窗口），用于计算自适应超时时间。测量输入为请求收到
+ * 首个响应字节的耗时（首字节语义：流式为首个 SSE 事件到达耗时；非流式响应一次到位，
+ * 首字节耗时即完整响应耗时）。</p>
  *
  * <p>超时计算：</p>
  * <ul>
- *   <li>样本数 ≤ {@link #SAMPLE_THRESHOLD} 时：返回默认 {@value #DEFAULT_TIMEOUT_MS}ms 超时</li>
- *   <li>样本数 > {@link #SAMPLE_THRESHOLD} 时：{@code timeout = clamp(ema × 3, minTimeout, maxTimeout)}</li>
- *   <li>最终超时限制在配置的最小～最大超时之间（通过系统配置项 {@code timeout_min_seconds} / {@code timeout_max_seconds} 设置，默认 20s ~ 60s）</li>
+ *   <li>窗口内样本数 &lt; {@link #MIN_SAMPLE_COUNT} 时：直接返回最大超时
+ *       （系统配置项 {@code timeout_max_seconds}，默认 60s）</li>
+ *   <li>样本数 ≥ {@link #MIN_SAMPLE_COUNT} 时：
+ *       {@code timeout = clamp(avg × 3, minTimeout, maxTimeout)}</li>
+ *   <li>最终超时限制在配置的最小～最大超时之间（通过系统配置项
+ *       {@code timeout_min_seconds} / {@code timeout_max_seconds} 设置，默认 20s ~ 60s）</li>
  * </ul>
  *
  * <p>更新规则：</p>
  * <ul>
- *   <li>首次记录：直接使用测量值（但不低于 {@link #MIN_LATENCY_MS}）</li>
- *   <li>后续更新：{@code ema = α × measurement + (1 - α) × ema}，α = {@value #ALPHA}</li>
+ *   <li>每次记录追加到窗口尾部，窗口超过 {@value #WINDOW_SIZE} 条时淘汰最旧样本</li>
  *   <li>超时时：将实际等待的超时时间作为测量值记录，使平均值逐渐上移以扩大窗口</li>
- *   <li>无历史时返回默认值 {@value #DEFAULT_TIMEOUT_MS}ms</li>
  * </ul>
  */
 @Component
@@ -34,14 +38,11 @@ public class LatencyTracker {
 
     private static final Logger log = LoggerFactory.getLogger(LatencyTracker.class);
 
-    /** EMA 平滑因子 */
-    static final double ALPHA = 0.3;
+    /** 滑动窗口大小：取最近 30 次首字节响应时间的简单平均 */
+    static final int WINDOW_SIZE = 30;
 
-    /** 默认超时时间（样本数不足时使用，60 秒） */
-    static final long DEFAULT_TIMEOUT_MS = 60_000L;
-
-    /** 最小延迟（500 毫秒），避免首字节 ema 过低（总耗时语义下的 2.5s 钳位值对首字节偏高） */
-    static final long MIN_LATENCY_MS = 500L;
+    /** 最小样本数：窗口内样本数低于该值时直接使用最大超时 */
+    static final int MIN_SAMPLE_COUNT = 3;
 
     /** 最小超时默认值（20 秒），当系统配置未设置时使用 */
     static final long DEFAULT_MIN_TIMEOUT_MS = 20_000L;
@@ -49,10 +50,7 @@ public class LatencyTracker {
     /** 最大超时默认值（60 秒），当系统配置未设置时使用 */
     static final long DEFAULT_MAX_TIMEOUT_MS = 60_000L;
 
-    /** 样本数阈值：样本数超过此值才启用自适应超时，否则返回默认超时 */
-    static final int SAMPLE_THRESHOLD = 5;
-
-    private final ConcurrentHashMap<Key, Entry> map = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Key, Deque<Long>> map = new ConcurrentHashMap<>();
 
     private final AdminConfigService adminConfigService;
 
@@ -66,80 +64,83 @@ public class LatencyTracker {
     record Key(long channelId, long channelModelId) {}
 
     /**
-     * 记录一次延迟测量值
+     * 记录一次延迟测量值（追加到滑动窗口，超出 {@link #WINDOW_SIZE} 时淘汰最旧样本）
      *
      * @param channelId      渠道 ID（不可为 null）
      * @param channelModelId 渠道模型 ID（不可为 null）
-     * @param latencyMs      本次测量的延迟（毫秒），低于 {@link #MIN_LATENCY_MS} 会被钳位
+     * @param latencyMs      本次测量的延迟（毫秒）
      */
     public void record(Long channelId, Long channelModelId, long latencyMs) {
         if (channelId == null || channelModelId == null) {
             return;
         }
         Key k = new Key(channelId, channelModelId);
-        long clampedMs = Math.max(latencyMs, MIN_LATENCY_MS);
-        map.compute(k, (key, entry) -> {
-            if (entry == null) {
-                return new Entry(clampedMs, 1);
+        Deque<Long> window = map.computeIfAbsent(k, key -> new ArrayDeque<>());
+        synchronized (window) {
+            window.addLast(latencyMs);
+            while (window.size() > WINDOW_SIZE) {
+                window.removeFirst();
             }
-            // EMA: ema = α × measurement + (1 - α) × ema
-            double newEma = ALPHA * clampedMs + (1.0 - ALPHA) * entry.ema;
-            return new Entry(newEma, entry.sampleCount + 1);
-        });
+        }
     }
 
     /**
-     * 获取指定 (channel, channelModel) 的当前 EMA 延迟
+     * 获取指定 (channel, channelModel) 的最近 {@value #WINDOW_SIZE} 次首字节平均延迟
      *
-     * @return EMA 延迟（毫秒），无历史时返回 {@link #DEFAULT_TIMEOUT_MS}
+     * @return 平均延迟（毫秒），无样本时返回 0
      */
     public long getLatency(Long channelId, Long channelModelId) {
-        if (channelId == null || channelModelId == null) {
-            return DEFAULT_TIMEOUT_MS;
-        }
-        Entry entry = map.get(new Key(channelId, channelModelId));
-        return entry != null ? (long) entry.ema : DEFAULT_TIMEOUT_MS;
+        return getStats(channelId, channelModelId)[0];
     }
 
     /**
      * 获取指定 (channel, channelModel) 的延迟统计信息
      *
-     * @return [latencyMs, sampleCount]，无历史时 latencyMs 为 {@link #DEFAULT_TIMEOUT_MS}，sampleCount 为 0
+     * @return [avgLatencyMs, sampleCount]，无样本时 avgLatencyMs 为 0、sampleCount 为 0
      */
     public long[] getStats(Long channelId, Long channelModelId) {
         if (channelId == null || channelModelId == null) {
-            return new long[]{DEFAULT_TIMEOUT_MS, 0};
+            return new long[]{0, 0};
         }
-        Entry entry = map.get(new Key(channelId, channelModelId));
-        if (entry != null) {
-            return new long[]{(long) entry.ema, entry.sampleCount};
+        Deque<Long> window = map.get(new Key(channelId, channelModelId));
+        if (window == null) {
+            return new long[]{0, 0};
         }
-        return new long[]{DEFAULT_TIMEOUT_MS, 0};
+        synchronized (window) {
+            if (window.isEmpty()) {
+                return new long[]{0, 0};
+            }
+            double sum = 0;
+            for (Long v : window) {
+                sum += v;
+            }
+            return new long[]{Math.round(sum / window.size()), window.size()};
+        }
     }
 
     /**
      * 获取自适应超时时间
      *
-     * <p>样本数不超过 {@link #SAMPLE_THRESHOLD} 时返回默认超时 {@value #DEFAULT_TIMEOUT_MS}ms（60 秒），
-     * 避免数据稀疏时产生激进的超时窗口。</p>
+     * <p>窗口内样本数不足 {@link #MIN_SAMPLE_COUNT} 时直接返回最大超时
+     * （{@code timeout_max_seconds}，默认 60 秒），避免数据稀疏时产生过小的超时窗口。</p>
      *
-     * <p>样本数超过阈值后：{@code timeout = clamp(ema × 3, minTimeout, maxTimeout)}，
-     * 即基于 EMA 平均延迟的 3 倍计算，最终限制在系统配置的范围内（默认 20 秒 ~ 60 秒）。</p>
+     * <p>样本数足够后：{@code timeout = clamp(avg × 3, minTimeout, maxTimeout)}，
+     * 即基于最近 30 次首字节平均延迟的 3 倍计算，最终限制在系统配置的范围内
+     * （默认 20 秒 ~ 60 秒）。</p>
      *
      * @return 超时时间（毫秒），介于 {@link #getMinTimeoutMs()} ~ {@link #getMaxTimeoutMs()} 之间
      */
     public long getTimeout(Long channelId, Long channelModelId) {
-        long[] stats = getStats(channelId, channelModelId);
-        long latency = stats[0];
-        int sampleCount = (int) stats[1];
-        // 样本数不足时返回默认超时（60s），避免数据稀疏导致激进的超时窗口
-        if (sampleCount <= SAMPLE_THRESHOLD) {
-            return DEFAULT_TIMEOUT_MS;
-        }
         long maxTimeout = getMaxTimeoutMs();
-        long minTimeout = getMinTimeoutMs();
-        long timeout = Math.min(latency * 3, maxTimeout);
-        return Math.max(timeout, minTimeout);
+        long[] stats = getStats(channelId, channelModelId);
+        long avgLatency = stats[0];
+        int sampleCount = (int) stats[1];
+        // 样本数不足时返回最大超时，避免数据稀疏导致超时窗口过小
+        if (sampleCount < MIN_SAMPLE_COUNT) {
+            return maxTimeout;
+        }
+        long timeout = Math.min(avgLatency * 3, maxTimeout);
+        return Math.max(timeout, getMinTimeoutMs());
     }
 
     /**
@@ -183,7 +184,7 @@ public class LatencyTracker {
     /**
      * 记录一次超时事件
      *
-     * <p>将实际等待的超时时间作为测量值记录到 EMA 中，使平均值逐渐上移，
+     * <p>将实际等待的超时时间作为测量值记录到滑动窗口中，使平均值逐渐上移，
      * 从而在下一次请求时为该模型提供更大的超时窗口。</p>
      *
      * @param channelId      渠道 ID
@@ -209,18 +210,5 @@ public class LatencyTracker {
     /** 获取记录总数（仅用于测试/监控） */
     int size() {
         return map.size();
-    }
-
-    /**
-     * EMA 条目
-     */
-    static class Entry {
-        final double ema;
-        final int sampleCount;
-
-        Entry(double ema, int sampleCount) {
-            this.ema = ema;
-            this.sampleCount = sampleCount;
-        }
     }
 }

@@ -494,3 +494,9 @@ DROP INDEX IF EXISTS idx_request_logs_created_at;
 DROP INDEX IF EXISTS idx_request_logs_created_at_phase;
 
 UPDATE admin_config SET description = '重试/失败请求数据保留时长（小时），超过此时间的失败/重试记录的 request_headers/body 将被清理，0=跟随日志保留天数' WHERE config_key = 'retry_fail_ttl_hours';
+
+-- ========================================
+-- VERSION:v1.31.0
+-- 请求日志新增思考强度字段：请求开始记录客户端值，路由阶段记录实际值
+-- ========================================
+ALTER TABLE request_logs ADD COLUMN reasoning_effort TEXT;

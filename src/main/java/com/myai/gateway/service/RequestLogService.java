@@ -97,6 +97,17 @@ public class RequestLogService {
         }
     }
 
+    /** 记录请求阶段并附带思考强度。 */
+    public void logWithReasoningEffort(String traceId, String apiKeyName, Long gatewayApiKeyId,
+                                       String modelName, String channelModelName, String channelName,
+                                       String phase, String message, int retryIndex, String reasoningEffort) {
+        RequestLog record = buildLogRecord(traceId, apiKeyName, gatewayApiKeyId, modelName,
+                channelModelName, channelName, phase, "pending", message, null, null, retryIndex, 0, 0, 0);
+        record.setReasoningEffort(reasoningEffort);
+        asyncLogWriter.enqueue(record);
+        markRetryIfNeeded(traceId, phase);
+    }
+
     /**
      * 记录请求阶段（默认 retryIndex=0）
      */
@@ -140,6 +151,22 @@ public class RequestLogService {
         asyncLogWriter.enqueue(record);
     }
 
+    /** 记录请求开始并附带客户端思考强度。 */
+    public void logStartWithReasoningEffort(String traceId, String apiKeyName, Long gatewayApiKeyId,
+                                             String modelName, String channelModelName, String channelName,
+                                             String message, int retryIndex, String requestHeaders,
+                                             String requestBody, String reasoningEffort) {
+        if (requestHeaders != null || requestBody != null) {
+            pendingRequestData.put(traceId, new PendingRequestData(requestHeaders, requestBody));
+        }
+        RequestLog record = buildLogRecord(traceId, apiKeyName, gatewayApiKeyId, modelName,
+                channelModelName, channelName, "start", "pending", message, null, null, retryIndex, 0, 0, 0);
+        record.setReasoningEffort(reasoningEffort);
+        record.setRequestHeaders(null);
+        record.setRequestBody(null);
+        asyncLogWriter.enqueue(record);
+    }
+
     /**
      * 记录请求阶段（带响应时间），用于 start/retry/skip 等中间阶段需要展示"该次尝试耗时"的场景
      */
@@ -156,9 +183,18 @@ public class RequestLogService {
     public void logWithResponseTime(String traceId, String apiKeyName, Long gatewayApiKeyId, String modelName,
                                     String channelModelName, String channelName,
                                     String phase, String message, int retryIndex, long responseTimeMs) {
+        logWithResponseTimeAndReasoning(traceId, apiKeyName, gatewayApiKeyId, modelName, channelModelName,
+                channelName, phase, message, retryIndex, responseTimeMs, null);
+    }
+
+    public void logWithResponseTimeAndReasoning(String traceId, String apiKeyName, Long gatewayApiKeyId, String modelName,
+                                    String channelModelName, String channelName,
+                                    String phase, String message, int retryIndex, long responseTimeMs,
+                                    String reasoningEffort) {
         RequestLog record = buildLogRecord(traceId, apiKeyName, gatewayApiKeyId, modelName,
                 channelModelName, channelName, phase, "pending", message, (int) responseTimeMs,
                 null, retryIndex, 0, 0, 0);
+        record.setReasoningEffort(reasoningEffort);
         asyncLogWriter.enqueue(record);
         markRetryIfNeeded(traceId, phase);
 

@@ -43,8 +43,8 @@ public class RelayLogger {
     public Long logOriginalRequest(String traceId, String authHeader, String headersJson, String requestBody) {
         String modelName = extractModelFromBody(requestBody);
         Long gatewayApiKeyId = apiKeyService.resolveIdFromAuthHeader(authHeader);
-        requestLogService.logStart(traceId, null, gatewayApiKeyId, modelName, null, null,
-                "请求开始", 0, headersJson, requestBody);
+        requestLogService.logStartWithReasoningEffort(traceId, null, gatewayApiKeyId, modelName, null, null,
+                "请求开始", 0, headersJson, requestBody, extractReasoningEffortFromBody(requestBody));
         return gatewayApiKeyId;
     }
 
@@ -53,7 +53,7 @@ public class RelayLogger {
      */
     public void logPhase(String traceId, Long gatewayApiKeyId, RoutingCandidate candidate,
                           InternalRequest req, String phase, String message, int retryIndex) {
-        logPhase(traceId, gatewayApiKeyId, candidate, req, phase, message, retryIndex, null);
+        logPhase(traceId, gatewayApiKeyId, candidate, req, phase, message, retryIndex, null, null);
     }
 
     /**
@@ -61,22 +61,43 @@ public class RelayLogger {
      */
     public void logPhase(String traceId, Long gatewayApiKeyId, RoutingCandidate candidate,
                           InternalRequest req, String phase, String message, int retryIndex, Long responseTimeMs) {
+        logPhase(traceId, gatewayApiKeyId, candidate, req, phase, message, retryIndex, responseTimeMs, null);
+    }
+
+    /**
+     * 记录请求阶段日志（附带实际使用的思考强度）
+     */
+    public void logPhase(String traceId, Long gatewayApiKeyId, RoutingCandidate candidate,
+                          InternalRequest req, String phase, String message, int retryIndex,
+                          String reasoningEffort) {
+        logPhase(traceId, gatewayApiKeyId, candidate, req, phase, message, retryIndex, null, reasoningEffort);
+    }
+
+    private void logPhase(String traceId, Long gatewayApiKeyId, RoutingCandidate candidate,
+                           InternalRequest req, String phase, String message, int retryIndex,
+                           Long responseTimeMs, String reasoningEffort) {
         String apiKeyName = candidate != null ? candidate.getChannelApiKey().getKeyName() : null;
         String modelName = req != null ? req.getModel() : null;
         String channelModelName = candidate != null ? candidate.getChannelModel().getModelName() : null;
         String channelName = candidate != null ? candidate.getChannel().getName() : null;
         if (responseTimeMs != null) {
-            requestLogService.logWithResponseTime(traceId, apiKeyName, gatewayApiKeyId, modelName,
-                    channelModelName, channelName, phase, message, retryIndex, responseTimeMs);
+            requestLogService.logWithResponseTimeAndReasoning(traceId, apiKeyName, gatewayApiKeyId, modelName,
+                    channelModelName, channelName, phase, message, retryIndex, responseTimeMs, reasoningEffort);
         } else {
-            requestLogService.log(traceId, apiKeyName, gatewayApiKeyId, modelName, channelModelName,
-                    channelName, phase, message, retryIndex);
+            requestLogService.logWithReasoningEffort(traceId, apiKeyName, gatewayApiKeyId, modelName, channelModelName,
+                    channelName, phase, message, retryIndex, reasoningEffort);
         }
     }
 
     /**
      * 从请求体中提取 model 字段（使用正则避免全量 JSON 解析）
      */
+    public String extractReasoningEffortFromBody(String requestBody) {
+        if (requestBody == null || requestBody.isBlank()) return null;
+        Matcher m = Pattern.compile("\\\"reasoning_effort\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"").matcher(requestBody);
+        return m.find() ? m.group(1) : null;
+    }
+
     public String extractModelFromBody(String requestBody) {
         if (requestBody == null || requestBody.isBlank()) return null;
         Matcher m = MODEL_NAME_PATTERN.matcher(requestBody);

@@ -10,6 +10,8 @@ export interface RequestLog {
   phase: string
   status?: string
   message?: string
+  /** 请求开始为客户端传入值，路由阶段为实际使用值 */
+  reasoningEffort?: string
   retryIndex?: number
   responseTimeMs?: number
   requestHeaders?: string
