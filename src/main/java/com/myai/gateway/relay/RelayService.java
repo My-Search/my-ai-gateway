@@ -141,33 +141,52 @@ public class RelayService {
     // ========== 非流式入口 ==========
 
     /**
-     * OpenAI 兼容：非流式聊天补全
+     * OpenAI 兼容：非流式聊天补全（仅鉴权头，无完整请求头快照）
      */
     public Mono<String> chatCompletions(String authHeader, String requestBody) {
-        return relayNonStream("openai", authHeader,
-                relayLogger.buildOpenaiHeadersJson(authHeader), requestBody);
+        return chatCompletions(synthesizeClientRequestInfo(authHeader), requestBody);
+    }
+
+    /**
+     * OpenAI 兼容：非流式聊天补全
+     *
+     * @param requestInfo 客户端原始请求信息（完整请求头快照等）
+     */
+    public Mono<String> chatCompletions(ClientRequestInfo requestInfo, String requestBody) {
+        return relayNonStream("openai", requestInfo,
+                relayLogger.buildFullHeadersJson(requestInfo), requestBody);
+    }
+
+    /**
+     * Anthropic 兼容：非流式消息（仅鉴权头，无完整请求头快照）
+     */
+    public Mono<String> messages(String apiKeyHeader, String requestBody, String anthropicVersion) {
+        return messages(synthesizeClientRequestInfo(apiKeyHeader), requestBody, anthropicVersion);
     }
 
     /**
      * Anthropic 兼容：非流式消息
+     *
+     * @param requestInfo 客户端原始请求信息（完整请求头快照等）
      */
-    public Mono<String> messages(String apiKeyHeader, String requestBody, String anthropicVersion) {
-        return relayNonStream("anthropic", apiKeyHeader,
-                relayLogger.buildAnthropicHeadersJson(apiKeyHeader, anthropicVersion), requestBody);
+    public Mono<String> messages(ClientRequestInfo requestInfo, String requestBody, String anthropicVersion) {
+        return relayNonStream("anthropic", requestInfo,
+                relayLogger.buildFullHeadersJson(requestInfo), requestBody);
     }
 
     /**
      * 非流式中继内部实现（统一 OpenAI / Anthropic 协议入口）
      * <p>主流程：记录原始请求 -> 鉴权 -> 解析请求 -> 委托 CandidateRouter 执行路由</p>
      *
-     * @param protocol    协议类型："openai" 或 "anthropic"
-     * @param authHeader  鉴权头原值（透传给下游 CandidateRouter）
-     * @param headersJson 记录日志用的脱敏请求头 JSON
-     * @param requestBody 原始请求体
+     * @param protocol      协议类型："openai" 或 "anthropic"
+     * @param requestInfo   客户端原始请求信息（含鉴权头原值，透传给下游 CandidateRouter）
+     * @param headersJson   记录日志用的脱敏请求头 JSON
+     * @param requestBody   原始请求体
      */
-    private Mono<String> relayNonStream(String protocol, String authHeader, String headersJson, String requestBody) {
+    private Mono<String> relayNonStream(String protocol, ClientRequestInfo requestInfo,
+                                        String headersJson, String requestBody) {
         String traceId = requestLogService.startTrace();
-        Long gatewayApiKeyId = relayLogger.logOriginalRequest(traceId, authHeader, headersJson, requestBody);
+        Long gatewayApiKeyId = relayLogger.logOriginalRequest(traceId, requestInfo.authHeader(), headersJson, requestBody);
         if (gatewayApiKeyId == null) {
             requestLogService.logComplete(traceId, null, null, null, null, null,
                     "fail", "auth", "无效或缺失的 API Key", 0, 0);
@@ -182,26 +201,44 @@ public class RelayService {
                     return req;
                 })
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .flatMap(req -> candidateRouter.executeRelay(traceId, authHeader, gatewayApiKeyId, req, protocol,
-                        this::callProviderNonStream));
+                .flatMap(req -> candidateRouter.executeRelay(traceId, requestInfo.authHeader(), gatewayApiKeyId, req,
+                        protocol, this::callProviderNonStream));
     }
 
     // ========== 流式入口 ==========
 
     /**
-     * OpenAI 兼容：流式聊天补全
+     * OpenAI 兼容：流式聊天补全（仅鉴权头，无完整请求头快照）
      */
     public SseEmitter chatCompletionsStream(String authHeader, String requestBody, boolean internalClient) {
-        return relayStream("openai", authHeader,
-                relayLogger.buildOpenaiHeadersJson(authHeader), requestBody, internalClient);
+        return chatCompletionsStream(synthesizeClientRequestInfo(authHeader), requestBody, internalClient);
+    }
+
+    /**
+     * OpenAI 兼容：流式聊天补全
+     *
+     * @param requestInfo 客户端原始请求信息（完整请求头快照等）
+     */
+    public SseEmitter chatCompletionsStream(ClientRequestInfo requestInfo, String requestBody, boolean internalClient) {
+        return relayStream("openai", requestInfo,
+                relayLogger.buildFullHeadersJson(requestInfo), requestBody, internalClient);
+    }
+
+    /**
+     * Anthropic 兼容：流式消息（仅鉴权头，无完整请求头快照）
+     */
+    public SseEmitter messagesStream(String apiKeyHeader, String requestBody, String anthropicVersion, boolean internalClient) {
+        return messagesStream(synthesizeClientRequestInfo(apiKeyHeader), requestBody, anthropicVersion, internalClient);
     }
 
     /**
      * Anthropic 兼容：流式消息
+     *
+     * @param requestInfo 客户端原始请求信息（完整请求头快照等）
      */
-    public SseEmitter messagesStream(String apiKeyHeader, String requestBody, String anthropicVersion, boolean internalClient) {
-        return relayStream("anthropic", apiKeyHeader,
-                relayLogger.buildAnthropicHeadersJson(apiKeyHeader, anthropicVersion), requestBody, internalClient);
+    public SseEmitter messagesStream(ClientRequestInfo requestInfo, String requestBody, String anthropicVersion, boolean internalClient) {
+        return relayStream("anthropic", requestInfo,
+                relayLogger.buildFullHeadersJson(requestInfo), requestBody, internalClient);
     }
 
     /**
@@ -210,16 +247,16 @@ public class RelayService {
      * <p>资源管理：emitter 完成/超时时自动清理 Disposable 和流状态</p>
      *
      * @param protocol      协议类型："openai" 或 "anthropic"
-     * @param authHeader    鉴权头原值（透传给下游 CandidateRouter）
+     * @param requestInfo   客户端原始请求信息（含鉴权头原值，透传给下游 CandidateRouter）
      * @param headersJson   记录日志用的脱敏请求头 JSON
      * @param requestBody   原始请求体
      * @param internalClient 是否为内部客户端调用
      */
-    private SseEmitter relayStream(String protocol, String authHeader, String headersJson,
+    private SseEmitter relayStream(String protocol, ClientRequestInfo requestInfo, String headersJson,
                                    String requestBody, boolean internalClient) {
         SseEmitter emitter = new SseEmitter(0L);
         String traceId = requestLogService.startTrace();
-        Long gatewayApiKeyId = relayLogger.logOriginalRequest(traceId, authHeader, headersJson, requestBody);
+        Long gatewayApiKeyId = relayLogger.logOriginalRequest(traceId, requestInfo.authHeader(), headersJson, requestBody);
         if (gatewayApiKeyId == null) {
             requestLogService.logComplete(traceId, null, null, null, null, null,
                     "fail", "auth", "无效或缺失的 API Key", 0, 0);
@@ -253,8 +290,8 @@ public class RelayService {
                     return req;
                 })
                 .subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic())
-                .flatMapMany(req -> candidateRouter.executeStreamRelay(traceId, authHeader, gatewayApiKeyId,
-                        req, protocol, internalClient, finalStateLogged, new ProviderInvoker() {
+                .flatMapMany(req -> candidateRouter.executeStreamRelay(traceId, requestInfo.authHeader(),
+                        gatewayApiKeyId, req, protocol, internalClient, finalStateLogged, new ProviderInvoker() {
                             @Override
                             public Mono<String> invokeNonStream(String h, InternalRequest r, RoutingCandidate c, String p, String t) {
                                 throw new UnsupportedOperationException("Non-stream not supported in stream relay");
@@ -278,6 +315,18 @@ public class RelayService {
     }
 
     // ========== 工具方法 ==========
+
+    /**
+     * 仅持有鉴权头时合成请求信息载体（内部调用方 / 测试兼容）
+     */
+    private static ClientRequestInfo synthesizeClientRequestInfo(String authHeader) {
+        java.util.Map<String, String> headers = new java.util.LinkedHashMap<>();
+        if (authHeader != null && !authHeader.isBlank()) {
+            headers.put("authorization", authHeader);
+        }
+        headers.put("content-type", "application/json");
+        return new ClientRequestInfo(headers, null, null, null);
+    }
 
     /**
      * 渠道模型快速测试结果

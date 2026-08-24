@@ -1,5 +1,7 @@
 package com.myai.gateway.relay;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.myai.gateway.entity.ApiKey;
 import com.myai.gateway.relay.balancer.RoutingCandidate;
 import com.myai.gateway.relay.transformer.InternalRequest;
@@ -9,6 +11,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -104,30 +109,55 @@ public class RelayLogger {
         return m.find() ? m.group(1) : null;
     }
 
+    /** 敏感请求头名单：这些头的值在日志中做掩码处理，头名保留 */
+    private static final Set<String> SENSITIVE_HEADERS = Set.of(
+            "authorization", "x-api-key", "proxy-authorization", "cookie", "set-cookie");
+
+    private static final ObjectMapper HEADERS_JSON_MAPPER = new ObjectMapper();
+
     /**
-     * 构建 OpenAI 兼容格式的请求头 JSON（对 Authorization 做掩码处理）
+     * 根据客户端真实请求头快照构建完整的原始请求头 JSON（保留全部请求头，敏感值掩码）
+     * <p>同时附加 method / path / clientIp 等基础请求信息，
+     * 保证在日志中查看原始请求数据时能看到完整请求信息。</p>
      */
-    public String buildOpenaiHeadersJson(String authHeader) {
-        if (authHeader == null || authHeader.isBlank()) {
-            return "{\"Content-Type\": \"application/json\"}";
+    public String buildFullHeadersJson(ClientRequestInfo info) {
+        try {
+            ObjectNode root = HEADERS_JSON_MAPPER.createObjectNode();
+            Map<String, String> sorted = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            if (info != null && info.headers() != null) {
+                sorted.putAll(info.headers());
+            }
+            ObjectNode headersNode = root.putObject("headers");
+            for (Map.Entry<String, String> entry : sorted.entrySet()) {
+                headersNode.put(entry.getKey(), maskHeaderValue(entry.getKey(), entry.getValue()));
+            }
+            root.put("method", info != null ? info.method() : null);
+            root.put("path", info != null ? info.path() : null);
+            root.put("clientIp", info != null ? info.clientIp() : null);
+            return HEADERS_JSON_MAPPER.writeValueAsString(root);
+        } catch (Exception e) {
+            log.warn("构建原始请求头 JSON 失败: {}", e.getMessage());
+            return "{}";
         }
-        String masked;
-        if (authHeader.startsWith("Bearer ")) {
-            String token = authHeader.substring(7);
-            masked = "Bearer " + maskBearerToken(token);
-        } else {
-            masked = maskBearerToken(authHeader);
-        }
-        return "{\"Authorization\": \"" + masked + "\", \"Content-Type\": \"application/json\"}";
     }
 
     /**
-     * 构建 Anthropic 兼容格式的请求头 JSON（对 x-api-key 做掩码处理）
+     * 敏感请求头值掩码（Authorization / x-api-key 等），其余请求头原样保留
      */
-    public String buildAnthropicHeadersJson(String apiKeyHeader, String anthropicVersion) {
-        String masked = maskBearerToken(apiKeyHeader);
-        return "{\"x-api-key\": \"" + masked + "\", \"anthropic-version\": \"" + anthropicVersion
-                + "\", \"Content-Type\": \"application/json\"}";
+    private String maskHeaderValue(String name, String value) {
+        if (value == null) return null;
+        if (name != null && SENSITIVE_HEADERS.contains(name.toLowerCase())) {
+            return maskCredentialValue(value);
+        }
+        return value;
+    }
+
+    private String maskCredentialValue(String value) {
+        if (value.isBlank()) return value;
+        if (value.startsWith("Bearer ")) {
+            return "Bearer " + maskBearerToken(value.substring(7));
+        }
+        return maskBearerToken(value);
     }
 
     /**

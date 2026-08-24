@@ -2,7 +2,9 @@ package com.myai.gateway.controller.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myai.gateway.relay.ClientRequestInfo;
 import com.myai.gateway.relay.RelayService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,22 +59,18 @@ public class AnthropicCompatibleController {
      */
     @PostMapping(value = "/messages", consumes = MediaType.APPLICATION_JSON_VALUE, produces = {"application/json;charset=UTF-8", "text/event-stream;charset=UTF-8"})
     public Object messages(
-            @RequestHeader(value = "x-api-key", required = false) String xApiKey,
-            @RequestHeader(value = "Authorization", required = false) String authorization,
             @RequestHeader(value = "anthropic-version", defaultValue = "2023-06-01") String anthropicVersion,
             @RequestHeader(value = "anthropic-beta", required = false) String anthropicBeta,
             @RequestHeader(value = "X-Internal-Client", required = false) String internalClientHeader,
             @RequestBody String requestBody,
+            HttpServletRequest request,
             HttpServletResponse response) {
+        ClientRequestInfo requestInfo = ClientRequestInfo.from(request);
 
         // 兼容两种鉴权头：x-api-key（Anthropic 标准）与 Authorization: Bearer（OAuth / Claude Code 默认）
         // 优先使用 x-api-key；二者皆缺失时抛出异常，交由 GlobalExceptionHandler 返回 Anthropic 格式错误
-        String apiKey;
-        if (xApiKey != null && !xApiKey.isBlank()) {
-            apiKey = xApiKey;
-        } else if (authorization != null && !authorization.isBlank()) {
-            apiKey = authorization;
-        } else {
+        String apiKey = requestInfo.authHeader();
+        if (apiKey == null || apiKey.isBlank()) {
             throw new MissingCredentialException(
                     "Authentication required. Provide either 'x-api-key' header or 'Authorization: Bearer' header.");
         }
@@ -84,11 +82,11 @@ public class AnthropicCompatibleController {
             response.setCharacterEncoding("UTF-8");
             // Playground 等内部客户端调用时，发送 _gateway_meta 和 _routing_progress 事件
             boolean internalClient = "playground".equals(internalClientHeader);
-            return relayService.messagesStream(apiKey, requestBody, anthropicVersion, internalClient);
+            return relayService.messagesStream(requestInfo, requestBody, anthropicVersion, internalClient);
         }
 
         // 非流式
-        return relayService.messages(apiKey, requestBody, anthropicVersion)
+        return relayService.messages(requestInfo, requestBody, anthropicVersion)
                 .map(resp -> {
                     if (isErrorResponse(resp)) {
                         int statusCode = extractAnthropicErrorCode(resp);

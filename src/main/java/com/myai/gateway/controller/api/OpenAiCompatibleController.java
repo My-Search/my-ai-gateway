@@ -5,8 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.myai.gateway.entity.Model;
+import com.myai.gateway.relay.ClientRequestInfo;
 import com.myai.gateway.relay.RelayService;
 import com.myai.gateway.service.ModelService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,7 +61,9 @@ public class OpenAiCompatibleController {
             @RequestHeader("Authorization") String authHeader,
             @RequestHeader(value = "X-Internal-Client", required = false) String internalClientHeader,
             @RequestBody String requestBody,
+            HttpServletRequest request,
             HttpServletResponse response) {
+        ClientRequestInfo requestInfo = ClientRequestInfo.from(request);
 
         // 检查是否为流式请求
         if (isStreamRequest(requestBody)) {
@@ -68,11 +72,11 @@ public class OpenAiCompatibleController {
             response.setCharacterEncoding("UTF-8");
             // Playground 等内部客户端调用时，发送 _gateway_meta 和 _routing_progress 事件
             boolean internalClient = "playground".equals(internalClientHeader);
-            return relayService.chatCompletionsStream(authHeader, requestBody, internalClient);
+            return relayService.chatCompletionsStream(requestInfo, requestBody, internalClient);
         }
 
         // 非流式
-        return relayService.chatCompletions(authHeader, requestBody)
+        return relayService.chatCompletions(requestInfo, requestBody)
                 .map(resp -> {
                     if (isErrorResponse(resp)) {
                         int statusCode = extractErrorCode(resp);
@@ -125,9 +129,10 @@ public class OpenAiCompatibleController {
     @PostMapping(value = "/embeddings", consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<String>> embeddings(
             @RequestHeader("Authorization") String authHeader,
-            @RequestBody String requestBody) {
+            @RequestBody String requestBody,
+            HttpServletRequest request) {
         // embeddings 使用 chatCompletions 中继流程（会路由到对应模型）
-        return relayService.chatCompletions(authHeader, requestBody)
+        return relayService.chatCompletions(ClientRequestInfo.from(request), requestBody)
                 .map(response -> {
                     if (isErrorResponse(response)) {
                         int statusCode = extractErrorCode(response);
