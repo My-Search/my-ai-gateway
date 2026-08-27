@@ -37,6 +37,9 @@ public class Channel {
     /** 模型刷新模式：1-自动刷新（定时任务按系统配置间隔拉取） 0-不刷新 */
     private Integer modelRefreshEnabled;
 
+    /** 自定义请求头，JSON 键值对格式，如 {"X-Custom-Header": "value"} */
+    private String customHeaders;
+
     @TableField(fill = FieldFill.INSERT)
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss'Z'")
     private LocalDateTime createdAt;
@@ -87,6 +90,9 @@ public class Channel {
 
     public Integer getModelRefreshEnabled() { return modelRefreshEnabled; }
     public void setModelRefreshEnabled(Integer modelRefreshEnabled) { this.modelRefreshEnabled = modelRefreshEnabled; }
+
+    public String getCustomHeaders() { return customHeaders; }
+    public void setCustomHeaders(String customHeaders) { this.customHeaders = customHeaders; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

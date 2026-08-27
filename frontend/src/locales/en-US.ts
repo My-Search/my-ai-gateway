@@ -229,6 +229,16 @@ export default {
   'channel.form.saveFailed': 'Save failed',
   'channel.form.addedModels': 'Fetched {count} models, added {added} new',
   'channel.form.dragSort': 'Drag to sort',
+  'channel.form.customHeaders': 'Custom Request Headers',
+  'channel.form.customHeadersHint': 'Add custom HTTP headers sent with requests to the upstream API; can override default headers (e.g. Authorization)',
+  'channel.form.noHeaders': 'No custom headers',
+  'channel.form.addHeader': 'Add Header',
+  'channel.form.headerNameLabel': 'Header Name *',
+  'channel.form.headerNamePlaceholder': 'e.g. X-Custom-Header',
+  'channel.form.headerValueLabel': 'Header Value',
+  'channel.form.headerValuePlaceholder': 'Enter header value',
+  'channel.form.inputHeaderName': 'Please enter header name',
+  'channel.form.advancedSettings': 'Advanced Settings',
 
   /* ========== Channel Models ========== */
   'channel.models.title': 'Channel Models - {name}',

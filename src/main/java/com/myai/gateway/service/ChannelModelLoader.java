@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myai.gateway.entity.Channel;
+import com.myai.gateway.entity.ChannelHeaders;
 import com.myai.gateway.entity.ChannelModel;
 import com.myai.gateway.entity.ModelChannelRel;
 import com.myai.gateway.mapper.ChannelMapper;
@@ -272,6 +273,12 @@ public class ChannelModelLoader {
                 requestBuilder.header("anthropic-version", "2023-06-01");
             } else {
                 requestBuilder.header("Authorization", "Bearer " + channel.getApiKey());
+            }
+
+            // 追加自定义请求头
+            Map<String, String> extraHeaders = ChannelHeaders.parse(channel.getCustomHeaders());
+            if (extraHeaders != null) {
+                extraHeaders.forEach(requestBuilder::header);
             }
 
             HttpRequest request = requestBuilder.GET().build();

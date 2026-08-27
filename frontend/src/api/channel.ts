@@ -9,6 +9,8 @@ export interface Channel {
   enabled: number
   /** 模型刷新模式：1-自动刷新 0-不刷新，默认 1 */
   modelRefreshEnabled?: number
+  /** 自定义请求头 JSON 键值对 */
+  customHeaders?: string
   createdAt?: string
   updatedAt?: string
   /** 启用模型数（列表接口返回） */

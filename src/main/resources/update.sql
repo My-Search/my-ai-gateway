@@ -500,3 +500,9 @@ UPDATE admin_config SET description = '重试/失败请求数据保留时长（�
 -- 请求日志新增思考强度字段：请求开始记录客户端值，路由阶段记录实际值
 -- ========================================
 ALTER TABLE request_logs ADD COLUMN reasoning_effort TEXT;
+
+-- ========================================
+-- VERSION:v1.33.0
+-- 渠道支持自定义请求头：channels 新增 custom_headers TEXT 字段（JSON 键值对）
+-- ========================================
+ALTER TABLE channels ADD COLUMN custom_headers TEXT;

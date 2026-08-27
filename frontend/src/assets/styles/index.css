@@ -356,6 +356,17 @@ a {
   box-shadow: none !important;
 }
 
+.btn-outline {
+  background: transparent;
+  color: var(--accent-blue);
+  border-color: var(--accent-blue);
+}
+
+.btn-outline:hover {
+  background: color-mix(in srgb, var(--accent-blue) 8%, transparent);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent-blue) 15%, transparent);
+}
+
 /* ── Tables (Modern) ──
  * Clean header with subtle background, row hover with highlight,
  * consistent vertical rhythm.

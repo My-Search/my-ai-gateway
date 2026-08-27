@@ -356,6 +356,7 @@ public class RelayService {
         com.myai.gateway.relay.balancer.RoutingCandidate dummyCandidate =
                 new com.myai.gateway.relay.balancer.RoutingCandidate(null, channel, channelModel, apiKey);
         Map<String, String> headers = candidateRouter.buildProviderHeaders(provider, apiKey.getApiKey(), null);
+        ChannelHeaders.mergeInto(channel.getCustomHeaders(), headers);
 
         String requestBody;
         try {

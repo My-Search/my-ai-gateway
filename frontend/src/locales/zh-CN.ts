@@ -229,6 +229,16 @@ export default {
   'channel.form.saveFailed': '保存失败',
   'channel.form.addedModels': '获取到 {count} 个模型，新增 {added} 个',
   'channel.form.dragSort': '拖拽排序',
+  'channel.form.customHeaders': '自定义请求头',
+  'channel.form.customHeadersHint': '添加自定义 HTTP 请求头，将随请求发送到上游 API；可覆盖默认请求头（如 Authorization）',
+  'channel.form.noHeaders': '暂无自定义请求头',
+  'channel.form.addHeader': '添加请求头',
+  'channel.form.headerNameLabel': '请求头名称 *',
+  'channel.form.headerNamePlaceholder': '如 X-Custom-Header',
+  'channel.form.headerValueLabel': '请求头值',
+  'channel.form.headerValuePlaceholder': '请输入请求头值',
+  'channel.form.inputHeaderName': '请输入请求头名称',
+  'channel.form.advancedSettings': '高级设置',
 
   /* ========== Channel Models ========== */
   'channel.models.title': '渠道模型 - {name}',

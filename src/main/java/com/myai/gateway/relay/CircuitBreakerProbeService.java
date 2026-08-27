@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.myai.gateway.entity.Channel;
+import com.myai.gateway.entity.ChannelHeaders;
 import com.myai.gateway.entity.ChannelApiKey;
 import com.myai.gateway.entity.ChannelModel;
 import org.slf4j.Logger;
@@ -142,6 +143,7 @@ public class CircuitBreakerProbeService {
             headers.put("Authorization", "Bearer " + key);
         }
         headers.put("Content-Type", "application/json");
+        ChannelHeaders.mergeInto(channel.getCustomHeaders(), headers);
         return headers;
     }
 }

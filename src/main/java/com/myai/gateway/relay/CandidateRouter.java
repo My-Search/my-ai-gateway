@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myai.gateway.config.LocalCacheService;
 import com.myai.gateway.entity.Channel;
+import com.myai.gateway.entity.ChannelHeaders;
 import com.myai.gateway.observability.RelayMetrics;
 import com.myai.gateway.relay.balancer.LoadBalancer;
 import com.myai.gateway.service.CircuitBreakerStateChangedEvent;
@@ -587,6 +588,7 @@ public class CandidateRouter {
         String endpoint = buildEndpoint(candidate, provider);
         String apiKey = candidate.getChannelApiKey().getApiKey();
         Map<String, String> headers = buildProviderHeaders(provider, apiKey, authHeader);
+        ChannelHeaders.mergeInto(candidate.getChannel().getCustomHeaders(), headers);
         String providerReqBody = buildProviderRequestBody(req, candidate, provider);
         log.debug("非流式调用上游: endpoint={}, provider={}, channel={}, keyId={}, apiKeyMasked={}",
                 endpoint, provider, candidate.getChannel().getName(),
@@ -644,6 +646,7 @@ public class CandidateRouter {
         String endpoint = buildEndpoint(candidate, provider);
         String apiKey = candidate.getChannelApiKey().getApiKey();
         Map<String, String> headers = buildProviderHeaders(provider, apiKey, authHeader);
+        ChannelHeaders.mergeInto(candidate.getChannel().getCustomHeaders(), headers);
         String providerReqBody = buildProviderRequestBody(req, candidate, provider);
         log.debug("流式调用上游: endpoint={}, provider={}, channel={}, keyId={}, apiKeyMasked={}",
                 endpoint, provider, candidate.getChannel().getName(),

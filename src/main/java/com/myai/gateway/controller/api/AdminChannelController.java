@@ -119,6 +119,7 @@ public class AdminChannelController {
             channel.setEnabled(body.get("enabled") != null ? Integer.parseInt(body.get("enabled").toString()) : 1);
             Integer modelRefreshEnabled = extractModelRefreshEnabled(body);
             channel.setModelRefreshEnabled(modelRefreshEnabled != null ? modelRefreshEnabled : 1);
+            applyCustomHeaders(channel, body);
 
             String manualModels = body.get("manualModels") != null ? body.get("manualModels").toString() : "[]";
             String apiKeysJson = body.get("apiKeysJson") != null ? body.get("apiKeysJson").toString() : "[]";
@@ -166,6 +167,7 @@ public class AdminChannelController {
             if (modelRefreshEnabled != null) {
                 channel.setModelRefreshEnabled(modelRefreshEnabled);
             }
+            applyCustomHeaders(channel, body);
 
             String manualModels = body.get("manualModels") != null ? body.get("manualModels").toString() : null;
             String apiKeysJson = body.get("apiKeysJson") != null ? body.get("apiKeysJson").toString() : null;
@@ -462,6 +464,12 @@ public class AdminChannelController {
             v = body.get("model_refresh_enabled");
         }
         return v != null ? Integer.parseInt(v.toString()) : null;
+    }
+
+    private void applyCustomHeaders(Channel channel, Map<String, Object> body) {
+        if (body.containsKey("customHeaders")) {
+            channel.setCustomHeaders(body.get("customHeaders") != null ? body.get("customHeaders").toString() : null);
+        }
     }
 
     private List<ChannelApiKey> parseApiKeysJson(String json) {

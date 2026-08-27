@@ -53,7 +53,7 @@
             {{ t('channel.form.noKeys') }}
           </div>
         </div>
-        <button type="button" class="btn btn-sm btn-primary" style="margin-top:8px;" @click="openApiKeyDialog">
+        <button type="button" class="btn btn-sm btn-outline" style="margin-top:8px;" @click="openApiKeyDialog">
           <SvgIcon name="plus" :size="14" /> {{ t('channel.form.addKey') }}
         </button>
       </div>
@@ -82,7 +82,7 @@
           <button type="button" class="btn btn-success btn-sm" :disabled="fetchLoading" @click="doFetchModels">
             <SvgIcon name="refresh" :size="14" /> {{ fetchLoading ? t('channel.form.fetching') : t('channel.form.fetchModels') }}
           </button>
-          <button type="button" class="btn btn-primary btn-sm" @click="showAddModel = true">
+          <button type="button" class="btn btn-outline btn-sm" @click="showAddModel = true">
             <SvgIcon name="plus" :size="14" /> {{ t('channel.form.manualAdd') }}
           </button>
           <div class="toolbar-right">
@@ -104,6 +104,34 @@
           <span v-else class="empty-hint">{{ t('channel.list.noModels') }}</span>
         </div>
         <div class="form-hint">{{ t('channel.form.modelHint') }}</div>
+      </div>
+
+      <!-- Advanced Settings -->
+      <div class="advanced-section">
+        <button type="button" class="advanced-toggle" @click="showAdvanced = !showAdvanced">
+          <SvgIcon name="settings" :size="14" />
+          <span>{{ t('channel.form.advancedSettings') }}</span>
+          <SvgIcon :name="showAdvanced ? 'chevron-up' : 'chevron-down'" :size="14" class="toggle-icon" :class="{ '_open': showAdvanced }" />
+        </button>
+        <div v-show="showAdvanced" class="advanced-body">
+          <div class="form-group">
+            <label>{{ t('channel.form.customHeaders') }}</label>
+            <div class="form-hint">{{ t('channel.form.customHeadersHint') }}</div>
+            <div class="custom-headers-list">
+              <div v-for="(h, idx) in customHeaders" :key="idx" class="custom-header-item">
+                <input v-model="h.key" class="form-control form-control-sm" :placeholder="t('channel.form.headerNamePlaceholder')" style="flex:1;min-width:0;" />
+                <input v-model="h.value" class="form-control form-control-sm" :placeholder="t('channel.form.headerValuePlaceholder')" style="flex:1;min-width:0;" />
+                <button type="button" class="btn btn-sm btn-danger" @click="removeHeader(idx)"><SvgIcon name="trash" :size="14" /></button>
+              </div>
+              <div v-if="!customHeaders.length" style="color:var(--text-muted);font-size:13px;padding:8px 0;">
+                {{ t('channel.form.noHeaders') }}
+              </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline" style="margin-top:8px;" @click="addHeader">
+              <SvgIcon name="plus" :size="14" /> {{ t('channel.form.addHeader') }}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div style="display:flex;gap:8px;margin-top:24px;">
@@ -188,6 +216,7 @@ const isEdit = computed(() => !!route.params.id)
 const saving = ref(false)
 const fetchLoading = ref(false)
 const showAddModel = ref(false)
+const showAdvanced = ref(false)
 const newModelName = ref('')
 const newDisplayName = ref('')
 const apiKeysListRef = ref<HTMLElement>()
@@ -294,6 +323,7 @@ const form = ref<Partial<Channel>>({
 })
 const apiKeys = ref<ChannelApiKey[]>([])
 const models = ref<ModelItem[]>([])
+const customHeaders = ref<{ key: string; value: string }[]>([])
 
 // 需要 deep 监听 apiKeys：新增/删除走 push/splice（引用不变），非 deep 无法触发重建。
 // 拖拽 onEnd 触发的数组更新用标记位跳过重建（onEnd 本身已是本地 DOM 操作）。
@@ -318,6 +348,14 @@ onMounted(async () => {
         modelName: m.modelName,
         displayName: m.displayName || m.modelName
       }))
+      // 解析自定义请求头 JSON
+      if (data.channel.customHeaders) {
+        try {
+          const parsed = JSON.parse(data.channel.customHeaders)
+          customHeaders.value = Object.entries(parsed).map(([key, value]) => ({ key, value: String(value) }))
+        } catch { console.warn('Failed to parse channel customHeaders JSON') }
+      }
+      if (customHeaders.value.length) showAdvanced.value = true
     } catch (e: any) {
       open({ title: t('error.loadFailed'), message: e.message })
       router.push('/admin/channel/list')
@@ -448,6 +486,14 @@ function clearAllModels() {
   })
 }
 
+function addHeader() {
+  customHeaders.value.push({ key: '', value: '' })
+}
+
+function removeHeader(index: number) {
+  customHeaders.value.splice(index, 1)
+}
+
 async function handleSave() {
   saving.value = true
   try {
@@ -467,7 +513,10 @@ async function handleSave() {
         apiKey: k.apiKey,
         enabled: k.enabled,
         sortOrder: k.sortOrder
-      })))
+      }))),
+      customHeaders: JSON.stringify(Object.fromEntries(
+        customHeaders.value.filter(h => h.key.trim()).map(h => [h.key.trim(), h.value])
+      ))
     }
 
     if (isEdit.value) {
@@ -568,6 +617,38 @@ async function handleSave() {
   will-change: transform;
   transform: translateZ(0);
 }
+
+.custom-headers-list {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 12px;
+}
+.custom-header-item {
+  display: flex; align-items: center; gap: 8px;
+}
+.custom-header-item .form-control-sm {
+  font-size: 13px; padding: 5px 8px;
+}
+
+.advanced-section {
+  margin-top: 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.advanced-toggle {
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; padding: 10px 14px;
+  background: var(--bg-secondary);
+  border: none; cursor: pointer;
+  font-size: 13px; font-weight: 500;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+.advanced-toggle:hover { background: var(--bg-hover); }
+.toggle-icon { margin-left: auto; transition: transform 0.2s; }
+.advanced-body {
+  padding: 14px;
+}
+.advanced-body .form-group:last-child { margin-bottom: 0; }
 
 @media (max-width: 768px) {
   .api-key-masked { display: none; }
