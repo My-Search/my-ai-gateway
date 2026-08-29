@@ -11,6 +11,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 模型关联管理 - 负责渠道关联的增删改操作
@@ -71,21 +73,23 @@ public class ModelChannelRelManager {
     @Transactional
     public int removeChannelRels(List<Long> relIds) {
         if (relIds == null || relIds.isEmpty()) return 0;
-        List<ModelChannelRel> rels = relMapper.selectBatchIds(relIds);
-        if (rels.size() != relIds.size()) {
-            java.util.Set<Long> foundIds = rels.stream()
+        // 去重：重复 ID 会使查库结果数与请求数不等，误报"关联不存在"
+        List<Long> ids = relIds.stream().distinct().collect(Collectors.toList());
+        List<ModelChannelRel> rels = relMapper.selectBatchIds(ids);
+        if (rels.size() != ids.size()) {
+            Set<Long> foundIds = rels.stream()
                     .map(ModelChannelRel::getId)
-                    .collect(java.util.stream.Collectors.toSet());
-            String missing = relIds.stream()
+                    .collect(Collectors.toSet());
+            String missing = ids.stream()
                     .filter(id -> !foundIds.contains(id))
                     .map(String::valueOf)
-                    .collect(java.util.stream.Collectors.joining(","));
-            throw new RuntimeException("关联不存在: id=" + missing);
+                    .collect(Collectors.joining(","));
+            throw new IllegalArgumentException("关联不存在: id=" + missing);
         }
         rels.forEach(rel -> assertSelfAddMode(rel.getModelId()));
-        int deleted = relMapper.deleteBatchIds(relIds);
+        int deleted = relMapper.deleteBatchIds(ids);
         if (deleted > 0) {
-            log.info("批量删除关联: ids={}, count={}", relIds, deleted);
+            log.info("批量删除关联: ids={}, count={}", ids, deleted);
         }
         return deleted;
     }
@@ -173,7 +177,8 @@ public class ModelChannelRelManager {
         if (modelId == null) return;
         Model m = modelMapper.selectById(modelId);
         if (m != null && Model.RelMode.INHERIT.equals(m.getRelMode())) {
-            throw new RuntimeException("模型「" + m.getModelName() + "」当前为继承模式，无法修改关联");
+            // IllegalArgumentException：消息面向用户（校验失败），与数据库等意外异常区分
+            throw new IllegalArgumentException("模型「" + m.getModelName() + "」当前为继承模式，无法修改关联");
         }
     }
 }

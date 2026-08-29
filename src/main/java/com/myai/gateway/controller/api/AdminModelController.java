@@ -379,16 +379,27 @@ public class AdminModelController {
     public ResponseEntity<Map<String, Object>> batchRemoveRels(@RequestBody Map<String, Object> body) {
         Map<String, Object> result = new LinkedHashMap<>();
         try {
-            @SuppressWarnings("unchecked")
-            List<Integer> rawIds = (List<Integer>) body.get("relIds");
-            List<Long> relIds = rawIds.stream().map(Integer::longValue).collect(Collectors.toList());
+            if (!(body.get("relIds") instanceof List<?> rawList) || rawList.isEmpty()) {
+                result.put("success", false);
+                result.put("error", "relIds 不能为空");
+                return ResponseEntity.ok(result);
+            }
+            // Number::longValue 而非 Integer::longValue：ID 超出 int 范围时 Jackson 会反序列化为 Long
+            List<Long> relIds = rawList.stream()
+                    .map(id -> ((Number) id).longValue())
+                    .collect(Collectors.toList());
             int count = modelService.removeChannelRels(relIds);
             result.put("success", true);
             result.put("count", count);
-        } catch (Exception e) {
-            log.warn("批量删除模型关联失败: body={}", body, e);
+        } catch (IllegalArgumentException e) {
+            // 业务校验失败：异常消息面向用户，直接返回
             result.put("success", false);
             result.put("error", e.getMessage());
+        } catch (Exception e) {
+            // 意外异常：完整堆栈只进日志，避免内部细节（如 SQL 报错）泄露给客户端
+            log.warn("批量删除模型关联失败: body={}", body, e);
+            result.put("success", false);
+            result.put("error", "删除失败，请稍后重试");
         }
         return ResponseEntity.ok(result);
     }
