@@ -30,12 +30,15 @@
             <SvgIcon name="check" :size="14" /> {{ isSaving ? t('common.saving') : t('model.rels.saveOrder') }}
           </button>
           <button
-            class="btn btn-sm btn-danger"
-            :disabled="selectedCount === 0"
-            @click="removeSelectedRels"
+            class="btn btn-sm"
+            :class="selectionMode && selectedCount > 0 ? 'btn-danger' : 'btn-secondary'"
+            :disabled="!selectionMode && rels.length === 0"
+            @click="onBatchSelectClick"
           >
-            <SvgIcon name="trash" :size="14" />
-            {{ selectedCount > 0 ? `${t('model.rels.deleteSelected')} (${selectedCount})` : t('model.rels.deleteSelected') }}
+            <SvgIcon :name="selectionMode ? (selectedCount > 0 ? 'trash' : 'x') : 'list'" :size="14" />
+            {{ !selectionMode
+              ? t('model.rels.batchSelect')
+              : (selectedCount > 0 ? `${t('model.rels.removeSelected')} (${selectedCount})` : t('model.rels.cancelBatchSelect')) }}
           </button>
         </template>
 
@@ -113,7 +116,7 @@
       <table>
         <thead>
           <tr>
-            <th v-if="currentMode === 'self_add'" class="col-check">
+            <th v-if="selectionMode" class="col-check">
               <input
                 type="checkbox"
                 class="rel-checkbox"
@@ -143,7 +146,7 @@
             :data-index="index"
             :class="{ 'row-disabled': isRelUnavailable(rel), 'row-selected': selectedRelIds.has(rel.id) }"
           >
-            <td v-if="currentMode === 'self_add'" class="col-check">
+            <td v-if="selectionMode" class="col-check">
               <input
                 type="checkbox"
                 class="rel-checkbox"
@@ -225,7 +228,7 @@
             </td>
           </tr>
           <tr v-if="!rels.length">
-            <td :colspan="currentMode === 'self_add' ? 10 : 9" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
+            <td :colspan="selectionMode ? 10 : 9" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
           </tr>
         </tbody>
       </table>
@@ -304,6 +307,11 @@ const originalRelIds = ref<number[]>([])
 const isSaving = ref(false)
 
 /* ---------- 多选删除 ---------- */
+/**
+ * 进入式多选：点击「多选删除」进入（勾选列随之显示），
+ * 取消多选 / 删除成功 / 数据重载 / 打开源选择器时退出，勾选列恢复隐藏。
+ */
+const selectionMode = ref(false)
 const selectedRelIds = ref<Set<number>>(new Set())
 
 const selectedCount = computed(() => selectedRelIds.value.size)
@@ -335,6 +343,25 @@ function clearSelection() {
   selectedRelIds.value = new Set()
 }
 
+function exitSelectionMode() {
+  selectionMode.value = false
+  clearSelection()
+}
+
+/** 「多选删除」按钮：未进入→进入多选；多选中且无勾选→取消多选；有勾选→移除选中 */
+function onBatchSelectClick() {
+  if (!selectionMode.value) {
+    if (currentMode.value !== 'self_add' || rels.value.length === 0) return
+    selectionMode.value = true
+    return
+  }
+  if (selectedCount.value === 0) {
+    exitSelectionMode()
+    return
+  }
+  removeSelectedRels()
+}
+
 function removeSelectedRels() {
   if (currentMode.value !== 'self_add') return
   const ids = [...selectedRelIds.value]
@@ -350,7 +377,7 @@ function removeSelectedRels() {
         if (!(await persistOrder())) return
         const res = await modelApi.batchRemoveRels(ids)
         if (res.data.success) {
-          clearSelection()
+          exitSelectionMode()
           await loadData()
         } else {
           openDialog({ title: t('model.rels.deleteFailed'), message: res.data.error || t('error.unknown') })
@@ -521,7 +548,7 @@ async function loadData() {
     rels.value = res.data.rels.sort((a, b) => a.sortOrder - b.sortOrder)
     originalRelIds.value = rels.value.map(r => r.id)
     isDirty.value = false
-    clearSelection()
+    exitSelectionMode()
     availableModels.value = res.data.availableModels
     inheritFromModelName.value = res.data.inheritFromModelName ?? null
     const mode = (model.value.relMode as RelMode) || 'self_add'
@@ -728,6 +755,7 @@ async function doSetMode(mode: RelMode, sourceId?: number) {
 }
 
 async function openSourcePicker() {
+  exitSelectionMode()
   showSourcePicker.value = true
   pendingSourceId.value = model.value?.inheritFromModelId ?? 0
   if (inheritableModels.value.length === 0) {
