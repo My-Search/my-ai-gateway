@@ -29,6 +29,14 @@
           <button v-if="isDirty" class="btn btn-primary btn-sm" :disabled="isSaving" @click="saveOrder">
             <SvgIcon name="check" :size="14" /> {{ isSaving ? t('common.saving') : t('model.rels.saveOrder') }}
           </button>
+          <button
+            class="btn btn-sm btn-danger"
+            :disabled="selectedCount === 0"
+            @click="removeSelectedRels"
+          >
+            <SvgIcon name="trash" :size="14" />
+            {{ selectedCount > 0 ? `${t('model.rels.deleteSelected')} (${selectedCount})` : t('model.rels.deleteSelected') }}
+          </button>
         </template>
 
         <!-- 继承模式：只读提示 -->
@@ -105,6 +113,18 @@
       <table>
         <thead>
           <tr>
+            <th v-if="currentMode === 'self_add'" class="col-check">
+              <input
+                type="checkbox"
+                class="rel-checkbox"
+                :checked="isAllSelected"
+                :indeterminate="isIndeterminate"
+                :disabled="!rels.length"
+                :aria-label="t('model.rels.selectAll')"
+                :title="t('model.rels.selectAll')"
+                @change="toggleSelectAll"
+              />
+            </th>
             <th>{{ t('model.rels.sort') }}</th>
             <th>{{ t('model.rels.channel') }}</th>
             <th>{{ t('model.rels.model') }}</th>
@@ -117,7 +137,22 @@
           </tr>
         </thead>
         <tbody ref="tbodyRef">
-          <tr v-for="(rel, index) in rels" :key="rel.id" :data-index="index" :class="{ 'row-disabled': isRelUnavailable(rel) }">
+          <tr
+            v-for="(rel, index) in rels"
+            :key="rel.id"
+            :data-index="index"
+            :class="{ 'row-disabled': isRelUnavailable(rel), 'row-selected': selectedRelIds.has(rel.id) }"
+          >
+            <td v-if="currentMode === 'self_add'" class="col-check">
+              <input
+                type="checkbox"
+                class="rel-checkbox"
+                :checked="selectedRelIds.has(rel.id)"
+                :aria-label="t('model.rels.selectRow')"
+                :title="t('model.rels.selectRow')"
+                @change="toggleSelectRel(rel)"
+              />
+            </td>
             <td>
               <span v-if="currentMode === 'self_add'" class="drag-handle" :title="t('model.rels.dragSort')">≡</span>
               <span v-else class="sort-index">{{ index + 1 }}</span>
@@ -190,7 +225,7 @@
             </td>
           </tr>
           <tr v-if="!rels.length">
-            <td colspan="9" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
+            <td :colspan="currentMode === 'self_add' ? 10 : 9" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
           </tr>
         </tbody>
       </table>
@@ -267,6 +302,65 @@ let sortableInstance: Sortable | null = null
 const isDirty = ref(false)
 const originalRelIds = ref<number[]>([])
 const isSaving = ref(false)
+
+/* ---------- 多选删除 ---------- */
+const selectedRelIds = ref<Set<number>>(new Set())
+
+const selectedCount = computed(() => selectedRelIds.value.size)
+
+const isAllSelected = computed(() =>
+  rels.value.length > 0 && rels.value.every(r => selectedRelIds.value.has(r.id))
+)
+
+const isIndeterminate = computed(() =>
+  selectedRelIds.value.size > 0 && !isAllSelected.value
+)
+
+function toggleSelectAll(e: Event) {
+  const checked = (e.target as HTMLInputElement).checked
+  selectedRelIds.value = checked ? new Set(rels.value.map(r => r.id)) : new Set()
+}
+
+function toggleSelectRel(rel: ModelChannelRel) {
+  const next = new Set(selectedRelIds.value)
+  if (next.has(rel.id)) {
+    next.delete(rel.id)
+  } else {
+    next.add(rel.id)
+  }
+  selectedRelIds.value = next
+}
+
+function clearSelection() {
+  selectedRelIds.value = new Set()
+}
+
+function removeSelectedRels() {
+  if (currentMode.value !== 'self_add') return
+  const ids = [...selectedRelIds.value]
+  if (ids.length === 0) return
+  openDialog({
+    title: t('common.confirmDelete'),
+    message: t('model.rels.deleteSelectedConfirm', { n: ids.length }),
+    type: 'confirm',
+    confirmClass: 'btn-danger',
+    onConfirm: async () => {
+      try {
+        // 与单条删除一致：若已调整过顺序（未保存），先持久化，避免 loadData 刷新丢失排序
+        if (!(await persistOrder())) return
+        const res = await modelApi.batchRemoveRels(ids)
+        if (res.data.success) {
+          clearSelection()
+          await loadData()
+        } else {
+          openDialog({ title: t('model.rels.deleteFailed'), message: res.data.error || t('error.unknown') })
+        }
+      } catch (e: any) {
+        openDialog({ title: t('model.rels.deleteFailed'), message: e.message })
+      }
+    }
+  })
+}
 
 /** 关联不可用：渠道被禁用或无可用 API Key（行效果与禁用一致，仅标签不同） */
 function isRelUnavailable(rel: ModelChannelRel): boolean {
@@ -427,6 +521,7 @@ async function loadData() {
     rels.value = res.data.rels.sort((a, b) => a.sortOrder - b.sortOrder)
     originalRelIds.value = rels.value.map(r => r.id)
     isDirty.value = false
+    clearSelection()
     availableModels.value = res.data.availableModels
     inheritFromModelName.value = res.data.inheritFromModelName ?? null
     const mode = (model.value.relMode as RelMode) || 'self_add'
@@ -981,5 +1076,69 @@ table td {
   padding: 1px 8px;
   font-size: 11px;
   white-space: nowrap;
+}
+
+/* 多选列 */
+th.col-check,
+td.col-check {
+  width: 36px;
+  min-width: 36px;
+  text-align: center;
+}
+
+/* 主题化复选框：appearance:none 自绘，明暗主题均使用主题变量
+   （未选中=表面色+边框色；选中/半选=accent-blue 填充，与 btn-primary 一致） */
+.rel-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background-color: var(--bg-tertiary);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.rel-checkbox:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent-blue) 55%, var(--border-color));
+}
+
+.rel-checkbox:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 55%, transparent);
+}
+
+.rel-checkbox:checked,
+.rel-checkbox:indeterminate {
+  border-color: var(--accent-blue);
+  background-color: var(--accent-blue);
+}
+
+.rel-checkbox:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-size: 11px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.rel-checkbox:indeterminate {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8h9' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-size: 11px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.rel-checkbox:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* 选中行高亮：比全局 tr:hover td 特异性更高，悬停时不丢失选中底色 */
+tbody tr.row-selected td {
+  background-color: color-mix(in srgb, var(--accent-blue) 8%, transparent);
 }
 </style>

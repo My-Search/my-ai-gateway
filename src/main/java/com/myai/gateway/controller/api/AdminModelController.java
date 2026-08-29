@@ -375,6 +375,24 @@ public class AdminModelController {
         return ResponseEntity.ok(result);
     }
 
+    @PostMapping(value = "/models/rels/batch-delete", produces = "application/json;charset=UTF-8")
+    public ResponseEntity<Map<String, Object>> batchRemoveRels(@RequestBody Map<String, Object> body) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            @SuppressWarnings("unchecked")
+            List<Integer> rawIds = (List<Integer>) body.get("relIds");
+            List<Long> relIds = rawIds.stream().map(Integer::longValue).collect(Collectors.toList());
+            int count = modelService.removeChannelRels(relIds);
+            result.put("success", true);
+            result.put("count", count);
+        } catch (Exception e) {
+            log.warn("批量删除模型关联失败: body={}", body, e);
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
     @PutMapping(value = "/models/rels/{relId}/sort", produces = "application/json;charset=UTF-8")
     public ResponseEntity<Map<String, Object>> updateRelSort(@PathVariable Long relId,
                                                               @RequestBody Map<String, Object> body) {

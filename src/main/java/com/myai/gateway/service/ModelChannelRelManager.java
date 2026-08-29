@@ -64,6 +64,32 @@ public class ModelChannelRelManager {
         relMapper.deleteById(relId);
     }
 
+    /**
+     * 批量删除关联：先整体校验（全部存在且均为自添加模式），再一次性删除，避免部分删除。
+     * @return 实际删除条数
+     */
+    @Transactional
+    public int removeChannelRels(List<Long> relIds) {
+        if (relIds == null || relIds.isEmpty()) return 0;
+        List<ModelChannelRel> rels = relMapper.selectBatchIds(relIds);
+        if (rels.size() != relIds.size()) {
+            java.util.Set<Long> foundIds = rels.stream()
+                    .map(ModelChannelRel::getId)
+                    .collect(java.util.stream.Collectors.toSet());
+            String missing = relIds.stream()
+                    .filter(id -> !foundIds.contains(id))
+                    .map(String::valueOf)
+                    .collect(java.util.stream.Collectors.joining(","));
+            throw new RuntimeException("关联不存在: id=" + missing);
+        }
+        rels.forEach(rel -> assertSelfAddMode(rel.getModelId()));
+        int deleted = relMapper.deleteBatchIds(relIds);
+        if (deleted > 0) {
+            log.info("批量删除关联: ids={}, count={}", relIds, deleted);
+        }
+        return deleted;
+    }
+
     @Transactional
     public void updateChannelRelReasoningEffort(Long relId, String reasoningEffort) {
         ModelChannelRel rel = relMapper.selectById(relId);

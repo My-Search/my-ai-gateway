@@ -134,6 +134,12 @@ export const modelApi = {
   removeRel(relId: number) {
     return http.delete<{ success: boolean; error?: string }>(`/models/rels/${relId}`)
   },
+  /**
+   * 批量删除关联（仅自添加模式）。后端整体校验：任一关联不存在或处于继承模式则全部不删除。
+   */
+  batchRemoveRels(relIds: number[]) {
+    return http.post<{ success: boolean; count: number; error?: string }>('/models/rels/batch-delete', { relIds })
+  },
   updateRelSort(relId: number, sortOrder: number) {
     return http.put<{ success: boolean; error?: string }>(`/models/rels/${relId}/sort`, { sortOrder })
   },

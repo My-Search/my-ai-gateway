@@ -188,6 +188,10 @@ public class ModelService {
         relManager.removeChannelRel(relId);
     }
 
+    public int removeChannelRels(List<Long> relIds) {
+        return relManager.removeChannelRels(relIds);
+    }
+
     public void updateChannelRelReasoningEffort(Long relId, String reasoningEffort) {
         relManager.updateChannelRelReasoningEffort(relId, reasoningEffort);
     }
