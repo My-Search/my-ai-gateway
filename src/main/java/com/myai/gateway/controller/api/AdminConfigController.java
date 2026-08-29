@@ -93,28 +93,33 @@ public class AdminConfigController {
                     int hours = Integer.parseInt(val);
                     if (hours < 0 || hours > 8760) {
                         result.put("success", false);
-                        result.put("error", "原始请求保留时长必须在 0-8760 小时之间（0=永久保留）");
+                        result.put("error", "请求数据保留时长必须在 0-8760 小时之间（0=跟随日志保留天数）");
                         return ResponseEntity.ok(result);
                     }
                 } catch (NumberFormatException e) {
                     result.put("success", false);
-                    result.put("error", "原始请求保留时长必须为有效数字");
+                    result.put("error", "请求数据保留时长必须为有效数字");
                     return ResponseEntity.ok(result);
                 }
             }
             if (body.containsKey(AdminConfigService.KEY_RETRY_FAIL_TTL_HOURS)) {
                 String val = body.get(AdminConfigService.KEY_RETRY_FAIL_TTL_HOURS);
-                try {
-                    int hours = Integer.parseInt(val);
-                    if (hours < 0 || hours > 8760) {
+                // 空 = 跟随请求数据保留时长，允许保存
+                if (val == null || val.trim().isEmpty()) {
+                    body.put(AdminConfigService.KEY_RETRY_FAIL_TTL_HOURS, "");
+                } else {
+                    try {
+                        int hours = Integer.parseInt(val.trim());
+                        if (hours < 0 || hours > 8760) {
+                            result.put("success", false);
+                            result.put("error", "重试/失败数据保留时长必须在 0-8760 小时之间（留空=跟随请求数据保留时长，0=跟随日志保留天数）");
+                            return ResponseEntity.ok(result);
+                        }
+                    } catch (NumberFormatException e) {
                         result.put("success", false);
-                        result.put("error", "重试/失败请求保留时长必须在0-8760小时之间（0=跟随日志保留天数）");
+                        result.put("error", "重试/失败数据保留时长必须为有效数字（或留空表示跟随请求数据保留时长）");
                         return ResponseEntity.ok(result);
                     }
-                } catch (NumberFormatException e) {
-                    result.put("success", false);
-                    result.put("error", "重试/失败请求保留时长必须为有效数字");
-                    return ResponseEntity.ok(result);
                 }
             }
             if (body.containsKey(AdminConfigService.KEY_REQUEST_DATA_SAVE_LEVEL)) {

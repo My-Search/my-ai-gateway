@@ -31,9 +31,9 @@ public class AdminConfigService {
     /** 日志定时清理开关 */
     public static final String KEY_LOG_CLEANUP_ENABLED = "log_cleanup_enabled";
 
-    /** 原始请求数据保留时长（小时），0=永久保留 */
+    /** 原始请求数据保留时长（小时），0=跟随日志保留天数（日志删除时一并清理） */
     public static final String KEY_REQUEST_BODY_TTL_HOURS = "request_body_ttl_hours";
-    /** retry/fail request data TTL (hours), 0=forever */
+    /** 重试/失败请求数据保留时长（小时），空=跟随请求数据保留时长，0=跟随日志保留天数（最大保留时长） */
     public static final String KEY_RETRY_FAIL_TTL_HOURS = "retry_fail_ttl_hours";
 
     /** 原始请求数据保存级别：info=全部保存, warn=仅重试/错误时保存, error=仅失败时保存 */
@@ -201,7 +201,8 @@ public class AdminConfigService {
         if (retentionDays == null) retentionDays = "7";
         if (cleanupEnabled == null) cleanupEnabled = "1";
         if (requestBodyTtlHours == null) requestBodyTtlHours = "4";
-        if (retryFailTtlHours == null) retryFailTtlHours = "0";
+        // 默认空：跟随请求数据保留时长（request_body_ttl_hours），由 LogCleanupTask 解析
+        if (retryFailTtlHours == null) retryFailTtlHours = "";
         if (timeoutMinSeconds == null) timeoutMinSeconds = "20";
         if (timeoutMaxSeconds == null) timeoutMaxSeconds = "60";
         if (requestDataSaveLevel == null) requestDataSaveLevel = "info";

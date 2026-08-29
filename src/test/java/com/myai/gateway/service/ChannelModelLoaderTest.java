@@ -39,7 +39,8 @@ class ChannelModelLoaderTest {
         when(rules.computeInput(any())).thenReturn("text");
         loader = mock(ChannelModelLoader.class, withSettings()
                 .useConstructor(channelMapper, channelModelMapper, relMapper, apiKeyMapper,
-                        new ObjectMapper(), rules)
+                        new ObjectMapper(), rules,
+                        mock(org.springframework.transaction.PlatformTransactionManager.class))
                 .defaultAnswer(CALLS_REAL_METHODS));
     }
 

@@ -367,10 +367,10 @@ ALTER TABLE models ADD COLUMN audio_invalidate_count INTEGER DEFAULT 0;
 -- VERSION:v1.20.0
 -- 系统配置：原始请求数据保留时长（request_headers / request_body 的 TTL）
 -- request_body_ttl_hours: 超过此小时数的原始请求数据将被定时清理（request_headers/body 置 NULL）
--- 0=永久保留（默认），>0 表示保留 N 小时后清理
+-- 0=跟随日志保留天数（日志删除时一并清理），>0 表示保留 N 小时后清理
 -- ========================================
 
-INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('request_body_ttl_hours', '4', '原始请求数据保留时长（小时），超过此时间的 request_headers/body 将被清理，0=永久保留');
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('request_body_ttl_hours', '4', '请求数据保留时长（小时），超过此时间的 request_headers/body 将被清理，0=跟随日志保留天数');
 
 -- ========================================
 -- VERSION:v1.21.0
@@ -389,10 +389,10 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_gateway_api_key_id ON request_logs(g
 -- VERSION:v1.22.0
 -- 系统配置：重试/失败请求数据保留时长（retry_fail_ttl_hours）
 -- 普通请求数据保留时长为 request_body_ttl_hours（默认 4 小时）
--- 重试/失败请求数据保留时长为 retry_fail_ttl_hours（默认 0 = 跟随日志保留天数）
+-- 重试/失败请求数据保留时长为 retry_fail_ttl_hours（默认 空 = 跟随请求数据保留时长，0 = 跟随日志保留天数）
 -- ========================================
 
-INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('retry_fail_ttl_hours', '0', '重试/失败请求数据保留时长（小时），超过此时间的失败/重试记录的 request_headers/body 将被清理，0=跟随日志保留天数');
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('retry_fail_ttl_hours', '', '重试/失败请求数据保留时长（小时），超过此时间的失败/重试记录的 request_headers/body 将被清理，留空=跟随请求数据保留时长，0=跟随日志保留天数');
 
 -- ========================================
 -- VERSION:v1.23.0
@@ -506,3 +506,13 @@ ALTER TABLE request_logs ADD COLUMN reasoning_effort TEXT;
 -- 渠道支持自定义请求头：channels 新增 custom_headers TEXT 字段（JSON 键值对）
 -- ========================================
 ALTER TABLE channels ADD COLUMN custom_headers TEXT;
+
+-- ========================================
+-- VERSION:v1.35.0
+-- 界面合并展示：request_body_ttl_hours 与 retry_fail_ttl_hours 合并为一行双输入（普通 / 重试失败）。
+-- 语义变更：request_body_ttl_hours 的 0 从"永久保留"改为"跟随日志保留天数"（日志删除时一并清理）；
+--   retry_fail_ttl_hours：留空=跟随请求数据保留时长，0=跟随日志保留天数。
+--   存量已保存的值保持不变，仅同步更新配置描述（INSERT OR IGNORE 对已存在的行不会生效）
+-- ========================================
+UPDATE admin_config SET description = '请求数据保留时长（小时），超过此时间的 request_headers/body 将被清理，0=跟随日志保留天数' WHERE config_key = 'request_body_ttl_hours';
+UPDATE admin_config SET description = '重试/失败请求数据保留时长（小时），超过此时间的失败/重试记录的 request_headers/body 将被清理，留空=跟随请求数据保留时长，0=跟随日志保留天数' WHERE config_key = 'retry_fail_ttl_hours';

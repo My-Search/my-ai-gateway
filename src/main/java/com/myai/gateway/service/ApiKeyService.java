@@ -125,8 +125,9 @@ public class ApiKeyService {
 
     /**
      * 更新密钥最后使用时间
+     * <p>中继热路径每次请求都会调用，不加事务：单条 UPDATE 本身原子即可，
+     * 免去 IMMEDIATE 模式下每请求一次 BEGIN/COMMIT 的写锁开销。</p>
      */
-    @Transactional
     public void updateLastUsed(Long id) {
         ApiKey key = apiKeyMapper.selectById(id);
         if (key != null) {

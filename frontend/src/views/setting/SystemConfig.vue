@@ -68,22 +68,17 @@
           <div class="config-row-label">
             <div class="config-label">{{ t('systemConfig.requestBodyTtl') }}</div>
             <div class="config-hint">{{ t('systemConfig.requestBodyTtlHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <input type="number" class="form-control" style="width:120px;"
-                   v-model.number="form.request_body_ttl_hours"
-                   :min="0" :max="8760" />
-          </div>
-        </div>
-
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.retryFailTtl') }}</div>
             <div class="config-hint">{{ t('systemConfig.retryFailTtlHint') }}</div>
           </div>
-          <div class="config-row-control">
-            <input type="number" class="form-control" style="width:120px;"
+          <div class="config-row-control ttl-group">
+            <span class="ttl-label">{{ t('systemConfig.ttlNormalLabel') }}</span>
+            <input type="number" class="form-control" style="width:90px;"
+                   v-model.number="form.request_body_ttl_hours"
+                   :min="0" :max="8760" />
+            <span class="ttl-label">{{ t('systemConfig.ttlRetryFailLabel') }}</span>
+            <input type="number" class="form-control" style="width:90px;"
                    v-model.number="form.retry_fail_ttl_hours"
+                   :placeholder="t('systemConfig.retryFailTtlPlaceholder')"
                    :min="0" :max="8760" />
           </div>
         </div>
@@ -233,7 +228,8 @@ const form = reactive({
   log_retention_days: 30,
   log_cleanup_enabled: '1',
   request_body_ttl_hours: 4,
-  retry_fail_ttl_hours: 0,
+  // 空 = 跟随普通记录保留时长，0 = 跟随日志保留天数
+  retry_fail_ttl_hours: '' as number | '',
   request_data_save_level: 'info',
   timeout_min_seconds: 20,
   timeout_max_seconds: 60,
@@ -269,7 +265,11 @@ async function loadConfig() {
       form.log_retention_days = parseInt(res.data.data.log_retention_days) || 30
       form.log_cleanup_enabled = res.data.data.log_cleanup_enabled === '1' ? '1' : '0'
       form.request_body_ttl_hours = parseInt(res.data.data.request_body_ttl_hours) || 0
-      form.retry_fail_ttl_hours = parseInt(res.data.data.retry_fail_ttl_hours) || 0
+      // 注意：空字符串表示跟随普通记录保留时长，不能用 || 兜底（会把空值吞成 0）
+      const retryFailTtl = res.data.data.retry_fail_ttl_hours
+      form.retry_fail_ttl_hours = retryFailTtl == null || String(retryFailTtl).trim() === ''
+        ? ''
+        : (parseInt(String(retryFailTtl)) || 0)
       form.request_data_save_level = res.data.data.request_data_save_level || 'info'
       form.timeout_min_seconds = parseInt(res.data.data.timeout_min_seconds) || 20
       form.timeout_max_seconds = parseInt(res.data.data.timeout_max_seconds) || 60
@@ -330,7 +330,10 @@ async function handleSave() {
       log_retention_days: String(form.log_retention_days),
       log_cleanup_enabled: form.log_cleanup_enabled,
       request_body_ttl_hours: String(form.request_body_ttl_hours),
-      retry_fail_ttl_hours: String(form.retry_fail_ttl_hours),
+      // 空 = 跟随普通记录保留时长，原样保存空字符串
+      retry_fail_ttl_hours: form.retry_fail_ttl_hours === '' || form.retry_fail_ttl_hours == null
+        ? ''
+        : String(form.retry_fail_ttl_hours),
       request_data_save_level: form.request_data_save_level,
       timeout_min_seconds: String(form.timeout_min_seconds),
       timeout_max_seconds: String(form.timeout_max_seconds),
@@ -449,6 +452,16 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   display: flex;
   align-items: center;
+}
+
+/* 合并行的双输入框组（普通 / 重试失败） */
+.ttl-group {
+  gap: 6px;
+}
+
+.ttl-label {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 /* Toggle switch */

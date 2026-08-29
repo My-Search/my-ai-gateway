@@ -7,6 +7,8 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -23,12 +25,14 @@ public class DatabaseInitializer implements CommandLineRunner {
     private static final Logger log = LoggerFactory.getLogger(DatabaseInitializer.class);
 
     private final JdbcTemplate jdbcTemplate;
+    private final TransactionTemplate transactionTemplate;
 
     @Value("${spring.datasource.url:jdbc:sqlite:data/gateway.db}")
     private String dbUrl;
 
-    public DatabaseInitializer(JdbcTemplate jdbcTemplate) {
+    public DatabaseInitializer(JdbcTemplate jdbcTemplate, PlatformTransactionManager transactionManager) {
         this.jdbcTemplate = jdbcTemplate;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     @Override
@@ -83,32 +87,35 @@ public class DatabaseInitializer implements CommandLineRunner {
                     "version TEXT PRIMARY KEY, applied_at TIMESTAMP, description TEXT)");
         }
 
-        // 使用事务包裹，确保版本内 SQL 原子性
-        jdbcTemplate.execute("BEGIN TRANSACTION");
+        String description = extractDescription(versionContent);
         try {
-            // 执行 SQL 语句
-            String[] statements = versionContent.split(";");
-            for (String sql : statements) {
-                sql = sql.trim();
-                if (sql.isEmpty() || sql.startsWith("--")) {
-                    continue;
+            // Spring 管理事务，确保版本内 SQL 原子性。
+            // 不能用裸 BEGIN/COMMIT：JdbcTemplate 每次调用独立借还池连接，并发借用下
+            // BEGIN 与 COMMIT 可能落在不同连接上，事务形同虚设；且 BEGIN 残留的连接
+            // 归还池后会与驱动的 autocommit 状态管理冲突，污染池连接
+            // （见 SelfHealingHikariDataSource）。
+            transactionTemplate.executeWithoutResult(status -> {
+                // 执行 SQL 语句
+                String[] statements = versionContent.split(";");
+                for (String sql : statements) {
+                    sql = sql.trim();
+                    if (sql.isEmpty() || sql.startsWith("--")) {
+                        continue;
+                    }
+                    try {
+                        jdbcTemplate.execute(sql);
+                    } catch (Exception e) {
+                        // 忽略部分错误（如 ALTER TABLE 如果列已存在）
+                        log.warn("SQL warning: {}", e.getMessage());
+                    }
                 }
-                try {
-                    jdbcTemplate.execute(sql);
-                } catch (Exception e) {
-                    // 忽略部分错误（如 ALTER TABLE 如果列已存在）
-                    log.warn("SQL warning: {}", e.getMessage());
-                }
-            }
 
-            // 记录版本（使用参数化查询，防止 SQL 注入）
-            String description = extractDescription(versionContent);
-            jdbcTemplate.update(
-                    "INSERT INTO db_schema_version (version, description) VALUES (?, ?)",
-                    version, description);
-            jdbcTemplate.execute("COMMIT");
+                // 记录版本（使用参数化查询，防止 SQL 注入）
+                jdbcTemplate.update(
+                        "INSERT INTO db_schema_version (version, description) VALUES (?, ?)",
+                        version, description);
+            });
         } catch (Exception e) {
-            jdbcTemplate.execute("ROLLBACK");
             log.error("Failed to execute database version {}, rolled back: {}", version, e.getMessage());
         }
     }

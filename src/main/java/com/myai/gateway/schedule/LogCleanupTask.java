@@ -19,9 +19,11 @@ import org.springframework.stereotype.Component;
  * 1. 从 admin_config 读取日志清理开关（log_cleanup_enabled）
  * 2. 若开关关闭则跳过本次执行
  * 3. 读取日志保留天数（log_retention_days），调用 cleanOldLogs() 清理过期日志
- * 4. 读取普通原始请求数据保留时长（request_body_ttl_hours），调用 cleanExpiredRequestData() 清理普通记录
+ * 4. 读取原始请求数据保留时长（request_body_ttl_hours），调用 cleanExpiredRequestData() 清理普通记录；
+ *    该值为 0 时跟随日志保留天数（换算为 天数×24 小时），日志删除时一并清理
  * 5. 读取重试/失败请求数据保留时长（retry_fail_ttl_hours），调用 cleanExpiredRequestData() 清理重试/失败记录；
- *    该值为 0 时跟随日志保留天数（换算为 天数×24 小时），日志删除时原始请求数据随之一并清理
+ *    该值为空时跟随请求数据保留时长（request_body_ttl_hours）；
+ *    该值为 0 时同样跟随日志保留天数（换算为 天数×24 小时），日志删除时一并清理
  * 6. 记录本次清理结果
  * </pre>
  */
@@ -78,7 +80,7 @@ public class LogCleanupTask {
             }
         }
 
-        // 3. 读取普通原始请求数据保留时长
+        // 3. 读取普通原始请求数据保留时长（0 = 跟随日志保留天数）
         String ttlStr = adminConfigService.getValueByKey(AdminConfigService.KEY_REQUEST_BODY_TTL_HOURS);
         int ttlHours;
         try {
@@ -89,31 +91,38 @@ public class LogCleanupTask {
         } catch (NumberFormatException e) {
             ttlHours = 0;
         }
+        if (ttlHours == 0) {
+            ttlHours = retentionDays * 24;
+            log.debug("请求数据保留时长为 0，跟随日志保留天数（{} 天）清理", retentionDays);
+        }
 
-        // 4. 读取重试/失败请求数据保留时长（0 = 跟随日志保留天数）
+        // 4. 读取重试/失败请求数据保留时长（空=跟随请求数据保留时长，0=跟随日志保留天数）
         String retryFailTtlStr = adminConfigService.getValueByKey(AdminConfigService.KEY_RETRY_FAIL_TTL_HOURS);
         int retryFailTtlHours;
-        try {
-            retryFailTtlHours = Integer.parseInt(retryFailTtlStr);
-            if (retryFailTtlHours < 0) {
+        if (retryFailTtlStr == null || retryFailTtlStr.trim().isEmpty()) {
+            retryFailTtlHours = ttlHours;
+            log.debug("重试/失败数据保留时长为空，跟随请求数据保留时长（{}h）", ttlHours);
+        } else {
+            try {
+                retryFailTtlHours = Integer.parseInt(retryFailTtlStr.trim());
+                if (retryFailTtlHours < 0) {
+                    retryFailTtlHours = 0;
+                }
+            } catch (NumberFormatException e) {
                 retryFailTtlHours = 0;
             }
-        } catch (NumberFormatException e) {
-            retryFailTtlHours = 0;
-        }
-        if (retryFailTtlHours == 0) {
-            retryFailTtlHours = retentionDays * 24;
-            log.debug("重试/失败数据保留时长为 0，跟随日志保留天数（{} 天）清理", retentionDays);
+            if (retryFailTtlHours == 0) {
+                retryFailTtlHours = retentionDays * 24;
+                log.debug("重试/失败数据保留时长为 0，跟随日志保留天数（{} 天）清理", retentionDays);
+            }
         }
 
-        // 5. 清理过期的原始请求数据（同时处理普通记录与重试/失败记录）
-        if (ttlHours > 0 || retryFailTtlHours > 0) {
-            log.debug("开始清理原始请求数据：普通TTL={}h, 重试/失败TTL={}h", ttlHours, retryFailTtlHours);
-            try {
-                requestLogService.cleanExpiredRequestData(ttlHours, retryFailTtlHours);
-            } catch (Exception e) {
-                log.error("原始请求数据清理失败", e);
-            }
+        // 5. 清理过期的原始请求数据（同时处理普通记录与重试/失败记录；两个 TTL 均已换算为 > 0）
+        log.debug("开始清理原始请求数据：普通TTL={}h, 重试/失败TTL={}h", ttlHours, retryFailTtlHours);
+        try {
+            requestLogService.cleanExpiredRequestData(ttlHours, retryFailTtlHours);
+        } catch (Exception e) {
+            log.error("原始请求数据清理失败", e);
         }
     }
 }

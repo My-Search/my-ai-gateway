@@ -8,7 +8,6 @@ import com.myai.gateway.mapper.ChannelMapper;
 import com.myai.gateway.mapper.ChannelModelMapper;
 import com.myai.gateway.mapper.ModelChannelRelMapper;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Collection;
 import java.util.HashMap;
@@ -103,8 +102,9 @@ public class ChannelModelQuery {
 
     /**
      * 重新加载指定渠道的模型
+     * <p>不加事务：真正的拉取与替换在 {@link ChannelModelLoader#loadModels} 内自管事务边界
+     * （HTTP 在事务外、写操作在一个 IMMEDIATE 事务内），此处再包一层事务会把 HTTP 重新卷进写锁。</p>
      */
-    @Transactional
     public List<ChannelModel> reloadModels(Long channelId, ChannelModelLoader modelLoader, ChannelMapper channelMapper) {
         Channel channel = channelMapper.selectById(channelId);
         if (channel == null) {
