@@ -336,12 +336,19 @@ public class SseHandler {
 
     /**
      * 发送 SSE 错误事件
+     * <p>错误体遵循客户端协议格式（anthropic / openai，默认 openai），
+     * {@code error} 字段必须是对象而非字符串，否则严格的 OpenAI 兼容客户端
+     * （如基于 Vercel AI SDK 的应用）会解析失败：</p>
+     * <ul>
+     *   <li>anthropic: {@code {"type":"error","error":{"type":"api_error","message":"..."}}}</li>
+     *   <li>openai: {@code {"error":{"message":"...","type":"api_error","code":503}}}</li>
+     * </ul>
      */
-    public void sendSseError(SseEmitter emitter, String message) {
+    public void sendSseError(SseEmitter emitter, String clientFormat, String message) {
         try {
-            ObjectNode err = objectMapper.createObjectNode();
-            err.put("error", message != null ? message : "Unknown stream error");
-            emitter.send(SseEmitter.event().name("error").data(err.toString()));
+            String safeMessage = message != null && !message.isBlank() ? message : "Unknown stream error";
+            String body = messageTransformer.buildErrorResponse(clientFormat, safeMessage, "api_error", 503);
+            emitter.send(SseEmitter.event().name("error").data(body));
         } catch (Exception e) {
             log.warn("Failed to send SSE error (client already disconnected?): {}", e.getMessage());
         }
@@ -361,9 +368,11 @@ public class SseHandler {
 
     /**
      * 处理流式 subscribe 的 onError 回调
+     *
+     * @param clientFormat 客户端协议格式（"openai" / "anthropic"），用于构建错误事件体
      */
     public void handleStreamSubscribeError(String traceId, Long gatewayApiKeyId,
-                                            SseEmitter emitter, Throwable err,
+                                            SseEmitter emitter, String clientFormat, Throwable err,
                                             java.util.concurrent.atomic.AtomicBoolean finalStateLogged) {
         log.error("Stream relay failed - traceId={}", traceId, err);
         cleanupStreamResources(traceId);
@@ -375,7 +384,7 @@ public class SseHandler {
         } else if (finalStateLogged.compareAndSet(false, true)) {
             requestLogService.logComplete(traceId, null, gatewayApiKeyId, null, null, null,
                     "fail", "error", msg.isEmpty() ? "流式请求失败" : msg, 0, 0);
-            sendSseError(emitter, msg);
+            sendSseError(emitter, clientFormat, msg);
         }
     }
 

@@ -260,7 +260,7 @@ public class RelayService {
         if (gatewayApiKeyId == null) {
             requestLogService.logComplete(traceId, null, null, null, null, null,
                     "fail", "auth", "无效或缺失的 API Key", 0, 0);
-            sseHandler.sendSseError(emitter, "无效或缺失的 API Key");
+            sseHandler.sendSseError(emitter, protocol, "无效或缺失的 API Key");
             return emitter;
         }
 
@@ -304,7 +304,7 @@ public class RelayService {
                 .publishOn(reactor.core.scheduler.Schedulers.boundedElastic(), 1)
                 .subscribe(
                         event -> sseHandler.sendSseEvent(emitter, event),
-                        err -> sseHandler.handleStreamSubscribeError(traceId, gatewayApiKeyId, emitter, err, finalStateLogged),
+                        err -> sseHandler.handleStreamSubscribeError(traceId, gatewayApiKeyId, emitter, protocol, err, finalStateLogged),
                         () -> {
                             finalStateLogged.set(true);
                             sseHandler.cleanupStreamResources(traceId);

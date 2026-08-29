@@ -845,10 +845,18 @@ public class CandidateRouter {
     private void handleFailure(RoutingCandidate candidate, InternalRequest req) {
         Long customModelId = routeResolver.resolveModelId(req.getModel());
         if (customModelId == null) return;
-        circuitBreakerService.triggerCircuitBreak(customModelId,
-                candidate.getChannel().getId(),
-                candidate.getChannelApiKey().getId(),
-                candidate.getChannelModel().getId());
+        try {
+            circuitBreakerService.triggerCircuitBreak(customModelId,
+                    candidate.getChannel().getId(),
+                    candidate.getChannelApiKey().getId(),
+                    candidate.getChannelModel().getId());
+        } catch (Exception e) {
+            // 熔断写入失败不阻断主流程：在 onErrorResume 内抛出会替换原始 Provider 错误，
+            // 导致上游错误被 DB 异常掩盖（甚至把 SQL 堆栈原样返回给客户端）
+            log.error("触发熔断写入失败 - channel={} key={} model={}",
+                    candidate.getChannel().getName(), candidate.getChannelApiKey().getKeyName(),
+                    candidate.getChannelModel().getModelName(), e);
+        }
     }
 
     String buildFailMessage(String errorMsg) {
