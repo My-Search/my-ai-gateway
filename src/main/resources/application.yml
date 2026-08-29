@@ -29,7 +29,10 @@ spring:
     init:
       mode: never
   datasource:
-    url: 'jdbc:sqlite:data/gateway.db'
+    # transaction_mode=IMMEDIATE：事务以 BEGIN IMMEDIATE 开始，提前持有写锁。
+    # 若用默认 DEFERRED，@Transactional 事务内先读后写（如熔断触发：先查配置再 DELETE/INSERT），
+    # 读快照建立后另一连接已提交写操作，升级写锁时报 SQLITE_BUSY_SNAPSHOT（busy_timeout 对其无效）。
+    url: 'jdbc:sqlite:data/gateway.db?transaction_mode=IMMEDIATE'
     driver-class-name: org.sqlite.JDBC
     hikari:
       maximum-pool-size: 10
