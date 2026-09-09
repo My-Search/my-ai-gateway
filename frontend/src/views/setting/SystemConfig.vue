@@ -511,4 +511,32 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
   min-width: 32px;
 }
+
+/* 移动端适配：行内横向布局改为纵向堆叠，避免溢出 */
+@media (max-width: 640px) {
+  .config-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .config-row-control {
+    flex-shrink: 1;
+    width: 100%;
+  }
+
+  .ttl-group {
+    flex-wrap: wrap;
+  }
+
+  .ttl-group .form-control {
+    width: auto !important;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .ttl-group .ttl-label {
+    flex-shrink: 0;
+  }
+}
 </style>
