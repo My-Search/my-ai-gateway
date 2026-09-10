@@ -205,19 +205,16 @@
               <span v-else class="text-muted">{{ t('model.rels.brokenNone') }}</span>
             </td>
             <td>
-              <select
+              <input
                 v-if="currentMode === 'self_add'"
                 class="form-control effort-select"
+                type="text"
                 :value="rel.reasoningEffort ?? ''"
-                @change="updateEffort(rel, ($event.target as HTMLSelectElement).value)"
-              >
-                <option value="">{{ t('model.rels.effortDefault') }}</option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="xhigh">xhigh</option>
-                <option value="max">max</option>
-              </select>
+                :list="effortDatalistId"
+                :placeholder="t('model.rels.effortCustomPlaceholder')"
+                :title="t('model.rels.effortCustomHint')"
+                @change="updateEffort(rel, ($event.target as HTMLInputElement).value)"
+              />
               <span v-else class="text-muted">
                 {{ rel.reasoningEffort ? effortLabel(rel.reasoningEffort) : '--' }}
               </span>
@@ -233,6 +230,10 @@
         </tbody>
       </table>
     </div>
+    <!-- 思考强度预设选项：输入框仍可输入任意自定义值 -->
+    <datalist :id="effortDatalistId">
+      <option v-for="e in EFFORT_PRESETS" :key="e" :value="e" />
+    </datalist>
     </template>
   </div>
 
@@ -305,6 +306,12 @@ let sortableInstance: Sortable | null = null
 const isDirty = ref(false)
 const originalRelIds = ref<number[]>([])
 const isSaving = ref(false)
+
+/* ---------- 思考强度（支持自定义输入） ---------- */
+/** 常用思考强度预设，供 datalist 下拉快速选择；输入框允许任意自定义值（如 deepseek-reasoner:medium） */
+const EFFORT_PRESETS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+/** 所有行共用的 datalist id（每页只有一个关联列表，固定 id 即可） */
+const effortDatalistId = 'rel-effort-presets'
 
 /* ---------- 多选删除 ---------- */
 /**
@@ -399,7 +406,7 @@ function formatRespTime(ms: number): string {
 }
 
 function effortLabel(value: string): string {
-  return value // 直接显示原始值 low/medium/high/xhigh/max
+  return value // 直接显示原始值（预设 low/medium/high/... 或自定义输入值）
 }
 
 /** 探测说明气泡状态：visible 是否显示；pos 为 fixed 定位坐标（基于图标位置计算）及方位 */
@@ -625,8 +632,12 @@ function removeRel(rel: ModelChannelRel) {
   })
 }
 
+/**
+ * 保存行的思考强度（支持自定义输入值）。
+ * 主流程：trim 后为空则清除（存 null），否则原样保存；后端不做枚举校验，任意字符串均透传给上游。
+ */
 async function updateEffort(rel: ModelChannelRel, value: string) {
-  const effort = value || null
+  const effort = value.trim() || null
   try {
     const res = await modelApi.updateRelReasoningEffort(rel.id, effort)
     if (res.data.success) {
@@ -977,7 +988,12 @@ table td {
   padding: 3px 6px;
   border-radius: 4px;
   min-width: 90px;
-  max-width: 120px;
+  max-width: 130px;
+}
+
+.effort-select::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
 }
 
 .effort-select:focus {
