@@ -124,16 +124,30 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
     // ==================== Dashboard 聚合查询 ====================
 
     /**
-     * 获取指定月份聚合统计（请求数使用 trace 去重，tokens 仅统计 success）
+     * 获取指定月份聚合统计（start-anchored 配对去重，tokens 仅统计 success）
+     * <p>
+     * monthly_requests: 窗口内 (trace_id, model_name) 的 start 配对数；
+     * monthly_success:  上述配对中窗口内出现 success 行的数量，
+     * 与 requests 锚定同一集合，保证 successRate ≤ 100%（跨窗口完成不会使分子越界）。
+     * monthly_fail: Java 层不再读取本 SQL 的该列，由 DashboardStatsCollector 推导，恒不出负。
+     * </p>
      */
     @Select("SELECT " +
-            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as monthly_requests, " +
+            "(SELECT COUNT(*) FROM (" +
+            "  SELECT DISTINCT trace_id, model_name FROM request_logs " +
+            "  WHERE created_at >= #{monthStart} AND created_at < #{monthEnd} AND phase = 'start' " +
+            "  AND model_name IS NOT NULL AND model_name != '')) as monthly_requests, " +
+            "(SELECT COUNT(*) FROM (" +
+            "  SELECT DISTINCT s.trace_id, s.model_name FROM request_logs s " +
+            "  WHERE s.created_at >= #{monthStart} AND s.created_at < #{monthEnd} AND s.phase = 'start' " +
+            "  AND s.model_name IS NOT NULL AND s.model_name != '' " +
+            "  AND EXISTS (SELECT 1 FROM request_logs r2 " +
+            "    WHERE r2.trace_id = s.trace_id AND r2.phase = 'success' " +
+            "    AND r2.created_at >= #{monthStart} AND r2.created_at < #{monthEnd}))) as monthly_success, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(prompt_tokens, 0) ELSE 0 END), 0) as monthly_prompt_tokens, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(completion_tokens, 0) ELSE 0 END), 0) as monthly_completion_tokens, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as monthly_total_tokens, " +
-            "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as monthly_success, " +
             "AVG(CASE WHEN first_byte_ms > 0 THEN first_byte_ms ELSE NULL END) as avg_response_time, " +
-            "COUNT(DISTINCT CASE WHEN phase = 'fail' THEN trace_id END) as monthly_fail, " +
             "AVG(CASE WHEN phase = 'success' AND completion_tokens > 0 AND response_time_ms > 0 " +
             "THEN completion_tokens * 1000.0 / response_time_ms ELSE NULL END) as avg_output_speed " +
             "FROM request_logs WHERE created_at >= #{monthStart} AND created_at < #{monthEnd}")
@@ -530,19 +544,35 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
     // ==================== 模型管理页统计 ====================
 
     /**
-     * 按入口模型聚合今日统计（trace-level 去重）。
-     * 返回 { model_name, requests, success, avg_response_time }（avg_response_time 为首字节平均响应时间）
+     * 按入口模型聚合今日统计（start-anchored 配对去重）。
+     * 返回 { model_name, requests, success, avg_response_time, avg_output_speed }（avg_response_time 为首字节平均响应时间）
+     * <p>
+     * requests: 今日窗口内 (trace_id, model_name) 的 start 配对数（同一 trace 多次候选路由只计一次）；
+     * success:  上述配对中今日窗口内出现 success 行的数量。
+     * 两者锚定同一集合，保证 successRate = success/requests ≤ 100%：
+     * 不会因"昨日发起、今日凌晨完成"的跨窗口请求产生 success 独立于 start 计数、
+     * 导致分子大于分母（曾出现成功率 100.3% 的口径错位）。
+     * </p>
      */
-    @Select("SELECT " +
-            "model_name, " +
-            "COUNT(DISTINCT CASE WHEN phase = 'start' THEN trace_id END) as requests, " +
-            "COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) as success, " +
-            "AVG(CASE WHEN first_byte_ms > 0 THEN first_byte_ms ELSE NULL END) as avg_response_time, " +
-            "AVG(CASE WHEN phase = 'success' AND completion_tokens > 0 AND response_time_ms > 0 " +
-            "THEN completion_tokens * 1000.0 / response_time_ms ELSE NULL END) as avg_output_speed " +
-            "FROM request_logs WHERE created_at >= #{since} " +
-            "AND model_name IS NOT NULL AND model_name != '' " +
-            "GROUP BY model_name")
+    @Select("WITH starts AS (" +
+            "SELECT DISTINCT trace_id, model_name FROM request_logs " +
+            "WHERE created_at >= #{since} AND phase = 'start' " +
+            "AND model_name IS NOT NULL AND model_name != '') " +
+            "SELECT s.model_name, " +
+            "COUNT(*) as requests, " +
+            "SUM(CASE WHEN EXISTS (" +
+            "SELECT 1 FROM request_logs r2 " +
+            "WHERE r2.trace_id = s.trace_id AND r2.phase = 'success' " +
+            "AND r2.created_at >= #{since}) THEN 1 ELSE 0 END) as success, " +
+            "(SELECT AVG(CASE WHEN r3.first_byte_ms > 0 THEN r3.first_byte_ms ELSE NULL END) " +
+            "FROM request_logs r3 WHERE r3.created_at >= #{since} " +
+            "AND r3.model_name = s.model_name) as avg_response_time, " +
+            "(SELECT AVG(CASE WHEN r3.phase = 'success' AND r3.completion_tokens > 0 AND r3.response_time_ms > 0 " +
+            "THEN r3.completion_tokens * 1000.0 / r3.response_time_ms ELSE NULL END) " +
+            "FROM request_logs r3 WHERE r3.created_at >= #{since} " +
+            "AND r3.model_name = s.model_name) as avg_output_speed " +
+            "FROM starts s " +
+            "GROUP BY s.model_name")
     List<Map<String, Object>> selectTodayModelStats(@Param("since") LocalDateTime since);
 
     /**

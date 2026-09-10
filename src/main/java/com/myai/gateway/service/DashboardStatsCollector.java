@@ -68,12 +68,12 @@ class DashboardStatsCollector {
         yesterdayStats.put("avgOutputSpeed", Math.round(yesterdayAvgOutputSpeed * 10.0) / 10.0);
         stats.put("yesterdayStats", yesterdayStats);
 
-        // 3. 以 trace-level 计算成功/失败数与成功率
+        // 3. 以 start-anchored 口径计算成功/失败数与成功率
         //    todayFail: 今日发起且从未 success（所有尝试均失败）的 trace 数
-        //    todaySuccess: 今日发起且至少有一次 success 的 trace 数
+        //    todaySuccess = requests - fail，与分母同源，成功率恒 ≤ 100%
         long todayFail = requestLogMapper.countFailedTraces(todayStart);
         long todaySuccess = Math.max(0, todayRequests - todayFail);
-        double successRate = todayRequests > 0 ? (double) todaySuccess / todayRequests * 100 : 0;
+        double successRate = todayRequests > 0 ? Math.min(100.0, (double) todaySuccess / todayRequests * 100) : 0;
 
         stats.put("todayRequests", todayRequests);
         stats.put("yesterdayRequests", yesterdayRequests);
@@ -93,15 +93,17 @@ class DashboardStatsCollector {
         stats.put("todayTokenStats", tokenStats);
 
         // 5. 本月统计（上海时区日期转 UTC 查询）
+        //    monthlySuccess 由 start-anchored 配对推导，与分母同源；fail = max(0, requests - success)
         LocalDateTime monthStart = toUtc(refDate.withDayOfMonth(1));
         LocalDateTime monthEnd = toUtc(refDate.plusMonths(1).withDayOfMonth(1));
         Map<String, Object> monthAgg = requestLogMapper.selectMonthlyAggregatedStats(monthStart, monthEnd);
         long monthlyRequests = toLong(monthAgg.get("monthly_requests"));
-        long monthlySuccess = toLong(monthAgg.get("monthly_success"));
-        long monthlyFail = toLong(monthAgg.get("monthly_fail"));
+        long monthlySuccess = Math.min(monthlyRequests, toLong(monthAgg.get("monthly_success")));
+        long monthlyFail = Math.max(0, monthlyRequests - monthlySuccess);
         double monthlyAvgResponse = monthAgg.get("avg_response_time") != null
                 ? ((Number) monthAgg.get("avg_response_time")).doubleValue() : 0.0;
-        double monthlySuccessRate = monthlyRequests > 0 ? (double) monthlySuccess / monthlyRequests * 100 : 0.0;
+        double monthlySuccessRate = monthlyRequests > 0
+                ? Math.min(100.0, (double) monthlySuccess / monthlyRequests * 100) : 0.0;
 
         Map<String, Object> monthlyStats = new LinkedHashMap<>();
         monthlyStats.put("requests", monthlyRequests);
@@ -120,11 +122,12 @@ class DashboardStatsCollector {
         LocalDateTime prevMonthEnd = toUtc(refDate.withDayOfMonth(1));
         Map<String, Object> prevMonthAgg = requestLogMapper.selectMonthlyAggregatedStats(prevMonthStart, prevMonthEnd);
         long prevMonthlyRequests = toLong(prevMonthAgg.get("monthly_requests"));
-        long prevMonthlySuccess = toLong(prevMonthAgg.get("monthly_success"));
-        long prevMonthlyFail = toLong(prevMonthAgg.get("monthly_fail"));
+        long prevMonthlySuccess = Math.min(prevMonthlyRequests, toLong(prevMonthAgg.get("monthly_success")));
+        long prevMonthlyFail = Math.max(0, prevMonthlyRequests - prevMonthlySuccess);
         double prevMonthlyAvgResponse = prevMonthAgg.get("avg_response_time") != null
                 ? ((Number) prevMonthAgg.get("avg_response_time")).doubleValue() : 0.0;
-        double prevMonthlySuccessRate = prevMonthlyRequests > 0 ? (double) prevMonthlySuccess / prevMonthlyRequests * 100 : 0.0;
+        double prevMonthlySuccessRate = prevMonthlyRequests > 0
+                ? Math.min(100.0, (double) prevMonthlySuccess / prevMonthlyRequests * 100) : 0.0;
 
         Map<String, Object> prevMonthlyStats = new LinkedHashMap<>();
         prevMonthlyStats.put("requests", prevMonthlyRequests);

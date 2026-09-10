@@ -428,7 +428,8 @@ class TrendChartStatsCollector {
                     ? ((Number) row.get("avg_response_time")).doubleValue() : 0.0;
             double avgOutputSpeed = row.get("avg_output_speed") != null
                     ? ((Number) row.get("avg_output_speed")).doubleValue() : 0.0;
-            double successRate = requests > 0 ? (double) success / requests * 100 : 0.0;
+            // start-anchored 配对口径下 success ≤ requests 恒成立；Math.min 防御历史数据或写入丢失造成的越界
+            double successRate = requests > 0 ? Math.min(100.0, (double) success / requests * 100) : 0.0;
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("modelName", name);
             item.put("requests", requests);
