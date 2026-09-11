@@ -360,6 +360,7 @@ export default {
   'model.rels.inheritFrom': '继承自',
   'model.rels.readonly': '只读',
   'model.rels.changeSource': '修改源模型',
+  'model.rels.goToParentRels': '前往父模型关联',
   'model.rels.selectInheritSource': '-- 选择源入口模型 --',
   'model.rels.applySource': '应用',
   'model.rels.inheritReadonlyTip': '当前为继承模式，关联列表由源模型实时提供，不可手动修改。',

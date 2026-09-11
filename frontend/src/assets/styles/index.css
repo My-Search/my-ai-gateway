@@ -703,6 +703,17 @@ select.form-input option {
     flex-direction: column;
     align-items: stretch;
   }
+  /* 操作栏左右两组允许内部换行：否则长文本/多按钮会被挤压成竖排，
+     或整体溢出卡片产生横向滚动 */
+  .action-bar .left,
+  .action-bar .right {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  /* 移动端下拉控件默认占满整行，避免被压缩后内容不可读 */
+  .action-bar .left > .searchable-select {
+    flex: 1 1 100%;
+  }
   .btn {
     white-space: nowrap;
   }

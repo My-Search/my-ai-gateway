@@ -53,10 +53,24 @@
         <template v-if="currentMode === 'inherit' && inheritFromModelName && !showSourcePicker">
           <span class="source-divider">|</span>
           <span class="source-label">{{ t('model.rels.inheritFrom') }}:</span>
-          <strong class="source-name">{{ inheritFromModelName }}</strong>
-          <code class="badge-readonly">{{ t('model.rels.readonly') }}</code>
-          <button class="btn btn-sm btn-secondary" :disabled="switchingMode" @click="openSourcePicker">
-            <SvgIcon name="edit" :size="12" /> {{ t('model.rels.changeSource') }}
+          <!-- 源名可点击：点击跳到父模型关联页 -->
+          <router-link
+            v-if="model?.inheritFromModelId"
+            :to="'/admin/model/rels/' + model.inheritFromModelId"
+            class="source-name source-name-link"
+            :title="t('model.rels.goToParentRels')"
+          >
+            {{ inheritFromModelName }}
+          </router-link>
+          <strong v-else class="source-name">{{ inheritFromModelName }}</strong>
+          <button
+            class="icon-action"
+            :disabled="switchingMode"
+            @click="openSourcePicker"
+            :title="t('model.rels.changeSource')"
+            :aria-label="t('model.rels.changeSource')"
+          >
+            <SvgIcon name="edit" :size="12" />
           </button>
         </template>
 
@@ -805,6 +819,19 @@ watch(currentMode, () => {
   nextTick(() => initSortable())
 })
 
+// 同一路由记录（/admin/model/rels/:id）间切换时组件实例会被复用，onMounted 不会再次触发。
+// 必须监听 id 变化重新加载，否则点击"前往父模型关联"后 URL 变了但页面内容仍是旧模型。
+watch(() => route.params.id, async (newId, oldId) => {
+  if (newId === oldId) return
+  showSourcePicker.value = false
+  pendingSourceId.value = 0
+  selectedModelIds.value = []
+  inheritableModels.value = []
+  await loadData()
+  await nextTick()
+  initSortable()
+})
+
 onMounted(async () => {
   await loadData()
   await nextTick()
@@ -947,13 +974,51 @@ table td {
   font-size: 13px;
   color: var(--text-primary);
 }
-.badge-readonly {
-  font-size: 10px;
-  padding: 2px 6px;
-  background: var(--text-muted);
-  color: var(--bg-primary);
+/* 关联的源模型名可点击：进入父模型关联页 */
+.source-name-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  color: var(--accent-blue);
+  cursor: pointer;
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-blue) 40%, transparent);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.source-name-link:hover {
+  color: color-mix(in srgb, var(--accent-blue) 80%, white);
+  border-bottom-color: currentColor;
+}
+.source-name-link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 45%, transparent);
+  border-radius: 3px;
+}
+/* 无边框图标动作按钮：仅显示 icon，hover 时才出现浅底色 */
+.icon-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
   border-radius: 4px;
-  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.icon-action:hover:not(:disabled) {
+  color: var(--accent-blue);
+  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+}
+.icon-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.icon-action:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-blue) 45%, transparent);
 }
 
 .readonly-tip {
@@ -962,6 +1027,39 @@ table td {
   gap: 6px;
   color: var(--text-muted);
   font-size: 13px;
+}
+
+/* 移动端：操作栏内的弹性布局优化。
+   action-bar 已改为纵向排列，此处进一步保证：
+   1) 长只读提示按整行排版并正常换行，不再被压成竖排单字；
+   2) 源名/按钮等元素可换行，避免溢出卡片。 */
+@media (max-width: 768px) {
+  .readonly-tip {
+    flex: 1 1 100%;
+    align-items: flex-start;
+    line-height: 1.6;
+  }
+  .readonly-tip .svg-icon {
+    flex-shrink: 0;
+    margin-top: 3px;
+  }
+  .source-divider {
+    display: none;
+  }
+  .source-label,
+  .source-name {
+    flex-shrink: 0;
+  }
+  /* 触控目标放大：源名与图标按钮便于手指点按 */
+  .source-name-link {
+    min-height: 32px;
+    padding: 0 2px;
+  }
+  .icon-action {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 4px;
+  }
 }
 
 /* 继承模式下显示静态序号 */

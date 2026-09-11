@@ -259,4 +259,18 @@ onUnmounted(() => {
   font-size: 14px;
   z-index: 100;
 }
+
+/* 移动端：下拉宽度受视口约束。
+   min-width（内联 dropdownWidth）会在窄屏下优先于 max-width 生效导致横向溢出，
+   故窄屏直接改为受视口限制；输入框取消 300px 上限，占满整行便于触控 */
+@media (max-width: 768px) {
+  .searchable-select {
+    max-width: 100%;
+  }
+  .searchable-select-dropdown {
+    min-width: 0;
+    width: 100%;
+    max-width: calc(100vw - 32px);
+  }
+}
 </style>

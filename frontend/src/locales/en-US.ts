@@ -360,6 +360,7 @@ export default {
   'model.rels.inheritFrom': 'Inherits from',
   'model.rels.readonly': 'Read-only',
   'model.rels.changeSource': 'Change source',
+  'model.rels.goToParentRels': 'Go to parent model rels',
   'model.rels.selectInheritSource': '-- Select source entry model --',
   'model.rels.applySource': 'Apply',
   'model.rels.inheritReadonlyTip': 'Inherit mode: linked models are provided by the source model in real time and cannot be modified here.',
