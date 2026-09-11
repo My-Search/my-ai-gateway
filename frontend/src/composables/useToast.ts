@@ -7,13 +7,21 @@
  * 使用方式：
  * ```ts
  * const { showToast } = useToast()
- * showToast('保存成功')
- * showToast('复制失败', { isError: true })
+ * showToast('保存成功')                          // 默认 success
+ * showToast('配置即将过期', { type: 'warning' })
+ * showToast('复制失败', { type: 'error' })
+ * showToast('复制失败', { isError: true })       // 旧写法，等价于 type: 'error'
  * ```
  */
 import { ref } from 'vue'
 
+/** toast 语义类型，决定图标与进度条配色 */
+export type ToastType = 'success' | 'warning' | 'error'
+
 export interface ToastOptions {
+  /** 语义类型，默认为 success */
+  type?: ToastType
+  /** @deprecated 请改用 type: 'error'，仅为向后兼容保留 */
   isError?: boolean
   duration?: number
   onClose?: () => void
@@ -22,13 +30,14 @@ export interface ToastOptions {
 export interface ToastItem {
   id: number
   message: string
-  isError: boolean
+  type: ToastType
   duration: number
   timer: ReturnType<typeof setTimeout>
   onClose?: () => void
 }
 
 export const toasts = ref<ToastItem[]>([])
+
 let nextToastId = 1
 
 export function closeToast(id: number) {
@@ -41,10 +50,15 @@ export function closeToast(id: number) {
 
 export function useToast() {
   function showToast(msg: string, opts?: ToastOptions) {
-    const { isError = false, duration = 1500, onClose } = opts ?? {}
+    const {
+      isError = false,
+      type = isError ? 'error' : 'success',
+      duration = 1500,
+      onClose
+    } = opts ?? {}
     const id = nextToastId++
     const timer = setTimeout(() => closeToast(id), duration)
-    toasts.value.push({ id, message: msg, isError, duration, timer, onClose })
+    toasts.value.push({ id, message: msg, type, duration, timer, onClose })
     return id
   }
 

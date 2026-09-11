@@ -199,7 +199,7 @@ async function copyText(text: string, label: string = '') {
     await navigator.clipboard.writeText(text)
     showToast(t('share.copied').replace('{label}', label || ''))
   } catch {
-    showToast(t('share.copyFailed'), { isError: true })
+    showToast(t('share.copyFailed'), { type: 'error' })
   }
 }
 </script>
