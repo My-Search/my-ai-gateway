@@ -1,5 +1,6 @@
 <template>
   <button
+    type="button"
     class="copy-btn"
     @click="handleCopy"
     :title="title || t('common.copy')"
@@ -20,6 +21,9 @@
  * <CopyButton :text="apiKey" />
  * <CopyButton :text="apiKey" title="复制密钥" />
  * ```
+ *
+ * 注意：按钮已固定 type="button"，避免在 <form> 内点击时
+ * 触发原生表单提交（导致误保存/误跳转）。
  */
 import { useI18n } from '@/composables/useI18n'
 import { useToast } from '@/composables/useToast'
@@ -41,7 +45,7 @@ async function handleCopy() {
     await navigator.clipboard.writeText(props.text)
     showToast(t('common.copySuccess'))
   } catch {
-    showToast(t('common.copyFailed'), { isError: true })
+    showToast(t('common.copyFailed'), { type: 'error' })
   }
 }
 </script>

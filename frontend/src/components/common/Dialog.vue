@@ -5,7 +5,7 @@
         <div class="dialog-box" role="dialog" aria-modal="true" :style="{ maxWidth: props.width }">
           <div class="dialog-header">
             <span class="dialog-title">{{ dialogTitle }}</span>
-            <button v-if="showClose" class="dialog-close" @click="onCancel" :aria-label="t('common.close')">
+            <button v-if="showClose" class="dialog-close" type="button" @click="onCancel" :aria-label="t('common.close')">
               <SvgIcon name="x" :size="18" />
             </button>
           </div>
@@ -15,12 +15,14 @@
           <div class="dialog-footer">
             <button
               v-if="type === 'confirm'"
+              type="button"
               class="btn btn-secondary"
               @click="onCancel"
             >
               <SvgIcon name="x" :size="14" /> {{ dialogCancelText }}
             </button>
             <button
+              type="button"
               class="btn"
               :class="confirmClass"
               @click="onConfirm"

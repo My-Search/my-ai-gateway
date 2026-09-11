@@ -3,6 +3,7 @@
     <button
       v-for="tab in tabs"
       :key="tab.value"
+      type="button"
       :class="['tab-btn', { active: modelValue === tab.value }]"
       @click="$emit('update:modelValue', tab.value)"
       :disabled="tab.disabled"
