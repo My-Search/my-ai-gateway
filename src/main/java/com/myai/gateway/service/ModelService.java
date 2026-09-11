@@ -105,15 +105,23 @@ public class ModelService {
         return inheritanceResolver.getChannelRels(modelId);
     }
 
+    /**
+     * 模式切换结果。
+     *
+     * @param model             切换后的模型
+     * @param cycleBrokenModel  若本次切换会形成循环继承而被自动解除，则为被重置为自添加的闭环模型；否则为 null
+     */
+    public record RelModeSwitchResult(Model model, Model cycleBrokenModel) {}
+
     @Transactional
-    public Model setRelMode(Long modelId, String newMode, Long sourceModelId) {
+    public RelModeSwitchResult setRelMode(Long modelId, String newMode, Long sourceModelId) {
         // 获取当前模式（直查新实例，避免修改共享缓存引用）
         Model model = modelCrud.getById(modelId);
         if (model == null) {
             throw new RuntimeException("模型不存在");
         }
-        String currentMode = model.getRelMode() == null ? Model.RelMode.SELF_ADD : model.getRelMode();
 
+        Model cycleBrokenModel = null;
         if (Model.RelMode.INHERIT.equals(newMode)) {
             if (sourceModelId == null) {
                 throw new RuntimeException("切换到继承模式时必须指定源模型");
@@ -125,13 +133,19 @@ public class ModelService {
             if (source == null) {
                 throw new RuntimeException("源模型不存在");
             }
-            // 检测切换到 inherit 后是否会产生环
+            // 检测是否形成循环继承：若会形成，先解除循环再继续切换，而不是直接拒绝。
+            // 解除方式：将闭环处的模型（其继承源已出现在链路上）重置为自添加模式。
             java.util.Set<Long> visited = new java.util.HashSet<>();
             visited.add(modelId);
-            if (inheritanceResolver.wouldCreateCycle(sourceModelId, visited)) {
-                throw new RuntimeException("指定的源模型会形成循环继承");
+            cycleBrokenModel = inheritanceResolver.findCycleClosingModel(sourceModelId, visited);
+            if (cycleBrokenModel != null) {
+                // 显式置空继承源：updateById 会跳过 null 字段，必须走 updateRelMode
+                modelCrud.updateRelMode(cycleBrokenModel.getId(), Model.RelMode.SELF_ADD, null);
+                log.warn("切换模型 {} 继承自 {} 会形成循环继承，已自动解除：模型「{}」({}) 重置为自添加模式",
+                        modelId, sourceModelId, cycleBrokenModel.getModelName(), cycleBrokenModel.getId());
+                cycleBrokenModel.setRelMode(Model.RelMode.SELF_ADD);
+                cycleBrokenModel.setInheritFromModelId(null);
             }
-            // self_add → inherit：保留自有 rels
             model.setRelMode(Model.RelMode.INHERIT);
             model.setInheritFromModelId(sourceModelId);
         } else if (Model.RelMode.SELF_ADD.equals(newMode)) {
@@ -141,9 +155,30 @@ public class ModelService {
         } else {
             throw new RuntimeException("未知的关联模式: " + newMode);
         }
-        model.setUpdatedAt(LocalDateTime.now());
-        modelCrud.update(model);
-        return model;
+        // 显式落库 rel_mode 与 inherit_from_model_id（含置空场景），并失效模型缓存
+        modelCrud.updateRelMode(modelId, model.getRelMode(), model.getInheritFromModelId());
+        return new RelModeSwitchResult(model, cycleBrokenModel);
+    }
+
+    /**
+     * 修复"继承模式但未设置（或指向不存在的）源模型"的悬空状态：
+     * 按自添加处理并落库，保证刷新后模型仍为自添加模式、关联列表可正常编辑。
+     *
+     * @return 修复后的模型；模型不存在时返回 null
+     */
+    @Transactional
+    public Model normalizeDanglingInherit(Long modelId) {
+        Model m = modelCrud.getById(modelId);
+        if (m == null) return null;
+        if (!Model.RelMode.INHERIT.equals(m.getRelMode())) return m;
+        boolean dangling = m.getInheritFromModelId() == null
+                || cacheQuery.getModelById(m.getInheritFromModelId()) == null;
+        if (!dangling) return m;
+        modelCrud.updateRelMode(modelId, Model.RelMode.SELF_ADD, null);
+        log.warn("模型 {} 处于继承模式但未设置有效源模型，已自动重置为自添加模式", modelId);
+        m.setRelMode(Model.RelMode.SELF_ADD);
+        m.setInheritFromModelId(null);
+        return m;
     }
 
     public List<ChannelModel> getAllAvailableChannelModels() {

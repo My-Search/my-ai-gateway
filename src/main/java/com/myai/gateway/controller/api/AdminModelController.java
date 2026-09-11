@@ -135,7 +135,8 @@ public class AdminModelController {
 
     @GetMapping(value = "/models/{id}/rels", produces = "application/json;charset=UTF-8")
     public ResponseEntity<?> getModelRels(@PathVariable Long id) {
-        Model m = modelService.getById(id);
+        // 悬空继承（继承模式但未设置/失效的源模型）按自添加处理并落库，保证刷新后可直接编辑
+        Model m = modelService.normalizeDanglingInherit(id);
         if (m == null) return ResponseEntity.status(404).body(Map.of("error", "模型不存在"));
         List<ModelChannelRel> rels = modelService.getChannelRels(id);
         List<ChannelModel> availableModels = modelService.getAllAvailableChannelModels();
@@ -326,9 +327,16 @@ public class AdminModelController {
             } else if (raw != null) {
                 sourceModelId = Long.parseLong(raw.toString());
             }
-            Model updated = modelService.setRelMode(id, mode, sourceModelId);
+            ModelService.RelModeSwitchResult switchResult = modelService.setRelMode(id, mode, sourceModelId);
             result.put("success", true);
-            result.put("model", updated);
+            result.put("model", switchResult.model());
+            // 若因形成循环继承而自动解除了闭环，附带被重置的模型信息供前端提示
+            if (switchResult.cycleBrokenModel() != null) {
+                Model broken = switchResult.cycleBrokenModel();
+                result.put("cycleBrokenModel", Map.of(
+                        "id", broken.getId(),
+                        "modelName", broken.getModelName() == null ? "" : broken.getModelName()));
+            }
         } catch (Exception e) {
             log.warn("切换模型关联模式失败: id={}, body={}", id, body, e);
             result.put("success", false);

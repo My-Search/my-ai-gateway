@@ -1,6 +1,7 @@
 package com.myai.gateway.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.myai.gateway.config.LocalCacheService;
 import com.myai.gateway.entity.CircuitBreakerConfig;
 import com.myai.gateway.entity.Model;
@@ -11,6 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
 
 /**
  * 模型创建删除 - 负责模型的创建、更新、删除操作
@@ -61,6 +64,21 @@ public class ModelCrud {
             invalidateCache(LocalCacheService.NS_MODEL_BY_NAME, model.getModelName());
         }
         return model;
+    }
+
+    /**
+     * 仅更新关联模式与继承源，显式落库（支持将 inherit_from_model_id 置空）。
+     * <p>MyBatis-Plus 的 updateById 默认跳过 null 字段，无法清除继承源，
+     * 因此这里用 UpdateWrapper 显式 set，保证切换 self_add 或解除循环时正确清空。</p>
+     */
+    @Transactional
+    public void updateRelMode(Long modelId, String relMode, Long inheritFromModelId) {
+        modelMapper.update(null, new LambdaUpdateWrapper<Model>()
+                .eq(Model::getId, modelId)
+                .set(Model::getRelMode, relMode)
+                .set(Model::getInheritFromModelId, inheritFromModelId)
+                .set(Model::getUpdatedAt, LocalDateTime.now()));
+        invalidateCache(LocalCacheService.NS_MODEL_BY_ID, String.valueOf(modelId));
     }
 
     @Transactional

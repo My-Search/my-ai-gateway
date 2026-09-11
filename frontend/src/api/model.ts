@@ -123,7 +123,13 @@ export const modelApi = {
    * @param sourceModelId 仅 mode='inherit' 时必填
    */
   setRelMode(id: number, mode: RelMode, sourceModelId?: number) {
-    return http.put<{ success: boolean; model?: CustomModel; error?: string }>(
+    return http.put<{
+      success: boolean
+      model?: CustomModel
+      /** 若本次切换会形成循环继承，后端已自动解除闭环；此处为被重置为自添加的闭环模型 */
+      cycleBrokenModel?: { id: number; modelName: string }
+      error?: string
+    }>(
       `/models/${id}/rel-mode`,
       { mode, sourceModelId }
     )

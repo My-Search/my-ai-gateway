@@ -277,6 +277,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
+import { useToast } from '@/composables/useToast'
 import { modelApi, type CustomModel, type ModelChannelRel, type RelMode } from '@/api/model'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
 import Dialog from '@/components/common/Dialog.vue'
@@ -287,6 +288,7 @@ const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { visible: dialogVisible, title: dialogTitle, message: dialogMessage, type: dialogType, confirmClass: dialogConfirmClass, onConfirm: onDialogConfirm, open: openDialog } = useDialog()
+const { showToast } = useToast()
 const model = ref<CustomModel | null>(null)
 const rels = ref<ModelChannelRel[]>([])
 const loading = ref(true)
@@ -754,6 +756,13 @@ async function doSetMode(mode: RelMode, sourceId?: number) {
     if (res.data.success) {
       showSourcePicker.value = false
       pendingSourceId.value = 0
+      // 后端检测到循环继承时会自动解除闭环并继续切换，此处给出提示
+      if (res.data.cycleBrokenModel) {
+        showToast(
+          t('model.rels.cycleBrokenTip').replace('{name}', res.data.cycleBrokenModel.modelName),
+          { type: 'warning', duration: 4000 }
+        )
+      }
       await loadData()
     } else {
       openDialog({ title: t('error.updateFailed'), message: res.data.error || t('error.unknown') })

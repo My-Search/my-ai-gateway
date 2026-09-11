@@ -92,17 +92,24 @@ public class ModelInheritanceResolver {
     }
 
     /**
-     * 检测从 startModelId 出发解析继承时是否会形成环
+     * 沿继承链查找"闭环模型"：从 fromModelId 出发逐级跟踪 inherit_from_model_id，
+     * 若某模型的继承源已出现在 visited（含初始的发起模型），则该模型即为闭环处。
+     *
+     * <p>调用方通常以 {@code visited = {发起切换的模型ID}} 传入；
+     * 返回非 null 表示从 fromModelId 开始的继承链会（经该模型）回到发起模型或其自身链路，
+     * 直接切换将形成循环继承。解除方式：将返回的模型重置为自添加。</p>
+     *
+     * @return 形成闭环的模型；无环时返回 null
      */
-    public boolean wouldCreateCycle(Long startModelId, Set<Long> visited) {
-        Model m = modelMapper.selectById(startModelId);
-        if (m == null) return false;
+    public Model findCycleClosingModel(Long fromModelId, Set<Long> visited) {
+        Model m = modelMapper.selectById(fromModelId);
+        if (m == null) return null;
         if (!Model.RelMode.INHERIT.equals(m.getRelMode()) || m.getInheritFromModelId() == null) {
-            return false;
+            return null;
         }
         Long next = m.getInheritFromModelId();
-        if (visited.contains(next)) return true;
+        if (visited.contains(next)) return m;
         visited.add(next);
-        return wouldCreateCycle(next, visited);
+        return findCycleClosingModel(next, visited);
     }
 }

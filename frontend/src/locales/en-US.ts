@@ -363,6 +363,7 @@ export default {
   'model.rels.selectInheritSource': '-- Select source entry model --',
   'model.rels.applySource': 'Apply',
   'model.rels.inheritReadonlyTip': 'Inherit mode: linked models are provided by the source model in real time and cannot be modified here.',
+  'model.rels.cycleBrokenTip': 'Circular inheritance detected. "{name}" was reset to Self-Add and the switch completed.',
   'model.rels.switchModeTitle': 'Switch Link Mode',
   'model.rels.switchToInheritConfirm': 'Switching to Inherit mode will use the source model\'s links and discard this model\'s custom links. Continue?',
   'model.rels.switchToSelfAddConfirm': 'Switching to Self-Add mode will copy the current effective links as the initial list, which you can then freely modify. Continue?',

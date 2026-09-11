@@ -1,6 +1,10 @@
 package com.myai.gateway.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import com.myai.gateway.entity.Channel;
 import com.myai.gateway.entity.ChannelModel;
 import com.myai.gateway.entity.Model;
@@ -10,6 +14,7 @@ import com.myai.gateway.mapper.ChannelMapper;
 import com.myai.gateway.mapper.ChannelModelMapper;
 import com.myai.gateway.mapper.ModelChannelRelMapper;
 import com.myai.gateway.mapper.ModelMapper;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -40,6 +45,12 @@ class ModelServiceTest {
     private CircuitBreakerConfigMapper circuitBreakerConfigMapper;
     private ChannelService channelService;
     private ModelService service;
+
+    @BeforeAll
+    static void initTableInfo() {
+        // LambdaUpdateWrapper 解析实体列名需要 MyBatis-Plus 元数据
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Model.class);
+    }
 
     @BeforeEach
     void setUp() {
@@ -74,7 +85,7 @@ class ModelServiceTest {
         return m;
     }
 
-    private Model newInheritModel(long id, String name, long sourceId) {
+    private Model newInheritModel(long id, String name, Long sourceId) {
         Model m = new Model(name, "", "failover");
         m.setId(id);
         m.setEnabled(1);
@@ -232,7 +243,8 @@ class ModelServiceTest {
             when(modelMapper.selectById(1L)).thenReturn(model);
             when(modelMapper.selectById(99L)).thenReturn(newSelfAddModel(99L, "source"));
 
-            Model updated = service.setRelMode(1L, "inherit", 99L);
+            ModelService.RelModeSwitchResult result = service.setRelMode(1L, "inherit", 99L);
+            Model updated = result.model();
 
             // 验证不再删除自己 rels（保留以供切回时恢复）
             verify(relMapper, never()).delete(any(LambdaQueryWrapper.class));
@@ -240,7 +252,8 @@ class ModelServiceTest {
             // 验证更新字段
             assertThat(updated.getRelMode()).isEqualTo("inherit");
             assertThat(updated.getInheritFromModelId()).isEqualTo(99L);
-            verify(modelMapper).updateById(model);
+            assertThat(result.cycleBrokenModel()).isNull();
+            verify(modelMapper).update(isNull(), any(LambdaUpdateWrapper.class));
         }
 
         @Test
@@ -249,7 +262,7 @@ class ModelServiceTest {
             Model child = newInheritModel(1L, "child", 99L);
             when(modelMapper.selectById(1L)).thenReturn(child);
 
-            Model updated = service.setRelMode(1L, "self_add", null);
+            Model updated = service.setRelMode(1L, "self_add", null).model();
 
             // 验证没有复制源模型的 rels（因为保留的自有 rels 仍在 DB 中）
             verify(relMapper, never()).insert(any(ModelChannelRel.class));
@@ -264,7 +277,7 @@ class ModelServiceTest {
             Model model = newSelfAddModel(1L, "m");
             when(modelMapper.selectById(1L)).thenReturn(model);
 
-            Model updated = service.setRelMode(1L, "self_add", null);
+            Model updated = service.setRelMode(1L, "self_add", null).model();
 
             verify(relMapper, never()).delete(any(LambdaQueryWrapper.class));
             verify(relMapper, never()).insert(any(ModelChannelRel.class));
@@ -277,7 +290,7 @@ class ModelServiceTest {
             when(modelMapper.selectById(1L)).thenReturn(model);
             when(modelMapper.selectById(100L)).thenReturn(newSelfAddModel(100L, "new-source"));
 
-            Model updated = service.setRelMode(1L, "inherit", 100L);
+            Model updated = service.setRelMode(1L, "inherit", 100L).model();
 
             verify(relMapper, never()).delete(any(LambdaQueryWrapper.class));
             verify(relMapper, never()).insert(any(ModelChannelRel.class));
@@ -326,24 +339,100 @@ class ModelServiceTest {
         }
 
         @Test
-        void setRelMode_createsCycle_throws() {
+        void setRelMode_createsCycle_breaksCycleAndSwitches() {
             // 现状：1L 继承 2L，2L 继承 3L
-            // 现在想把 3L 改为继承 1L → 会形成环 1→2→3→1
+            // 现在想把 3L 改为继承 1L → 原本会形成环 1→2→3→1
+            // 期望：自动将闭环处的 2L（其继承源 3L 已在链路上）重置为自添加，然后 3L 正常继承 1L
             Model m1 = newInheritModel(1L, "A", 2L);
             Model m2 = newInheritModel(2L, "B", 3L);
             Model m3 = newSelfAddModel(3L, "C");
             when(modelMapper.selectById(3L)).thenReturn(m3);
             when(modelMapper.selectById(2L)).thenReturn(m2);
             when(modelMapper.selectById(1L)).thenReturn(m1);
-            when(modelMapper.selectById(99L)).thenReturn(newSelfAddModel(99L, "alt-source"));
 
-            // 先把 3L 设为继承 2L 没问题（检测源 2L 链：2L→3L，3L 已在 visited）
-            // 现在让 3L 继承 1L：1L 自身是 inherit 模式且 inheritFromModelId=2L
-            // 从 sourceModelId=1L 开始检测：1L 是 inherit，next=2L
-            // 2L 是 inherit，next=3L，3L 在 visited（开始时含 3L）→ 环
-            assertThatThrownBy(() -> service.setRelMode(3L, "inherit", 1L))
-                    .isInstanceOf(RuntimeException.class)
-                    .hasMessageContaining("循环");
+            ModelService.RelModeSwitchResult result = service.setRelMode(3L, "inherit", 1L);
+
+            // 切换本身成功
+            assertThat(result.model().getRelMode()).isEqualTo("inherit");
+            assertThat(result.model().getInheritFromModelId()).isEqualTo(1L);
+
+            // 闭环模型 2L 被重置为自添加
+            assertThat(result.cycleBrokenModel()).isNotNull();
+            assertThat(result.cycleBrokenModel().getId()).isEqualTo(2L);
+            assertThat(result.cycleBrokenModel().getRelMode()).isEqualTo("self_add");
+            assertThat(result.cycleBrokenModel().getInheritFromModelId()).isNull();
+        }
+
+        @Test
+        void setRelMode_noCycle_cycleBrokenModelIsNull() {
+            Model model = newSelfAddModel(1L, "m");
+            when(modelMapper.selectById(1L)).thenReturn(model);
+            when(modelMapper.selectById(99L)).thenReturn(newSelfAddModel(99L, "source"));
+
+            ModelService.RelModeSwitchResult result = service.setRelMode(1L, "inherit", 99L);
+
+            assertThat(result.cycleBrokenModel()).isNull();
+        }
+    }
+
+    // ==================== normalizeDanglingInherit ====================
+
+    @Nested
+    class NormalizeDanglingInherit {
+
+        @Test
+        void inheritWithoutSource_resetsToSelfAdd() {
+            Model m = newInheritModel(1L, "m", null);
+            when(modelMapper.selectById(1L)).thenReturn(m);
+
+            Model result = service.normalizeDanglingInherit(1L);
+
+            assertThat(result.getRelMode()).isEqualTo("self_add");
+            assertThat(result.getInheritFromModelId()).isNull();
+            verify(modelMapper).update(isNull(), any(LambdaUpdateWrapper.class));
+        }
+
+        @Test
+        void inheritWithMissingSource_resetsToSelfAdd() {
+            Model m = newInheritModel(1L, "m", 99L);
+            when(modelMapper.selectById(1L)).thenReturn(m);
+            when(modelMapper.selectById(99L)).thenReturn(null);
+
+            Model result = service.normalizeDanglingInherit(1L);
+
+            assertThat(result.getRelMode()).isEqualTo("self_add");
+            assertThat(result.getInheritFromModelId()).isNull();
+        }
+
+        @Test
+        void inheritWithValidSource_keepsMode() {
+            Model m = newInheritModel(1L, "m", 99L);
+            when(modelMapper.selectById(1L)).thenReturn(m);
+            when(modelMapper.selectById(99L)).thenReturn(newSelfAddModel(99L, "source"));
+
+            Model result = service.normalizeDanglingInherit(1L);
+
+            assertThat(result.getRelMode()).isEqualTo("inherit");
+            assertThat(result.getInheritFromModelId()).isEqualTo(99L);
+            verify(modelMapper, never()).update(any(), any(LambdaUpdateWrapper.class));
+        }
+
+        @Test
+        void selfAddMode_untouched() {
+            Model m = newSelfAddModel(1L, "m");
+            when(modelMapper.selectById(1L)).thenReturn(m);
+
+            Model result = service.normalizeDanglingInherit(1L);
+
+            assertThat(result.getRelMode()).isEqualTo("self_add");
+            verify(modelMapper, never()).update(any(), any(LambdaUpdateWrapper.class));
+        }
+
+        @Test
+        void modelNotFound_returnsNull() {
+            when(modelMapper.selectById(1L)).thenReturn(null);
+
+            assertThat(service.normalizeDanglingInherit(1L)).isNull();
         }
     }
 

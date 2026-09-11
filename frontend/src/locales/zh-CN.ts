@@ -363,6 +363,7 @@ export default {
   'model.rels.selectInheritSource': '-- 选择源入口模型 --',
   'model.rels.applySource': '应用',
   'model.rels.inheritReadonlyTip': '当前为继承模式，关联列表由源模型实时提供，不可手动修改。',
+  'model.rels.cycleBrokenTip': '检测到循环继承，已自动将「{name}」重置为自添加模式并完成切换。',
   'model.rels.switchModeTitle': '切换关联模式',
   'model.rels.switchToInheritConfirm': '切换到继承模式后，将使用源模型的关联，并丢弃当前本模型自定义的关联。确定继续？',
   'model.rels.switchToSelfAddConfirm': '切换到自添加模式后，将以源模型当前的关联作为初始列表，之后可自由修改。确定继续？',
