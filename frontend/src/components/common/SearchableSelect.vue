@@ -84,8 +84,11 @@ const selectedCountText = computed(() =>
 
 const filteredOptions = computed(() => {
   if (!searchText.value) return props.options
-  const keyword = searchText.value.toLowerCase()
-  return props.options.filter(opt => opt.label.toLowerCase().includes(keyword))
+  const keywords = searchText.value.toLowerCase().split(/\s+/).filter(Boolean)
+  return props.options.filter(opt => {
+    const label = opt.label.toLowerCase()
+    return keywords.every(kw => label.includes(kw))
+  })
 })
 
 // 判断选项是否被选中
