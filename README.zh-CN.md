@@ -176,6 +176,19 @@ docker compose down
 
 SQLite 数据库文件挂载在 `./data/gateway.db`，容器重建不会丢失数据。
 
+### 数据库维护（回收磁盘空间）
+
+日志清理只执行 `DELETE`，而 SQLite 配置为 `auto_vacuum=NONE`，释放的页会保留在数据库文件内、不会归还给操作系统，
+因此文件只增不减。如需回收这部分空间，请在**停止后端**后执行 `VACUUM`（需要独占访问）：
+
+```bash
+docker compose down
+sqlite3 data/gateway.db "VACUUM;"
+docker compose up -d
+```
+
+可定期执行。此项仅为磁盘空间优化，不影响功能正确性；执行前建议先备份 `data/gateway.db`。
+
 ### 常用命令
 
 ```bash

@@ -40,7 +40,11 @@ spring:
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
-      connection-init-sql: "PRAGMA journal_mode=WAL;PRAGMA synchronous=NORMAL;PRAGMA cache_size=-64000;PRAGMA temp_store=MEMORY;PRAGMA mmap_size=268435456;PRAGMA foreign_keys=ON;PRAGMA busy_timeout=30000;"
+      # cache_size：负值表示 KiB，即每连接页缓存大小，在连接建立时执行、按连接独立分配。
+      # 取 16MB/连接：常态（minimum-idle=2）约 32MB，峰值（maximum-pool-size=10）约 160MB。
+      # 原值 -64000（62.5MB/连接）在峰值时会占约 625MB native 内存，而实际数据量远小于此
+      # （日志按保留天数清理，热点读取少），故下调；WAL + OS 页缓存会兜底随机读。
+      connection-init-sql: "PRAGMA journal_mode=WAL;PRAGMA synchronous=NORMAL;PRAGMA cache_size=-16000;PRAGMA temp_store=MEMORY;PRAGMA mmap_size=268435456;PRAGMA foreign_keys=ON;PRAGMA busy_timeout=30000;"
 
 # MyBatis-Plus
 mybatis-plus:

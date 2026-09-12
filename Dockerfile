@@ -21,6 +21,10 @@ COPY --from=builder /workspace/target/my-ai-gateway.jar /app/app.jar
 
 EXPOSE 1399
 
+# 默认堆上限：容器未设置 mem_limit 时，JVM 按宿主机总内存的 25% 计算堆上限（内存占用不可预期）。
+# 可通过 -e JAVA_TOOL_OPTIONS=... 覆盖；docker-compose.yml 中已显式设置，会覆盖此默认值。
+ENV JAVA_TOOL_OPTIONS="-Xmx512m"
+
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD wget --quiet --tries=1 --spider http://localhost:1399/actuator/health || exit 1
 

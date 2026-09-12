@@ -176,6 +176,21 @@ docker compose down
 
 The SQLite database file is mounted at `./data/gateway.db`; container rebuilds will not lose data.
 
+### Database Maintenance (Reclaim Disk Space)
+
+Log cleanup only issues `DELETE`, and SQLite is configured with `auto_vacuum=NONE`. Freed pages stay inside the
+database file and are never returned to the OS, so the file grows and does not shrink on its own. To reclaim that
+space, run `VACUUM` while the backend is stopped (it needs exclusive access):
+
+```bash
+docker compose down
+sqlite3 data/gateway.db "VACUUM;"
+docker compose up -d
+```
+
+This can be done periodically. It is a disk-space optimization only and is not required for correctness; back up
+`data/gateway.db` first as a precaution.
+
 ### Common Commands
 
 ```bash

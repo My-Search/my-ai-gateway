@@ -66,6 +66,14 @@ public class RelayService {
     /** 流式请求跨 chunk 翻译状态 */
     final ConcurrentHashMap<String, com.myai.gateway.relay.transformer.registry.StreamTranslateState> streamTranslateStates = new ConcurrentHashMap<>();
 
+    /**
+     * 渠道模型测试专用 WebClient（进程内单例，连接池复用）。
+     * <p>原先在 {@link #testChannelModel} 内每次调用新建 {@link reactor.netty.resources.ConnectionProvider}，
+     * 导致每次测试都创建新连接池且从不释放（连接与池内资源随调用次数累积）。
+     * 此处改为与 {@link CircuitBreakerProbeService} 一致：池在构造期创建一次、应用生命周期内复用。</p>
+     */
+    private final WebClient testWebClient;
+
     public RelayService(ChannelService channelService,
                         ChannelApiKeyService channelApiKeyService,
                         ApiKeyService apiKeyService,
@@ -107,6 +115,22 @@ public class RelayService {
                 .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 5_000);
         WebClient webClient = WebClient.builder()
                 .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(httpClient))
+                .codecs(config -> config.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
+                .build();
+
+        // 渠道模型测试专用 WebClient：参数与原先每次新建的池保持一致（10 连接 / 10s acquire / 10s idle），
+        // 仅改为构造期创建一次并复用，避免每次测试新建连接池且不释放。
+        reactor.netty.resources.ConnectionProvider testProvider = reactor.netty.resources.ConnectionProvider
+                .builder("relay-test")
+                .maxConnections(10)
+                .pendingAcquireTimeout(java.time.Duration.ofSeconds(10))
+                .maxIdleTime(java.time.Duration.ofSeconds(10))
+                .build();
+        reactor.netty.http.client.HttpClient testHttpClient =
+                reactor.netty.http.client.HttpClient.create(testProvider)
+                        .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 5_000);
+        this.testWebClient = WebClient.builder()
+                .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(testHttpClient))
                 .codecs(config -> config.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
                 .build();
 
@@ -377,21 +401,7 @@ public class RelayService {
             throw new RuntimeException("构建测试请求体失败", e);
         }
 
-        // 复用 CandidateRouter 的 webClient
-        org.springframework.web.reactive.function.client.WebClient.Builder wbBuilder = org.springframework.web.reactive.function.client.WebClient.builder();
-        reactor.netty.resources.ConnectionProvider providerConn = reactor.netty.resources.ConnectionProvider
-                .builder("relay-test")
-                .maxConnections(10)
-                .pendingAcquireTimeout(java.time.Duration.ofSeconds(10))
-                .maxIdleTime(java.time.Duration.ofSeconds(10))
-                .build();
-        reactor.netty.http.client.HttpClient httpClient = reactor.netty.http.client.HttpClient.create(providerConn)
-                .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 5_000);
-        WebClient testWebClient = wbBuilder
-                .clientConnector(new org.springframework.http.client.reactive.ReactorClientHttpConnector(httpClient))
-                .codecs(config -> config.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
-                .build();
-
+        // 使用构造期创建的测试专用 WebClient（连接池复用，不再每次调用新建连接池）
         log.info("渠道模型测试: channel={}, model={}, key={}, endpoint={}",
                 channel.getName(), channelModel.getModelName(), apiKey.getKeyName(), endpoint);
 
@@ -401,7 +411,7 @@ public class RelayService {
 
         String body;
         try {
-            body = testWebClient.post()
+            body = this.testWebClient.post()
                     .uri(endpoint)
                     .headers(h -> headers.forEach(h::add))
                     .contentType(MediaType.APPLICATION_JSON)
