@@ -516,3 +516,13 @@ ALTER TABLE channels ADD COLUMN custom_headers TEXT;
 -- ========================================
 UPDATE admin_config SET description = '请求数据保留时长（小时），超过此时间的 request_headers/body 将被清理，0=跟随日志保留天数' WHERE config_key = 'request_body_ttl_hours';
 UPDATE admin_config SET description = '重试/失败请求数据保留时长（小时），超过此时间的失败/重试记录的 request_headers/body 将被清理，留空=跟随请求数据保留时长，0=跟随日志保留天数' WHERE config_key = 'retry_fail_ttl_hours';
+
+-- ========================================
+-- VERSION:v1.36.0
+-- 性能优化：为请求日志 trace 分页/分组极值查询新增 (trace_id, created_at) 复合索引。
+--   request_logs 的"日志列表按 trace 分页""按 trace 分组取最新时间"等查询原先基于
+--   idx_request_logs_trace_id(trace_id) 单列索引，GROUP BY trace_id 后仍需回表取
+--   created_at 做 MAX/ORDER BY，数据量大时回表随机 IO 显著（每行一次 B-Tree 查找）。
+--   复合索引使 MAX(created_at) / ORDER BY created_at 直接在索引内完成（覆盖索引，零回表）。
+-- ========================================
+CREATE INDEX IF NOT EXISTS idx_request_logs_trace_id_created_at ON request_logs(trace_id, created_at);

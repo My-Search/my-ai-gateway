@@ -57,9 +57,19 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
                                                                   @Param("until") LocalDateTime until);
 
     /**
-     * 分页获取去重后的 traceId
+     * 分页获取去重后的 traceId（最新请求在前）
+     * <p>
+     * 改写为「先取每个 trace 的最新时间再排序分页」的两段式查询，
+     * 避免 GROUP BY trace_id + ORDER BY MAX(created_at) 对全表
+     * trace 分组后整体进临时 B-Tree 排序（大数据量下为 O(N·logN) 全量物化）。
+     * 依赖 idx_request_logs_trace_id_created_at（trace_id, created_at）索引：
+     * 各 trace 的 MAX(created_at) 可直接从索引取最大值（loose index scan），
+     * 外层仅对少量候选行排序。
+     * </p>
      */
-    @Select("SELECT trace_id FROM request_logs GROUP BY trace_id ORDER BY MAX(created_at) DESC LIMIT #{limit} OFFSET #{offset}")
+    @Select("SELECT trace_id FROM (" +
+            "SELECT trace_id, MAX(created_at) as latest FROM request_logs GROUP BY trace_id" +
+            ") ORDER BY latest DESC LIMIT #{limit} OFFSET #{offset}")
     List<String> selectTraceIdsByPage(@Param("offset") int offset, @Param("limit") int limit);
 
     /**
@@ -69,7 +79,11 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
     long countDistinctTraces();
 
     /**
-     * 根据条件过滤后的分页 traceId 查询
+     * 根据条件过滤后的分页 traceId 查询（最新请求在前）
+     * <p>
+     * 与 {@link #selectTraceIdsByPage} 同思路：先分组取每个 trace 的最新时间，
+     * 再按最新时间排序分页，避免分组后整体排序的临时 B-Tree 物化。
+     * </p>
      *
      * @param modelName       入口模型名（精确匹配，可选）
      * @param gatewayApiKeyId 网关 API Key 主键（精确匹配，可选；优先于 apiKeyName 使用）
@@ -78,7 +92,8 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
      * @param endTime         结束时间（可选）
      */
     @Select("<script>"
-            + "SELECT trace_id FROM request_logs"
+            + "SELECT t.trace_id FROM ("
+            + "SELECT trace_id, MAX(created_at) as latest FROM request_logs"
             + "<where>"
             + "<if test='modelName != null and modelName != \"\"'>AND model_name = #{modelName}</if>"
             + "<if test='gatewayApiKeyId != null'>AND gateway_api_key_id = #{gatewayApiKeyId}</if>"
@@ -86,7 +101,7 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             + "<if test='startTime != null'>AND created_at &gt;= #{startTime}</if>"
             + "<if test='endTime != null'>AND created_at &lt;= #{endTime}</if>"
             + "</where>"
-            + " GROUP BY trace_id ORDER BY MAX(created_at) DESC LIMIT #{limit} OFFSET #{offset}"
+            + " GROUP BY trace_id) t ORDER BY t.latest DESC LIMIT #{limit} OFFSET #{offset}"
             + "</script>")
     List<String> selectTraceIdsByFilters(@Param("modelName") String modelName,
                                          @Param("gatewayApiKeyId") Long gatewayApiKeyId,
@@ -131,6 +146,11 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
      * 与 requests 锚定同一集合，保证 successRate ≤ 100%（跨窗口完成不会使分子越界）。
      * monthly_fail: Java 层不再读取本 SQL 的该列，由 DashboardStatsCollector 推导，恒不出负。
      * </p>
+     * <p>
+     * 性能说明：success 判定原先用 EXISTS 逐 (trace, model) 配对探测（N 次索引回探），
+     * 改为 IN (窗口内 success trace 集合) 一次性物化探测，语义完全等价
+     * （EXISTS 与 IN 对 NULL 安全的 trace_id 集合等价），消除相关子查询的逐行回探开销。
+     * </p>
      */
     @Select("SELECT " +
             "(SELECT COUNT(*) FROM (" +
@@ -138,12 +158,11 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
             "  WHERE created_at >= #{monthStart} AND created_at < #{monthEnd} AND phase = 'start' " +
             "  AND model_name IS NOT NULL AND model_name != '')) as monthly_requests, " +
             "(SELECT COUNT(*) FROM (" +
-            "  SELECT DISTINCT s.trace_id, s.model_name FROM request_logs s " +
-            "  WHERE s.created_at >= #{monthStart} AND s.created_at < #{monthEnd} AND s.phase = 'start' " +
-            "  AND s.model_name IS NOT NULL AND s.model_name != '' " +
-            "  AND EXISTS (SELECT 1 FROM request_logs r2 " +
-            "    WHERE r2.trace_id = s.trace_id AND r2.phase = 'success' " +
-            "    AND r2.created_at >= #{monthStart} AND r2.created_at < #{monthEnd}))) as monthly_success, " +
+            "  SELECT DISTINCT trace_id, model_name FROM request_logs " +
+            "  WHERE created_at >= #{monthStart} AND created_at < #{monthEnd} AND phase = 'start' " +
+            "  AND model_name IS NOT NULL AND model_name != '' " +
+            "  AND trace_id IN (SELECT trace_id FROM request_logs " +
+            "    WHERE created_at >= #{monthStart} AND created_at < #{monthEnd} AND phase = 'success'))) as monthly_success, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(prompt_tokens, 0) ELSE 0 END), 0) as monthly_prompt_tokens, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(completion_tokens, 0) ELSE 0 END), 0) as monthly_completion_tokens, " +
             "COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) as monthly_total_tokens, " +
@@ -268,9 +287,15 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
      * 仅扫描 start/success 两类行（覆盖索引零回表），口径与原实现一致：
      * 失败 trace = 有 start 行且所有行均无 success 的 trace_id。
      * </p>
+     * <p>
+     * INDEXED BY 提示：强制走 idx_request_logs_created_at_phase_trace（先按 created_at 范围收窄，
+     * 且该索引 (created_at, phase, trace_id) 对本查询是零回表覆盖索引），避免规划器误选
+     * idx_request_logs_trace_id(_created_at) 的"全索引扫描"方案。
+     * </p>
      */
     @Select("SELECT COUNT(*) FROM (" +
             "SELECT trace_id FROM request_logs " +
+            "INDEXED BY idx_request_logs_created_at_phase_trace " +
             "WHERE created_at >= #{since} AND phase IN ('start', 'success') " +
             "GROUP BY trace_id HAVING MAX(phase = 'success') = 0)")
     long countFailedTraces(@Param("since") LocalDateTime since);
@@ -410,10 +435,16 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
      * 子查询先按时间窗（默认近 48 小时）过滤再按 trace_id 分组取最新 id，避免全表 GROUP BY；
      * 窗口内不足 10 个 trace 时返回不足 10 条，由调用方 {@code fallbackRecentTraces} 回退全量口径。
      * </p>
+     * <p>
+     * INDEXED BY 提示：强制时间窗查询走 idx_request_logs_created_at_phase_trace（先按 created_at 范围
+     * 收窄），避免规划器在存在 (trace_id, created_at) 复合索引时误选"全索引扫描 + 整体排序"的
+     * O(N) 方案（时间窗命中时 O(window) 更快）。
+     * </p>
      */
     @Select("SELECT r.* FROM request_logs r " +
             "INNER JOIN (" +
             "  SELECT MAX(id) as id FROM request_logs " +
+            "  INDEXED BY idx_request_logs_created_at_phase_trace " +
             "  WHERE created_at >= #{since} " +
             "  GROUP BY trace_id " +
             "  ORDER BY MAX(created_at) DESC LIMIT 10" +
@@ -425,13 +456,16 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
      * 最近活动回退查询（全量口径，与原 {@code selectRecentTraces} 行为一致）
      * <p>
      * 仅当时间窗内不足 10 个 trace（低频/新库场景）时调用，保证展示行为与旧版完全一致。
+     * 每个 trace 的最新行 id 改从 (trace_id, created_at) 覆盖索引上做分组极值扫描获取，
+     * 避免回表扫描全部大字段行后再分组。
      * </p>
      */
     @Select("SELECT r.* FROM request_logs r " +
             "INNER JOIN (" +
-            "  SELECT MAX(id) as id FROM request_logs " +
-            "  GROUP BY trace_id " +
-            "  ORDER BY MAX(created_at) DESC LIMIT 10" +
+            "  SELECT max_id as id FROM (" +
+            "    SELECT trace_id, MAX(created_at) as latest_at, MAX(id) as max_id FROM request_logs " +
+            "    GROUP BY trace_id ORDER BY latest_at DESC LIMIT 10" +
+            ") g" +
             ") latest ON r.id = latest.id " +
             "ORDER BY r.created_at DESC")
     List<RequestLog> fallbackRecentTraces();
