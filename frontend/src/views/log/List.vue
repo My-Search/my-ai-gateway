@@ -61,7 +61,7 @@
           <rect v-for="(seg, i) in bar.segments" :key="`seg-${bar.date}-${i}`"
                 :x="bar.x" :y="seg.y" :width="CHART_BAR_WIDTH" :height="Math.max(seg.h, 0.5)"
                 :fill="seg.color" class="chart-bar-seg">
-            <title>{{ bar.date }} {{ seg.model }}: {{ formatCompactNumber(seg.value) }} {{ chartModelType === 'channel' ? t('log.chart.requestsUnit') : t('log.chart.tokensUnit') }}</title>
+            <title>{{ bar.date }} {{ seg.model }}: {{ formatCompactNumber(seg.value) }} {{ t('log.chart.tokensUnit') }}</title>
           </rect>
         </g>
         <!-- 透明 hover 探测区（每列一个，用于精确定位 tooltip） -->
@@ -467,16 +467,22 @@ function onBarHover(bar: { date: string; segments: { model: string; color: strin
   usageTooltip.y = Math.max(0, y)
   usageTooltip.date = bar.date
   const data = usageChartData.value
-  // 无论入口/渠道模式，每行都同时给出该模型的 token 用量与请求次数
-  usageTooltip.rows = bar.segments.map(s => ({
-    model: s.model,
-    color: s.color,
-    tokens: data?.tokenValues[s.model]?.[bar.dayIdx] ?? 0,
-    requests: data?.requestValues[s.model]?.[bar.dayIdx] ?? 0,
-  }))
+  // 悬浮行覆盖当日所有"有 token 用量或有请求次数"的模型：
+  // 柱段只包含 token>0 的模型，而渠道模式下失败 trace 的 token 为 0（无柱段），
+  // 其请求次数仍需在 tooltip 中可见，因此这里从全量 models 构建而不是仅遍历柱段。
+  const rows: typeof usageTooltip.rows = []
+  if (data) {
+    for (const model of data.models) {
+      const tokens = data.tokenValues[model]?.[bar.dayIdx] ?? 0
+      const requests = data.requestValues[model]?.[bar.dayIdx] ?? 0
+      if (tokens === 0 && requests === 0) continue
+      rows.push({ model, color: modelColor(model), tokens, requests })
+    }
+  }
+  usageTooltip.rows = rows
   usageTooltip.totalTokens = data?.models.reduce((sum, model) => sum + (data.tokenValues[model]?.[bar.dayIdx] ?? 0), 0) ?? 0
   usageTooltip.totalRequests = data?.models.reduce((sum, model) => sum + (data.requestValues[model]?.[bar.dayIdx] ?? 0), 0) ?? 0
-  usageTooltip.visible = bar.segments.length > 0
+  usageTooltip.visible = rows.length > 0
 }
 
 function hideUsageTooltip() {

@@ -295,6 +295,11 @@ class TrendChartStatsCollector {
 
     /**
      * 获取"请求日志"页面顶部"使用历史"堆叠柱状图数据。
+     * <p>
+     * 柱高（values/maxValue）与模型排序两种模式统一按 token 用量；
+     * 渠道模式按 trace 最终结果归集（失败归为"请求失败"）且 token 记 0，
+     * 请求次数通过 requestValues 单独返回，供前端 tooltip 展示。
+     * </p>
      *
      * @param year            目标年份（如 2026）
      * @param month           目标月份，1-12
@@ -302,7 +307,7 @@ class TrendChartStatsCollector {
      * @param modelName       入口模型过滤（可选；null/空表示不过滤）
      * @param gatewayApiKeyId 网关 API Key 主键过滤（可选；与 apiKeyName 同时存在时优先使用 id）
      * @param apiKeyName      API Key 过滤（可选；null/空表示不过滤，兼容旧调用，对应渠道 Key 名）
-     * @return 包含 year/month/days/models/values/maxValue/totalValue 的 Map
+     * @return 包含 year/month/days/models/values/tokenValues/requestValues/maxValue/totalValue 的 Map
      */
     Map<String, Object> collectLogUsageChart(int year, int month, String modelType, String modelName,
                                              Long gatewayApiKeyId, String apiKeyName) {
@@ -314,7 +319,7 @@ class TrendChartStatsCollector {
         LocalDateTime until = untilDate.atStartOfDay();
         int daysInMonth = ym.lengthOfMonth();
 
-        // 2. 按 modelType 分支拉取该月 (date, model_name, total_tokens) 聚合行
+        // 2. 按 modelType 分支拉取该月 (date, model_name, total_tokens, request_count) 聚合行
         boolean isChannel = "channel".equals(modelType);
         List<Map<String, Object>> rows = isChannel
             ? requestLogMapper.selectDailyChannelModelTokenUsage(
@@ -332,7 +337,7 @@ class TrendChartStatsCollector {
             dateIndex.put(dateStr, d - 1);
         }
 
-        // 4. 遍历聚合行：累加到 modelTotals（用于排序）和 modelValues（按日填充）
+        // 4. 遍历聚合行：累加到 modelTotals（用于排序）和 modelValues（按日填充，统一 token 口径）
         //    使用 LinkedHashMap 保证遍历顺序稳定（与数据库返回顺序一致）
         Map<String, long[]> modelValues = new LinkedHashMap<>();
         Map<String, long[]> modelTokenValues = new LinkedHashMap<>();
@@ -348,10 +353,12 @@ class TrendChartStatsCollector {
             long[] bucket = modelValues.computeIfAbsent(model, k -> new long[daysInMonth]);
             long[] tokenBucket = modelTokenValues.computeIfAbsent(model, k -> new long[daysInMonth]);
             long[] requestBucket = modelRequestValues.computeIfAbsent(model, k -> new long[daysInMonth]);
-            bucket[idx] += isChannel ? requests : tokens;
+            // 两种模式统一按 token 用量堆叠（与"用量"语义一致）：
+            // 渠道模式的失败 trace token 记为 0，柱段高度为 0，但仍会出现在 tooltip 的次数列。
+            bucket[idx] += tokens;
             tokenBucket[idx] += tokens;
             requestBucket[idx] += requests;
-            modelTotals.merge(model, isChannel ? requests : tokens, Long::sum);
+            modelTotals.merge(model, tokens, Long::sum);
         }
 
         // 5. 按月总用量降序排序模型列表（保证前端颜色映射稳定：TopN 模型固定拿主色）

@@ -94,8 +94,10 @@ export const logApi = {
 /**
  * "使用历史"图表数据形状。
  * - days: 当月所有日期（yyyy-MM-dd），固定长度（28/29/30/31），便于前端稳定渲染 X 轴
- * - models: 当月出现过的入口模型，按总用量降序（前端可按顺序分配固定色板，保证 TopN 模型颜色稳定）
- * - values: model -> 长度为 days.length 的数组，按 days 顺序给出该日 token 用量
+ * - models: 当月出现过的模型（入口模型或渠道模型，随 modelType），按总 token 用量降序
+ *   （前端按顺序分配固定色板，保证 TopN 模型颜色稳定）
+ * - values: model -> 长度为 days.length 的数组，柱高口径，两种 modelType 下均为该日 token 用量
+ * - tokenValues / requestValues: 同形状的并列维度，供 tooltip 同时展示 tokens 与次数
  * - maxValue: 当月「每日堆叠总量」的最大值（即最高柱的值），前端以它为 Y 轴顶端，使最高柱恰好占满图表高度
  * - totalValue: 当月所有单元格总和
  */

@@ -473,11 +473,13 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
                                                         @Param("apiKeyName") String apiKeyName);
 
     /**
-     * 在指定时间范围内，按 trace 级最终结果按 (date, channel_model_name) 聚合请求数。
+     * 在指定时间范围内，按 trace 级最终结果按 (date, channel_model_name) 聚合 token 用量与请求数。
      * <p>
      * 用于"请求日志"页面顶部"使用历史"图表选择"渠道模型"模式时：
      * 按 trace 统计，请求最终成功（有 phase=success）则归入该次的渠道模型名，
      * 请求最终失败（无 phase=success）则统一归为"请求失败"。
+     * 成功的 trace 取该次请求的 total_tokens 作为 token 用量；失败 trace token 记为 0
+     * （柱状图按 token 堆叠时高度为 0，请求次数通过 request_count 单独返回给 tooltip）。
      * 可选按入口模型 / API Key 过滤。
      * </p>
      *
@@ -486,7 +488,7 @@ public interface RequestLogMapper extends BaseMapper<RequestLog> {
      * @param modelName        入口模型名（可选；为 null/空时不过滤）
      * @param gatewayApiKeyId  网关 API Key 主键（可选；优先于 apiKeyName 使用）
      * @param apiKeyName       API Key 名（可选；旧字段；为 null/空时不过滤）
-     * @return 每行包含 date (yyyy-MM-dd)、model_name、total_tokens（此处表示请求数）
+     * @return 每行包含 date (yyyy-MM-dd)、model_name、request_count（请求数）、total_tokens（token 用量）
      */
     @Select("<script>" +
             "SELECT date, model_name, COUNT(1) as request_count, " +

@@ -84,6 +84,10 @@ public class StatsService {
 
     /**
      * 获取"请求日志"页面顶部"使用历史"堆叠柱状图数据。
+     * <p>
+     * 柱高（values/maxValue）两种模式统一为 token 用量；渠道模式按 trace 最终结果归集，
+     * 失败 trace token 记 0，其请求次数通过 requestValues 返回（前端 tooltip 展示）。
+     * </p>
      *
      * @param year            目标年份（如 2026）
      * @param month           目标月份，1-12
@@ -91,7 +95,7 @@ public class StatsService {
      * @param modelName       入口模型过滤（可选；null/空表示不过滤）
      * @param gatewayApiKeyId 网关 API Key 主键过滤（可选；与 apiKeyName 同时存在时优先使用 id）
      * @param apiKeyName      API Key 过滤（可选；null/空表示不过滤，兼容旧调用，对应渠道 Key 名）
-     * @return 包含 year/month/days/models/values/maxValue/totalValue 的 Map
+     * @return 包含 year/month/days/models/values/tokenValues/requestValues/maxValue/totalValue 的 Map
      */
     public Map<String, Object> getLogUsageChart(int year, int month, String modelType, String modelName,
                                                 Long gatewayApiKeyId, String apiKeyName) {

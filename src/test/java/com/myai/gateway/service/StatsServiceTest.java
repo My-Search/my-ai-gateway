@@ -14,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -206,12 +207,72 @@ class StatsServiceTest {
         assertThat(result.get("totalValue")).isEqualTo(100L);
     }
 
+    @Test
+    void chart_channelMode_usesTokensForValuesAndKeepsRequestCountsSeparate() {
+        // 渠道模式：values/maxValue/排序统一按 token 用量（与 entry 一致）；
+        // "请求失败" trace token=0 但 request_count>0，需保留在 models 中供 tooltip 展示次数。
+        when(requestLogMapper.selectDailyChannelModelTokenUsage(any(), any(), any(), any(), any()))
+                .thenReturn(List.of(
+                        row("2026-06-15", "model-a", 500L, 2L),
+                        row("2026-06-15", "model-b", 100L, 9L),
+                        row("2026-06-15", "请求失败", 0L, 4L)
+                ));
+
+        Map<String, Object> result = service.getLogUsageChart(2026, 6, "channel", null, null, null);
+
+        // 按 token 降序（而非请求数）：model-a(500) > model-b(100) > 请求失败(0)
+        @SuppressWarnings("unchecked")
+        List<String> models = (List<String>) result.get("models");
+        assertThat(models).containsExactly("model-a", "model-b", "请求失败");
+
+        // 柱高矩阵按 token
+        @SuppressWarnings("unchecked")
+        Map<String, List<Long>> values = (Map<String, List<Long>>) result.get("values");
+        assertThat(values.get("model-a").get(14)).isEqualTo(500L);
+        assertThat(values.get("model-b").get(14)).isEqualTo(100L);
+        assertThat(values.get("请求失败").get(14)).isEqualTo(0L);
+
+        // 请求次数单独通过 requestValues 返回（失败模型也要有次数）
+        @SuppressWarnings("unchecked")
+        Map<String, List<Long>> requestValues = (Map<String, List<Long>>) result.get("requestValues");
+        assertThat(requestValues.get("model-a").get(14)).isEqualTo(2L);
+        assertThat(requestValues.get("model-b").get(14)).isEqualTo(9L);
+        assertThat(requestValues.get("请求失败").get(14)).isEqualTo(4L);
+
+        // maxValue 为单日 token 堆叠总和：500+100+0=600（不是次数总和 15）
+        assertThat(result.get("maxValue")).isEqualTo(600L);
+        assertThat(result.get("totalValue")).isEqualTo(600L);
+    }
+
+    @Test
+    void chart_channelMode_routesToChannelQueryWithFilters() {
+        when(requestLogMapper.selectDailyChannelModelTokenUsage(any(), any(), any(), any(), any()))
+                .thenReturn(List.of());
+
+        service.getLogUsageChart(2026, 6, "channel", "gpt-4o", 7L, "ignored-name");
+
+        // 渠道模式必须走渠道聚合 SQL，且过滤器原样透传（与 entry 模式分支互不串扰）
+        ArgumentCaptor<String> modelCap = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Long> keyIdCap = ArgumentCaptor.forClass(Long.class);
+        verify(requestLogMapper).selectDailyChannelModelTokenUsage(
+                any(), any(), modelCap.capture(), keyIdCap.capture(), eq("ignored-name"));
+        assertThat(modelCap.getValue()).isEqualTo("gpt-4o");
+        assertThat(keyIdCap.getValue()).isEqualTo(7L);
+        verify(requestLogMapper, never()).selectDailyModelTokenUsage(any(), any(), any(), any(), any());
+    }
+
     /** 工具方法：构造 SQL 返回行（HashMap，model 可为 null 以验证空值过滤）。 */
     private static Map<String, Object> row(String date, String model, long tokens) {
+        return row(date, model, tokens, 0L);
+    }
+
+    /** 工具方法：构造带请求次数的 SQL 返回行。 */
+    private static Map<String, Object> row(String date, String model, long tokens, long requests) {
         Map<String, Object> m = new HashMap<>();
         m.put("date", date);
         m.put("model_name", model);
         m.put("total_tokens", tokens);
+        m.put("request_count", requests);
         return m;
     }
 }

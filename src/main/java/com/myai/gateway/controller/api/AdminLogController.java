@@ -223,7 +223,8 @@ public class AdminLogController {
      * <p>
      * 按 modelType 分支聚合指定月份的 token 用量，返回 days/models/values 矩阵。
      * modelType=entry 时按 model_name（入口模型）聚合；modelType=channel 时按 channel_model_name（渠道模型）聚合。
-     * 仅统计成功请求的 token（与本系统其他用量统计保持一致口径）。
+     * 两种模式的柱高（values/maxValue）统一为 token 用量；渠道模式下失败 trace token 记 0，
+     * 其请求次数仍通过 requestValues 返回（前端 tooltip 展示）。
      * </p>
      *
      * @param year            目标年份（默认当前年）
