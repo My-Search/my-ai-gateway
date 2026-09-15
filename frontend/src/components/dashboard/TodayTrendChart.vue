@@ -29,7 +29,13 @@
         <p class="card-subtitle">{{ t('dashboard.trendSubtitle') }}</p>
       </div>
     </div>
-    <div class="trend-body" ref="chartRef" style="width:100%;height:300px;"></div>
+    <div class="trend-body">
+      <div ref="chartRef" style="width:100%;height:100%;"></div>
+      <!-- 切换模式/时间段时遮挡旧图，明确提示"正在加载新数据" -->
+      <div v-if="loading" class="trend-loading">
+        <LoadingSpinner :text="t('common.loading')" />
+      </div>
+    </div>
   </div>
 </template>
 
@@ -54,7 +60,10 @@ const props = withDefaults(defineProps<{
 const mode = ref<'all' | 'entry' | 'channel'>('entry')
 const trendData = ref<TodayTrendData | null>(null)
 const chartRef = ref<HTMLDivElement | null>(null)
+const loading = ref(false)
 let chart: echarts.ECharts | null = null
+// 请求序号：快速连续切换时，只允许最后一次请求的结果落到图表上
+let requestSeq = 0
 
 // ===== 模式下拉选择器 =====
 const modeOpen = ref(false)
@@ -95,13 +104,22 @@ function rangeParams(): DashboardRangeParams {
   return { range: props.rangeKey }
 }
 
+// 切换筛选时先置 loading 再拉取：既给出加载反馈，也避免旧数据在请求期间
+// 被当作"新筛选结果"（脏读）。加载遮罩期间旧图仍保留，减少布局跳动。
 async function fetchData() {
+  const seq = ++requestSeq
+  loading.value = true
   try {
     const res = await dashboardApi.getTodayTrend(mode.value, rangeParams())
+    // 过期响应（期间又切换过筛选）直接丢弃，防止旧数据覆盖新数据
+    if (seq !== requestSeq) return
     trendData.value = res.data
-    nextTick(() => renderChart())
+    await nextTick()
+    renderChart()
   } catch {
-    // ignore
+    // 失败时保留上一次的数据，不把图表清空
+  } finally {
+    if (seq === requestSeq) loading.value = false
   }
 }
 
@@ -263,7 +281,22 @@ watch([() => props.from, () => props.to], () => {
   margin-bottom: 20px;
 }
 .trend-body {
+  position: relative;
+  width: 100%;
+  height: 300px;
   min-height: 240px;
+}
+
+/* 加载遮罩：盖住旧图并轻微模糊，避免被误读为"已切换到新筛选"的结果 */
+.trend-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--bg-secondary) 75%, transparent);
+  backdrop-filter: blur(1px);
+  z-index: 2;
 }
 
 .trend-header {
