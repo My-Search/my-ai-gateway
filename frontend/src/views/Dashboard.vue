@@ -9,7 +9,6 @@
             <!-- 时间段下拉选择器 -->
             <div class="period-dropdown" ref="periodDropdownRef">
               <button class="period-trigger" @click="openPeriod">
-                <SvgIcon name="calendar" :size="14" />
                 <span>{{ periodOptions.find(o => o.value === rangeKey)?.label }}</span>
                 <SvgIcon name="chevron-down" :size="12" :class="{ rotated: periodOpen }" />
               </button>
@@ -26,9 +25,6 @@
                 </div>
               </Transition>
             </div>
-            <button class="btn-icon" :disabled="refreshing" @click="refreshStats" :title="t('common.refresh')">
-              <SvgIcon name="refresh" :size="14" :class="{ spinning: refreshing }" />
-            </button>
           </div>
         </div>
         <p>{{ t('dashboard.subtitle') }}</p>
@@ -262,7 +258,6 @@ const { t } = useI18n()
 
 const stats = ref<DashboardStats>({} as DashboardStats)
 const loading = ref(true)
-const refreshing = ref(false)
 let dashboardRefreshTimer: ReturnType<typeof setInterval> | null = null
 const modelRankTab = ref<'entry' | 'channel'>('entry')
 
@@ -324,12 +319,6 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('click', onPeriodClickOutside)
 })
-
-async function refreshStats() {
-  refreshing.value = true
-  await fetchStats()
-  refreshing.value = false
-}
 
 // ===== 时间段选择 =====
 // today/week/month 由后端按上海时区计算（周=周一起、月=1日起，均为"至今"）；
