@@ -110,37 +110,36 @@ defineEmits<{
   color: var(--accent-blue);
 }
 
-/* ── Primary variant（主色选取，用于主筛选按钮）
- * 选中态用淡蓝底 + 主色文字，避免实心蓝过于抢眼 ── */
+/* ── Primary variant（紧凑低调，用于卡片头部筛选） ── */
 .tab-switch--primary {
   background: transparent;
-  gap: 6px;
+  gap: 2px;
   padding: 0;
 }
 
 .tab-switch--primary .tab-btn {
-  padding: 6px 15px;
-  font-size: 13px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 500;
   border: 1px solid transparent;
-  border-radius: var(--radius, 6px);
-  color: var(--text-secondary);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-muted);
 }
 
 .tab-switch--primary .tab-btn:hover:not(:disabled) {
-  background: var(--bg-hover);
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .tab-switch--primary .tab-btn.active {
-  background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
-  border-color: color-mix(in srgb, var(--accent-blue) 45%, transparent);
-  color: var(--accent-blue);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-color);
   box-shadow: none;
 }
 
 .tab-switch--primary .tab-btn.active:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent-blue) 22%, transparent);
-  border-color: color-mix(in srgb, var(--accent-blue) 55%, transparent);
-  color: var(--accent-blue);
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-color);
 }
 </style>

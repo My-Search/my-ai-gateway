@@ -7,12 +7,26 @@
         <p>{{ t('dashboard.subtitle') }}</p>
       </div>
       <div class="header-right">
-        <TabSwitch v-model="rangeKey" variant="primary" :tabs="[
-          { value: 'today', label: t('dashboard.periodToday') },
-          { value: 'week', label: t('dashboard.periodWeek') },
-          { value: 'month', label: t('dashboard.periodMonth') },
-          { value: 'custom', label: t('dashboard.rangeCustom') },
-        ]" />
+        <!-- 时间段下拉选择器 -->
+        <div class="period-dropdown" ref="periodDropdownRef">
+          <button class="period-trigger" @click="openPeriod">
+            <SvgIcon name="calendar" :size="14" />
+            <span>{{ periodOptions.find(o => o.value === rangeKey)?.label }}</span>
+            <SvgIcon name="chevron-down" :size="12" :class="{ rotated: periodOpen }" />
+          </button>
+          <Transition name="fade">
+            <div v-if="periodOpen" class="period-menu">
+              <button
+                v-for="opt in periodOptions"
+                :key="opt.value"
+                :class="['period-option', { active: rangeKey === opt.value }]"
+                @click="selectPeriod(opt.value)"
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+          </Transition>
+        </div>
         <!-- 起止日期选择器仅在选择「自定义」时展示 -->
         <div v-if="rangeKey === 'custom'" class="range-picker">
           <SvgIcon name="calendar" :size="15" class="range-icon" />
@@ -21,6 +35,9 @@
           <input type="date" class="range-input" v-model="toDate" :title="t('dashboard.rangeEnd')" />
           <SvgIcon name="chevron-down" :size="14" class="range-chevron" />
         </div>
+        <button class="btn-icon" :disabled="refreshing" @click="refreshStats" :title="t('common.refresh')">
+          <SvgIcon name="refresh" :size="14" :class="{ spinning: refreshing }" />
+        </button>
       </div>
     </div>
     <div v-if="rangeInvalid" class="range-error-bar">{{ t('dashboard.rangeError') }}</div>
@@ -132,7 +149,8 @@
         </div>
         <div v-if="loading" class="rank-state"><LoadingSpinner :text="t('common.loading')" /></div>
         <div v-else-if="!stats.channelRank?.length" class="rank-state">{{ t('dashboard.noRankData') }}</div>
-        <table v-else class="rank-table">
+        <div v-else class="table-scroll">
+          <table class="rank-table">
           <thead>
             <tr>
               <th class="col-idx">#</th>
@@ -162,6 +180,7 @@
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
 
       <!-- 模型排行 -->
@@ -175,7 +194,8 @@
         </div>
         <div v-if="loading" class="rank-state"><LoadingSpinner :text="t('common.loading')" /></div>
         <div v-else-if="!currentModelRank?.length" class="rank-state">{{ t('dashboard.noRankData') }}</div>
-        <table v-else class="rank-table">
+        <div v-else class="table-scroll">
+          <table class="rank-table">
           <thead>
             <tr>
               <th class="col-idx">#</th>
@@ -207,6 +227,7 @@
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   </div>
@@ -224,8 +245,48 @@ const { t } = useI18n()
 
 const stats = ref<DashboardStats>({} as DashboardStats)
 const loading = ref(true)
+const refreshing = ref(false)
 let dashboardRefreshTimer: ReturnType<typeof setInterval> | null = null
 const modelRankTab = ref<'entry' | 'channel'>('entry')
+
+// ===== 下拉时间段选择器 =====
+const periodOpen = ref(false)
+const periodDropdownRef = ref<HTMLDivElement | null>(null)
+const periodOptions = [
+  { value: 'today' as DashboardRangeKey, label: t('dashboard.periodToday') },
+  { value: 'week' as DashboardRangeKey, label: t('dashboard.periodWeek') },
+  { value: 'month' as DashboardRangeKey, label: t('dashboard.periodMonth') },
+  { value: 'custom' as DashboardRangeKey, label: t('dashboard.rangeCustom') },
+]
+
+function openPeriod() {
+  periodOpen.value = !periodOpen.value
+}
+
+function selectPeriod(val: DashboardRangeKey) {
+  rangeKey.value = val
+  periodOpen.value = false
+}
+
+function onPeriodClickOutside(e: MouseEvent) {
+  const el = periodDropdownRef.value
+  if (el && !el.contains(e.target as Node)) {
+    periodOpen.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', onPeriodClickOutside)
+})
+onUnmounted(() => {
+  document.removeEventListener('click', onPeriodClickOutside)
+})
+
+async function refreshStats() {
+  refreshing.value = true
+  await fetchStats()
+  refreshing.value = false
+}
 
 // ===== 时间段选择 =====
 // today/week/month 由后端按上海时区计算（周=周一起、月=1日起，均为"至今"）；
@@ -449,8 +510,89 @@ onUnmounted(() => {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
   flex-wrap: wrap;
+}
+
+/* ── 时间段下拉选择器 ── */
+.period-dropdown {
+  position: relative;
+  display: inline-block;
+}
+.period-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius, 6px);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: inherit;
+  line-height: 1.5;
+}
+.period-trigger:hover {
+  border-color: color-mix(in srgb, var(--text-muted) 40%, var(--border-color));
+  color: var(--text-primary);
+}
+.period-trigger .rotated {
+  transform: rotate(180deg);
+  transition: transform 0.2s ease;
+}
+
+.period-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 120px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius, 6px);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.period-option {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.12s;
+  font-family: inherit;
+  text-align: left;
+  white-space: nowrap;
+}
+.period-option:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.period-option.active {
+  background: var(--bg-hover);
+  color: var(--accent-blue);
+  font-weight: 600;
+}
+
+/* 下拉菜单过渡动画 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
 }
 
 /* 日期区间选择器（仅「自定义」时间段展示） */
@@ -619,6 +761,18 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
+.table-scroll {
+  overflow-y: auto;
+  max-height: 320px;
+}
+.table-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.table-scroll::-webkit-scrollbar-thumb {
+  background: var(--bg-hover);
+  border-radius: 3px;
+}
+
 .rank-table {
   width: 100%;
   border-collapse: collapse;
@@ -647,6 +801,36 @@ onUnmounted(() => {
 .col-idx { width: 34px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .col-num { width: 84px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .col-rate { width: 150px; }
+
+.header-right .btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  width: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+  padding: 0;
+}
+.header-right .btn-icon:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+.header-right .btn-icon:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.header-right .btn-icon .spinning {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
 
 .rank-name-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .rank-avatar {
@@ -688,15 +872,26 @@ onUnmounted(() => {
 @media (max-width: 768px) {
   .stats-grid { grid-template-columns: 1fr; }
   .dashboard-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
+    align-items: center;
+    gap: 8px;
+  }
+  .dashboard-header .header-left {
+    min-width: 0;
+  }
+  .dashboard-header .header-left h2 {
+    font-size: 20px;
   }
   .header-right {
-    width: 100%;
-    justify-content: space-between;
+    flex-wrap: nowrap;
+    margin-left: auto;
+    gap: 4px;
   }
-  .range-picker { flex: 1; justify-content: space-between; }
+  .period-trigger {
+    padding: 4px 8px;
+    font-size: 12px;
+    gap: 4px;
+  }
+  .range-picker { flex: 1; justify-content: space-between; padding: 4px 8px; }
   .range-input { width: 100px; }
   .stat-spark { width: 70px; }
   .col-rate { width: 110px; }

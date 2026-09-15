@@ -1,14 +1,16 @@
 <template>
   <div class="trend-card card">
-    <div class="card-header">
-      <div class="card-title-block">
-        <div class="card-title"><SvgIcon name="chart" :size="18" /> {{ t('dashboard.trendTitle') }}</div>
+    <div class="card-header trend-header">
+      <div class="trend-title-wrap">
+        <div class="title-row">
+          <div class="card-title"><SvgIcon name="chart" :size="18" /> {{ t('dashboard.trendTitle') }}</div>
+          <div class="tab-switch">
+            <button :class="['tab-btn', mode === 'all' ? 'active' : '']" @click="switchMode('all')">{{ t('dashboard.trendSuccessFail') }}</button>
+            <button :class="['tab-btn', mode === 'entry' ? 'active' : '']" @click="switchMode('entry')">{{ t('dashboard.trendEntry') }}</button>
+            <button :class="['tab-btn', mode === 'channel' ? 'active' : '']" @click="switchMode('channel')">{{ t('dashboard.trendChannel') }}</button>
+          </div>
+        </div>
         <p class="card-subtitle">{{ t('dashboard.trendSubtitle') }}</p>
-      </div>
-      <div class="tab-switch">
-        <button :class="['tab-btn', mode === 'all' ? 'active' : '']" @click="switchMode('all')">{{ t('dashboard.trendSuccessFail') }}</button>
-        <button :class="['tab-btn', mode === 'entry' ? 'active' : '']" @click="switchMode('entry')">{{ t('dashboard.trendEntry') }}</button>
-        <button :class="['tab-btn', mode === 'channel' ? 'active' : '']" @click="switchMode('channel')">{{ t('dashboard.trendChannel') }}</button>
       </div>
     </div>
     <div class="trend-body" ref="chartRef" style="width:100%;height:300px;"></div>
@@ -221,10 +223,25 @@ watch([() => props.from, () => props.to], () => {
   min-height: 240px;
 }
 
-.card-title-block {
+.trend-header {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+}
+.trend-title-wrap {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
+  min-width: 0;
+  width: 100%;
+}
+.title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   min-width: 0;
 }
 .card-subtitle {
@@ -234,41 +251,37 @@ watch([() => props.from, () => props.to], () => {
   font-weight: 400;
 }
 
-/* Tab 选中态：淡蓝底 + 主色文字（实心蓝过于抢眼） */
+/* Segmented control style tabs */
 .tab-switch {
-  display: flex;
-  gap: 6px;
-  background: transparent;
-  border-radius: 6px;
-  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius, 6px);
+  padding: 3px;
 }
 .tab-btn {
-  padding: 6px 14px;
-  border: 1px solid var(--border-color);
+  padding: 5px 14px;
+  border: none;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: 13px;
   font-weight: 500;
-  border-radius: var(--radius, 6px);
+  border-radius: var(--radius-sm, 4px);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.2s ease;
   white-space: nowrap;
   font-family: inherit;
+  line-height: 1.5;
 }
 .tab-btn:hover {
-  color: var(--text-primary);
-  background: var(--bg-hover);
+  color: var(--text-secondary);
 }
 .tab-btn.active {
-  background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
-  border-color: color-mix(in srgb, var(--accent-blue) 45%, transparent);
+  background: var(--bg-secondary);
   color: var(--accent-blue);
-  box-shadow: none;
-}
-.tab-btn.active:hover {
-  background: color-mix(in srgb, var(--accent-blue) 22%, transparent);
-  border-color: color-mix(in srgb, var(--accent-blue) 55%, transparent);
-  color: var(--accent-blue);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
 }
 
 @media (max-width: 768px) {
