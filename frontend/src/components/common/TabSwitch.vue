@@ -28,6 +28,7 @@
  * ]" />
  *
  * <!-- 变体：period-btn 风格（用于时间周期切换） -->
+ * <!-- 变体：primary 为淡蓝底选中态（强调但不刺眼） -->
  * <TabSwitch v-model="period" variant="period" :tabs="[
  *   { value: 'today', label: '今日' },
  *   { value: 'week', label: '本周' },
@@ -46,8 +47,8 @@ export interface TabItem {
 interface Props {
   modelValue: string | number
   tabs: TabItem[]
-  /** 变体：默认常规，'period' 为紧凑型时间周期切换 */
-  variant?: 'period'
+  /** 变体：默认常规，'period' 为紧凑型时间周期切换，'primary' 为淡蓝底选中态 */
+  variant?: 'period' | 'primary'
 }
 
 defineProps<Props>()
@@ -106,6 +107,40 @@ defineEmits<{
 }
 
 .tab-switch--period .tab-btn.active {
+  color: var(--accent-blue);
+}
+
+/* ── Primary variant（主色选取，用于主筛选按钮）
+ * 选中态用淡蓝底 + 主色文字，避免实心蓝过于抢眼 ── */
+.tab-switch--primary {
+  background: transparent;
+  gap: 6px;
+  padding: 0;
+}
+
+.tab-switch--primary .tab-btn {
+  padding: 6px 15px;
+  font-size: 13px;
+  border: 1px solid transparent;
+  border-radius: var(--radius, 6px);
+  color: var(--text-secondary);
+}
+
+.tab-switch--primary .tab-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tab-switch--primary .tab-btn.active {
+  background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent-blue) 45%, transparent);
+  color: var(--accent-blue);
+  box-shadow: none;
+}
+
+.tab-switch--primary .tab-btn.active:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent-blue) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent-blue) 55%, transparent);
   color: var(--accent-blue);
 }
 </style>

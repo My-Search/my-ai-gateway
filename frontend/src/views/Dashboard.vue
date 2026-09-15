@@ -7,125 +7,112 @@
         <p>{{ t('dashboard.subtitle') }}</p>
       </div>
       <div class="header-right">
-        <div class="date-picker-wrap">
-          <input type="date" class="form-input-sm date-input" v-model="selectedDate" />
+        <TabSwitch v-model="rangeKey" variant="primary" :tabs="[
+          { value: 'today', label: t('dashboard.periodToday') },
+          { value: 'week', label: t('dashboard.periodWeek') },
+          { value: 'month', label: t('dashboard.periodMonth') },
+          { value: 'custom', label: t('dashboard.rangeCustom') },
+        ]" />
+        <!-- 起止日期选择器仅在选择「自定义」时展示 -->
+        <div v-if="rangeKey === 'custom'" class="range-picker">
+          <SvgIcon name="calendar" :size="15" class="range-icon" />
+          <input type="date" class="range-input" v-model="fromDate" :title="t('dashboard.rangeStart')" />
+          <span class="range-sep">~</span>
+          <input type="date" class="range-input" v-model="toDate" :title="t('dashboard.rangeEnd')" />
+          <SvgIcon name="chevron-down" :size="14" class="range-chevron" />
         </div>
       </div>
     </div>
+    <div v-if="rangeInvalid" class="range-error-bar">{{ t('dashboard.rangeError') }}</div>
 
-    <!-- 今日请求趋势 -->
-    <TodayTrendChart :date="selectedDate" />
+    <!-- 请求趋势（跟随所选时间段） -->
+    <TodayTrendChart :range-key="rangeKey" :from="fromDate" :to="toDate" />
 
     <!-- Stats Grid -->
     <div class="stats-grid" v-if="!loading">
-      <div class="stat-card">
-        <div class="stat-card-main">
-          <div class="stat-icon" style="background:linear-gradient(135deg,rgba(88,166,255,0.15),rgba(88,166,255,0.05));color:var(--accent-blue);">
-            <SvgIcon name="chart" :size="22" />
-          </div>
-          <div class="stat-body">
+      <div class="stat-card stat-card--blue">
+        <div class="stat-top">
+          <div class="stat-icon"><SvgIcon name="chart" :size="20" /></div>
+          <div class="stat-head">
             <div class="stat-label">{{ t('dashboard.todayRequests') }}</div>
-            <div class="stat-value">{{ hasTodayData ? stats.todayRequests : '-' }}</div>
-            <div class="stat-hint">
-              <template v-if="(stats.yesterdayRequests ?? 0) > 0">
-                {{ t('dashboard.yesterday') }} {{ stats.yesterdayRequests }}
-                <span class="hint-sep">|</span>
-              </template>
-              <SvgIcon name="token" :size="11" />
-              {{ formatTokens(stats.todayTokenStats?.totalTokens) }} tokens
-              <span v-if="vsRequests.show && hasTodayData" class="stat-change" :class="vsRequests.css">
-                {{ t('dashboard.vsYesterday') }}
-                <span class="change-arrow">{{ vsRequests.arrow }}</span>
-                {{ vsRequests.percent }}%
-              </span>
-            </div>
+            <div class="stat-value">{{ hasData ? formatNumber(totals.requests) : '-' }}</div>
           </div>
-        </div>
-        <div class="stat-sparkline">
-          <svg viewBox="0 0 100 30" preserveAspectRatio="none">
-            <path :d="sparklinePaths(dailyRequests).area" fill="rgba(88,166,255,0.12)" stroke="none" />
-            <path :d="sparklinePaths(dailyRequests).line" fill="none" stroke="var(--accent-blue)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
+          <svg class="stat-spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">
+            <path :d="sparklinePaths(spark.requests).area" class="spark-area" />
+            <path :d="sparklinePaths(spark.requests).line" class="spark-line" />
           </svg>
+        </div>
+        <div class="stat-bottom">
+          <span class="stat-meta"><SvgIcon name="token" :size="11" /> {{ formatTokens(totals.totalTokens) }} tokens</span>
+          <span v-if="vsRequests.show" class="stat-change" :class="vsRequests.css">
+            <span class="change-arrow">{{ vsRequests.arrow }}</span> {{ rangeLabels.prev }} {{ vsRequests.percent }}%
+          </span>
         </div>
       </div>
 
-      <div class="stat-card">
-        <div class="stat-card-main">
-          <div class="stat-icon" style="background:linear-gradient(135deg,rgba(63,185,80,0.15),rgba(63,185,80,0.05));color:var(--accent-green);">
-            <SvgIcon name="check" :size="22" />
-          </div>
-          <div class="stat-body">
+      <div class="stat-card stat-card--green">
+        <div class="stat-top">
+          <div class="stat-icon"><SvgIcon name="check" :size="20" /></div>
+          <div class="stat-head">
             <div class="stat-label">{{ t('dashboard.successRate') }}</div>
-            <div class="stat-value">{{ hasTodayData ? (stats.successRate ?? 0) + '%' : '-' }}</div>
-            <div class="stat-hint">
-              <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ stats.todaySuccess ?? 0 }}</span>
-              <span class="badge badge-danger" style="margin-left:4px;"><SvgIcon name="x-bold" :size="10" /> {{ stats.todayFail ?? 0 }}</span>
-              <span v-if="vsSuccessRate.show && hasTodayData" class="stat-change" :class="vsSuccessRate.css">
-                {{ t('dashboard.vsYesterday') }}
-                <span class="change-arrow">{{ vsSuccessRate.arrow }}</span>
-                {{ vsSuccessRate.percent }}%
-              </span>
-            </div>
+            <div class="stat-value">{{ hasData ? (totals.successRate ?? 0) + '%' : '-' }}</div>
           </div>
-        </div>
-        <div class="stat-sparkline">
-          <svg viewBox="0 0 100 30" preserveAspectRatio="none">
-            <path :d="sparklinePaths(dailySuccessRates).area" fill="rgba(63,185,80,0.12)" stroke="none" />
-            <path :d="sparklinePaths(dailySuccessRates).line" fill="none" stroke="var(--accent-green)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
+          <svg class="stat-spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">
+            <path :d="sparklinePaths(spark.successRate).area" class="spark-area" />
+            <path :d="sparklinePaths(spark.successRate).line" class="spark-line" />
           </svg>
+        </div>
+        <div class="stat-bottom">
+          <span class="stat-badges">
+            <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ totals.success ?? 0 }}</span>
+            <span class="badge badge-danger"><SvgIcon name="x-bold" :size="10" /> {{ totals.fail ?? 0 }}</span>
+          </span>
+          <span v-if="vsSuccessRate.show" class="stat-change" :class="vsSuccessRate.css">
+            <span class="change-arrow">{{ vsSuccessRate.arrow }}</span> {{ rangeLabels.prev }} {{ vsSuccessRate.percent }}%
+          </span>
         </div>
       </div>
 
-      <div class="stat-card">
-        <div class="stat-card-main">
-          <div class="stat-icon" style="background:linear-gradient(135deg,rgba(188,140,255,0.15),rgba(188,140,255,0.05));color:var(--accent-purple);">
-            <SvgIcon name="clock" :size="22" />
-          </div>
-          <div class="stat-body">
+      <div class="stat-card stat-card--purple">
+        <div class="stat-top">
+          <div class="stat-icon"><SvgIcon name="clock" :size="20" /></div>
+          <div class="stat-head">
             <div class="stat-label">{{ t('dashboard.avgResponse') }}</div>
-            <div class="stat-value">{{ stats.avgResponseTime ? formatSeconds(stats.avgResponseTime) : '-' }}</div>
-            <div class="stat-hint">
-              {{ t('dashboard.basedOnToday') }}
-              <span v-if="vsAvgResponse.show && hasTodayData" class="stat-change" :class="vsAvgResponse.css">
-                {{ t('dashboard.vsYesterday') }}
-                <span class="change-arrow">{{ vsAvgResponse.arrow }}</span>
-                {{ vsAvgResponse.percent }}%
-              </span>
-            </div>
+            <div class="stat-value">{{ totals.avgResponseTime ? formatSeconds(totals.avgResponseTime) : '-' }}</div>
           </div>
-        </div>
-        <div class="stat-sparkline">
-          <svg viewBox="0 0 100 30" preserveAspectRatio="none">
-            <path :d="sparklinePaths(dailyAvgTimes).area" fill="rgba(188,140,255,0.12)" stroke="none" />
-            <path :d="sparklinePaths(dailyAvgTimes).line" fill="none" stroke="var(--accent-purple)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
+          <svg class="stat-spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">
+            <path :d="sparklinePaths(spark.avgResponseTime).area" class="spark-area" />
+            <path :d="sparklinePaths(spark.avgResponseTime).line" class="spark-line" />
           </svg>
+        </div>
+        <div class="stat-bottom">
+          <span class="stat-meta">{{ t('dashboard.basedOnRange') }}</span>
+          <span v-if="vsAvgResponse.show" class="stat-change" :class="vsAvgResponse.css">
+            <span class="change-arrow">{{ vsAvgResponse.arrow }}</span> {{ rangeLabels.prev }} {{ vsAvgResponse.percent }}%
+          </span>
         </div>
       </div>
 
-      <div class="stat-card">
-        <div class="stat-card-main">
-          <div class="stat-icon" style="background:linear-gradient(135deg,rgba(210,153,34,0.15),rgba(210,153,34,0.05));color:var(--accent-yellow);">
-            <SvgIcon name="zap" :size="22" />
-          </div>
-          <div class="stat-body">
+      <div class="stat-card stat-card--yellow">
+        <div class="stat-top">
+          <div class="stat-icon"><SvgIcon name="zap" :size="20" /></div>
+          <div class="stat-head">
             <div class="stat-label">{{ t('dashboard.avgOutputSpeed') }}</div>
-            <div class="stat-value" v-if="stats.avgOutputSpeed">{{ stats.avgOutputSpeed.toFixed(1) }}<small> t/s</small></div>
-            <div class="stat-value" v-else>-</div>
-            <div class="stat-hint">
-              {{ t('dashboard.basedOnTodaySuccess') }}
-              <span v-if="vsOutputSpeed.show && hasTodayData" class="stat-change" :class="vsOutputSpeed.css">
-                {{ t('dashboard.vsYesterday') }}
-                <span class="change-arrow">{{ vsOutputSpeed.arrow }}</span>
-                {{ vsOutputSpeed.percent }}%
-              </span>
+            <div class="stat-value">
+              <template v-if="totals.avgOutputSpeed">{{ totals.avgOutputSpeed.toFixed(1) }}<small> t/s</small></template>
+              <template v-else>-</template>
             </div>
           </div>
-        </div>
-        <div class="stat-sparkline">
-          <svg viewBox="0 0 100 30" preserveAspectRatio="none">
-            <path :d="sparklinePaths(dailyOutputSpeeds).area" fill="rgba(210,153,34,0.12)" stroke="none" />
-            <path :d="sparklinePaths(dailyOutputSpeeds).line" fill="none" stroke="var(--accent-yellow)" stroke-width="1.5" vector-effect="non-scaling-stroke" />
+          <svg class="stat-spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true">
+            <path :d="sparklinePaths(spark.avgOutputSpeed).area" class="spark-area" />
+            <path :d="sparklinePaths(spark.avgOutputSpeed).line" class="spark-line" />
           </svg>
+        </div>
+        <div class="stat-bottom">
+          <span class="stat-meta">{{ t('dashboard.basedOnRangeSuccess') }}</span>
+          <span v-if="vsOutputSpeed.show" class="stat-change" :class="vsOutputSpeed.css">
+            <span class="change-arrow">{{ vsOutputSpeed.arrow }}</span> {{ rangeLabels.prev }} {{ vsOutputSpeed.percent }}%
+          </span>
         </div>
       </div>
     </div>
@@ -135,199 +122,91 @@
       </div>
     </div>
 
-    <!-- 本月统计 -->
-    <div class="monthly-card">
-      <div class="card-header">
-        <div class="card-title"><SvgIcon name="chart" :size="18" /> {{ t('dashboard.monthlyStats') }}</div>
-        <router-link to="/admin/log/list" class="view-detail-link">{{ t('dashboard.viewAll') }}</router-link>
-      </div>
-      <div class="monthly-body" v-if="!loading">
-        <div class="monthly-stat-item">
-          <div class="monthly-stat-icon" style="background:linear-gradient(135deg,rgba(88,166,255,0.15),rgba(88,166,255,0.05));color:var(--accent-blue);">
-            <SvgIcon name="chart" :size="18" />
-          </div>
-          <div class="monthly-stat-info">
-            <div class="monthly-label">{{ t('dashboard.monthlyRequests') }}</div>
-            <div class="monthly-value">{{ hasMonthlyData ? formatNumber(stats.monthlyStats?.requests) : '-' }}</div>
-            <div class="monthly-change" :class="getChangeClass('requests')">
-              <span class="change-label">{{ t('dashboard.vsLastMonth') }}</span>
-              <span class="change-arrow">{{ getChangeArrow('requests') }}</span>
-              {{ getChangePercent('requests') }}%
-            </div>
-          </div>
-        </div>
-        <div class="monthly-stat-item">
-          <div class="monthly-stat-icon" style="background:linear-gradient(135deg,rgba(188,140,255,0.15),rgba(188,140,255,0.05));color:var(--accent-purple);">
-            <SvgIcon name="token" :size="18" />
-          </div>
-          <div class="monthly-stat-info">
-            <div class="monthly-label">{{ t('dashboard.monthlyTokens') }}</div>
-            <div class="monthly-value">{{ hasMonthlyData ? formatTokens(stats.monthlyStats?.totalTokens) : '-' }}</div>
-            <div class="monthly-change" :class="getChangeClass('totalTokens')">
-              <span class="change-label">{{ t('dashboard.vsLastMonth') }}</span>
-              <span class="change-arrow">{{ getChangeArrow('totalTokens') }}</span>
-              {{ getChangePercent('totalTokens') }}%
-            </div>
-          </div>
-        </div>
-        <div class="monthly-stat-item">
-          <div class="monthly-stat-icon" style="background:linear-gradient(135deg,rgba(63,185,80,0.15),rgba(63,185,80,0.05));color:var(--accent-green);">
-            <SvgIcon name="check" :size="18" />
-          </div>
-          <div class="monthly-stat-info">
-            <div class="monthly-label">{{ t('dashboard.monthlySuccessRate') }}</div>
-            <div class="monthly-value">{{ hasMonthlyData ? (stats.monthlyStats?.successRate ?? 0) + '%' : '-' }}</div>
-            <div class="monthly-change" :class="getChangeClass('successRate')">
-              <span class="change-label">{{ t('dashboard.vsLastMonth') }}</span>
-              <span class="change-arrow">{{ getChangeArrow('successRate') }}</span>
-              {{ getChangePercent('successRate') }}%
-            </div>
-          </div>
-        </div>
-        <div class="monthly-stat-item">
-          <div class="monthly-stat-icon" style="background:linear-gradient(135deg,rgba(210,153,34,0.15),rgba(210,153,34,0.05));color:var(--accent-yellow);">
-            <SvgIcon name="zap" :size="18" />
-          </div>
-          <div class="monthly-stat-info">
-            <div class="monthly-label">{{ t('dashboard.monthlyAvgResponse') }}</div>
-            <div class="monthly-value">{{ stats.monthlyStats?.avgResponseTime ? formatSeconds(stats.monthlyStats.avgResponseTime) : '-' }}</div>
-            <div class="monthly-change" :class="getChangeClass('avgResponseTime', true)">
-              <span class="change-label">{{ t('dashboard.vsLastMonth') }}</span>
-              <span class="change-arrow">{{ getChangeArrow('avgResponseTime', true) }}</span>
-              {{ getChangePercent('avgResponseTime') }}%
-            </div>
-          </div>
-        </div>
-        <div class="monthly-stat-item">
-          <div class="monthly-stat-icon" style="background:linear-gradient(135deg,rgba(88,166,255,0.15),rgba(88,166,255,0.05));color:var(--accent-blue);">
-            <SvgIcon name="chart" :size="18" />
-          </div>
-          <div class="monthly-stat-info">
-            <div class="monthly-label">{{ t('dashboard.monthlyAvgOutputSpeed') }}</div>
-            <div class="monthly-value">{{ stats.monthlyStats?.avgOutputSpeed ? stats.monthlyStats.avgOutputSpeed.toFixed(1) + ' t/s' : '-' }}</div>
-            <div class="monthly-change" :class="getChangeClass('avgOutputSpeed')">
-              <span class="change-label">{{ t('dashboard.vsLastMonth') }}</span>
-              <span class="change-arrow">{{ getChangeArrow('avgOutputSpeed') }}</span>
-              {{ getChangePercent('avgOutputSpeed') }}%
-            </div>
-          </div>
-        </div>
-        <div class="monthly-stat-item">
-          <div class="monthly-stat-icon" style="background:linear-gradient(135deg,rgba(224,108,117,0.15),rgba(224,108,117,0.05));color:var(--accent-red);">
-            <SvgIcon name="x" :size="18" />
-          </div>
-          <div class="monthly-stat-info">
-            <div class="monthly-label">{{ t('dashboard.monthlyFailCount') }}</div>
-            <div class="monthly-value">{{ hasMonthlyData ? (stats.monthlyStats?.failCount ?? 0) : '-' }}</div>
-            <div class="monthly-change" :class="getChangeClass('failCount', true)">
-              <span class="change-label">{{ t('dashboard.vsLastMonth') }}</span>
-              <span class="change-arrow">{{ getChangeArrow('failCount', true) }}</span>
-              {{ getChangePercent('failCount') }}%
-            </div>
-          </div>
-        </div>
-      </div>
-      <div v-else style="text-align:center;padding:20px;color:var(--text-muted);font-size:13px;">
-        <LoadingSpinner :text="t('common.loading')" />
-      </div>
-    </div>
-
     <!-- Rankings -->
-    <div class="grid-2">
-      <div class="card">
+    <div class="grid-2 rank-grid">
+      <!-- 渠道排行 -->
+      <div class="card rank-card">
         <div class="card-header">
           <div class="card-title"><SvgIcon name="rank" :size="18" /> {{ t('dashboard.channelRank') }}</div>
-          <TabSwitch v-model="channelRankPeriod" variant="period" :tabs="[
-            { value: 'today', label: t('dashboard.periodToday') },
-            { value: 'yesterday', label: t('dashboard.periodYesterday') },
-            { value: 'week', label: t('dashboard.periodWeek') },
-            { value: 'month', label: t('dashboard.periodMonth') },
-          ]" />
+          <router-link to="/admin/log/list" class="view-all-link">{{ t('dashboard.viewAll') }}</router-link>
         </div>
-        <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
-          <LoadingSpinner :text="t('common.loading')" />
-        </div>
-        <div v-else-if="!stats.channelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">
-          {{ t('dashboard.noRankData') }}
-        </div>
-        <div class="rank-list" v-else>
-          <div class="rank-item" v-for="(ch, idx) in stats.channelRank" :key="ch.name">
-            <div class="rank-pos" :class="idx === 0 ? 'gold' : idx === 1 ? 'silver' : idx === 2 ? 'bronze' : ''">
-              {{ idx + 1 }}
-            </div>
-            <div class="rank-info">
-              <div class="rank-name">{{ ch.name }}</div>
-              <div class="rank-meta">
-                <span>{{ ch.requests }} {{ t('dashboard.requests') }}</span>
-                <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ ch.success }}</span>
-                <span v-if="ch.avgTime > 0" class="rank-meta-time">{{ formatSeconds(ch.avgTime) }}</span>
-                <span class="rank-meta-tokens"><SvgIcon name="token" :size="10" /> {{ formatTokens(ch.totalTokens) }} tokens</span>
-              </div>
-            </div>
-            <div class="rank-bar-bg">
-              <div class="rank-bar" :style="{ width: (ch.requests / stats.channelRank[0].requests * 100) + '%' }"></div>
-            </div>
-          </div>
-        </div>
+        <div v-if="loading" class="rank-state"><LoadingSpinner :text="t('common.loading')" /></div>
+        <div v-else-if="!stats.channelRank?.length" class="rank-state">{{ t('dashboard.noRankData') }}</div>
+        <table v-else class="rank-table">
+          <thead>
+            <tr>
+              <th class="col-idx">#</th>
+              <th>{{ t('dashboard.rankChannelName') }}</th>
+              <th class="col-num">{{ t('dashboard.rankRequests') }}</th>
+              <th class="col-rate">{{ t('dashboard.rankSuccessRate') }}</th>
+              <th class="col-num">{{ t('dashboard.rankAvgTime') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(ch, idx) in stats.channelRank" :key="ch.name">
+              <td class="col-idx">{{ idx + 1 }}</td>
+              <td>
+                <div class="rank-name-cell">
+                  <span class="rank-avatar" :style="{ background: iconGradient(ch.name) }">{{ (ch.name || '?').charAt(0).toUpperCase() }}</span>
+                  <span class="rank-name-text">{{ ch.name }}</span>
+                </div>
+              </td>
+              <td class="col-num">{{ formatNumber(ch.requests) }}</td>
+              <td class="col-rate">
+                <div class="rate-cell">
+                  <span class="rate-text">{{ successRateOf(ch) }}%</span>
+                  <span class="rate-bar"><span class="rate-bar-fill" :style="{ width: successRateOf(ch) + '%' }"></span></span>
+                </div>
+              </td>
+              <td class="col-num">{{ ch.avgTime > 0 ? formatSeconds(ch.avgTime) : '-' }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
-      <div class="card">
+      <!-- 模型排行 -->
+      <div class="card rank-card">
         <div class="card-header">
           <div class="card-title"><SvgIcon name="model" :size="18" /> {{ t('dashboard.modelRank') }}</div>
-          <div class="card-header-right">
-            <TabSwitch v-model="modelRankTab" :tabs="[
-              { value: 'entry', label: t('dashboard.entryModel') },
-              { value: 'channel', label: t('dashboard.channelModel') },
-            ]" />
-            <TabSwitch v-model="modelRankPeriod" variant="period" :tabs="[
-              { value: 'today', label: t('dashboard.periodToday') },
-              { value: 'yesterday', label: t('dashboard.periodYesterday') },
-              { value: 'week', label: t('dashboard.periodWeek') },
-              { value: 'month', label: t('dashboard.periodMonth') },
-            ]" />
-          </div>
+          <TabSwitch v-model="modelRankTab" variant="primary" :tabs="[
+            { value: 'entry', label: t('dashboard.entryModel') },
+            { value: 'channel', label: t('dashboard.channelModel') },
+          ]" />
         </div>
-        <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
-          <LoadingSpinner :text="t('common.loading')" />
-        </div>
-        <div v-else-if="!currentModelRank?.length" style="text-align:center;padding:30px;color:var(--text-muted);">{{ t('dashboard.noData') }}</div>
-        <div class="rank-list" v-else>
-          <div class="rank-item" v-for="(m, idx) in currentModelRank" :key="m.name + (m.channelName || '')">
-            <div class="rank-pos" :class="idx === 0 ? 'gold' : idx === 1 ? 'silver' : idx === 2 ? 'bronze' : ''">
-              {{ idx + 1 }}
-            </div>
-            <div class="rank-info">
-              <div class="rank-name">
-                <span v-if="modelRankTab === 'channel' && m.channelName" class="rank-channel-tag">{{ m.channelName }}</span>
-                <span class="rank-model-text">{{ m.name }}</span>
-              </div>
-              <div class="rank-meta">
-                <span>{{ m.requests }} {{ t('dashboard.requests') }}</span>
-                <span class="badge badge-success"><SvgIcon name="check-bold" :size="10" /> {{ m.success }}</span>
-                <span class="rank-meta-tokens"><SvgIcon name="token" :size="10" /> {{ formatTokens(m.totalTokens) }} tokens</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title"><SvgIcon name="clock" :size="18" /> {{ t('dashboard.recentActivity') }}</div>
-        <router-link to="/admin/log/list" class="btn btn-sm btn-secondary">{{ t('dashboard.viewAll') }}</router-link>
-      </div>
-      <div v-if="loading" style="text-align:center;padding:30px;color:var(--text-muted);">
-        <LoadingSpinner :text="t('common.loading')" />
-      </div>
-      <div v-else-if="!stats.recentLogs?.length" style="text-align:center;padding:30px;color:var(--text-muted);">{{ t('dashboard.noActivity') }}</div>
-      <div class="activity-list" v-else>
-        <div class="activity-item" v-for="log in stats.recentLogs" :key="log.id">
-          <PhaseBadge :phase="log.phase as any" />
-          <code class="model-tag" style="font-size:11px;">{{ log.modelName }}</code>
-          <span class="activity-channel">{{ log.channelName }}</span>
-          <span class="activity-time">{{ formatTime(log.createdAt) }}</span>
-        </div>
+        <div v-if="loading" class="rank-state"><LoadingSpinner :text="t('common.loading')" /></div>
+        <div v-else-if="!currentModelRank?.length" class="rank-state">{{ t('dashboard.noRankData') }}</div>
+        <table v-else class="rank-table">
+          <thead>
+            <tr>
+              <th class="col-idx">#</th>
+              <th>{{ t('dashboard.rankModelName') }}</th>
+              <th class="col-num">{{ t('dashboard.rankRequests') }}</th>
+              <th class="col-rate">{{ t('dashboard.rankSuccessRate') }}</th>
+              <th class="col-num">{{ t('dashboard.rankAvgTime') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(m, idx) in currentModelRank" :key="m.name + (m.channelName || '')">
+              <td class="col-idx">{{ idx + 1 }}</td>
+              <td>
+                <div class="rank-name-cell">
+                  <span class="rank-avatar" :style="{ background: iconGradient(m.name) }">{{ (m.name || '?').charAt(0).toUpperCase() }}</span>
+                  <span class="rank-name-text">
+                    <span v-if="modelRankTab === 'channel' && m.channelName" class="rank-channel-tag">{{ m.channelName }}/</span>{{ m.name }}
+                  </span>
+                </div>
+              </td>
+              <td class="col-num">{{ formatNumber(m.requests) }}</td>
+              <td class="col-rate">
+                <div class="rate-cell">
+                  <span class="rate-text">{{ successRateOf(m) }}%</span>
+                  <span class="rate-bar rate-bar--purple"><span class="rate-bar-fill" :style="{ width: successRateOf(m) + '%' }"></span></span>
+                </div>
+              </td>
+              <td class="col-num">{{ m.avgTime > 0 ? formatSeconds(m.avgTime) : '-' }}</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -335,13 +214,11 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, onActivated } from 'vue'
-import { dashboardApi, type DashboardStats } from '@/api/dashboard'
+import { dashboardApi, type DashboardRangeKey, type DashboardRangeParams, type DashboardStats, type ModelRankItem, type DashboardSparklines } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
-import { formatLocalTime } from '@/utils/date'
 import { formatNumber, formatSeconds, formatTokens } from '@/utils/format'
-import TodayTrendChart from '@/components/dashboard/TodayTrendChart.vue'
-import PhaseBadge from '@/components/common/PhaseBadge.vue'
 import { sparklinePaths } from '@/utils/sparkline'
+import TodayTrendChart from '@/components/dashboard/TodayTrendChart.vue'
 
 const { t } = useI18n()
 
@@ -349,8 +226,11 @@ const stats = ref<DashboardStats>({} as DashboardStats)
 const loading = ref(true)
 let dashboardRefreshTimer: ReturnType<typeof setInterval> | null = null
 const modelRankTab = ref<'entry' | 'channel'>('entry')
-const channelRankPeriod = ref('today')
-const modelRankPeriod = ref('today')
+
+// ===== 时间段选择 =====
+// today/week/month 由后端按上海时区计算（周=周一起、月=1日起，均为"至今"）；
+// custom 为用户自定义起止日期（含边界），非法输入时不发请求。
+const rangeKey = ref<DashboardRangeKey>('today')
 
 function todayStr(): string {
   const d = new Date()
@@ -360,42 +240,40 @@ function todayStr(): string {
   return `${y}-${m}-${day}`
 }
 
-const selectedDate = ref(todayStr())
+const fromDate = ref(todayStr())
+const toDate = ref(todayStr())
 
-const currentModelRank = computed(() => {
-  return modelRankTab.value === 'entry' ? stats.value.modelRank : stats.value.channelModelRank
+const rangeInvalid = computed(() =>
+  rangeKey.value === 'custom' && !!fromDate.value && !!toDate.value && fromDate.value > toDate.value)
+
+const totals = computed(() => stats.value.totals ?? {
+  requests: 0, success: 0, fail: 0, successRate: 0, avgResponseTime: 0, avgOutputSpeed: 0, totalTokens: 0
 })
 
-const dailyRequests = computed(() => {
-  return stats.value.dailyTrend?.map(d => d.requests) ?? []
+const prevTotals = computed(() => stats.value.prevTotals ?? {
+  requests: 0, success: 0, fail: 0, successRate: 0, avgResponseTime: 0, avgOutputSpeed: 0, totalTokens: 0
 })
 
-const dailySuccessRates = computed(() => {
-  // 无请求的天沿用前一个有效成功率，避免曲线从 100% 砸到 0% 造成"成功率崩盘"的误导
-  let lastValid = 0
-  return (stats.value.dailyTrend ?? []).map(d => {
-    const total = d.success + d.fail
-    if (total > 0) {
-      lastValid = (d.success / total) * 100
-    }
-    return lastValid
-  })
+const emptySpark = (): DashboardSparklines => ({
+  requests: [], successRate: [], avgResponseTime: [], avgOutputSpeed: []
+})
+const spark = computed<DashboardSparklines>(() => stats.value.sparklines ?? emptySpark())
+
+const hasData = computed(() => (totals.value.requests ?? 0) > 0)
+
+// 环比标签随所选时间段变化：较昨日 / 较上周同期 / 较上月同期 / 较上期
+const rangeLabels = computed(() => {
+  const prevText = {
+    today: t('dashboard.vsYesterday'),
+    week: t('dashboard.vsLastWeek'),
+    month: t('dashboard.vsLastMonth'),
+    custom: t('dashboard.vsPrevPeriod'),
+  }[rangeKey.value] ?? t('dashboard.vsPrevPeriod')
+  return { prev: prevText }
 })
 
-const dailyAvgTimes = computed(() => {
-  return (stats.value.dailyTrend ?? []).map(d => d.avgTime ?? 0)
-})
-
-const dailyOutputSpeeds = computed(() => {
-  return (stats.value.dailyTrend ?? []).map(d => d.avgOutputSpeed ?? 0)
-})
-
-// 无数据判定：今日/本月无请求时主值显示 "-" 而非 0
-const hasTodayData = computed(() => (stats.value.todayRequests ?? 0) > 0)
-const hasMonthlyData = computed(() => (stats.value.monthlyStats?.requests ?? 0) > 0)
-
-// ===== 卡片"较昨日"环比 =====
-// 双零（今日与昨日均无数据）→ 隐藏；仅昨日无数据 → 视为 0，显示 +100.0%
+// ===== 卡片环比（与上一同期窗口对比）=====
+// 双零 → 隐藏；仅上一期无数据 → 视为 0，显示 +100.0%
 interface VsChange { show: boolean; arrow: string; percent: string; css: string }
 
 function buildVsChange(current: number | undefined, prev: number | undefined, invert = false): VsChange {
@@ -403,7 +281,7 @@ function buildVsChange(current: number | undefined, prev: number | undefined, in
   const p = prev ?? 0
   if (p === 0 && c === 0) return { show: false, arrow: '→', percent: '0.0', css: '' }
   if (p === 0) {
-    // 昨日无数据视为 0，今日有数据 → 上涨 100%
+    // 上一期无数据视为 0，本期有数据 → 上涨 100%
     // invert=true 时"上涨"是坏事（首字节变慢），颜色翻转为 down
     return { show: true, arrow: '↑', percent: '+100.0', css: invert ? 'down' : 'up' }
   }
@@ -418,63 +296,96 @@ function buildVsChange(current: number | undefined, prev: number | undefined, in
 }
 
 const vsRequests = computed(() =>
-  buildVsChange(stats.value.todayRequests, stats.value.yesterdayStats?.requests))
+  buildVsChange(totals.value.requests, prevTotals.value.requests))
 const vsSuccessRate = computed(() =>
-  buildVsChange(stats.value.successRate, stats.value.yesterdayStats?.successRate))
+  buildVsChange(totals.value.successRate, prevTotals.value.successRate))
 // 首字节时间：上升（变慢）为坏方向，颜色翻转
 const vsAvgResponse = computed(() =>
-  buildVsChange(stats.value.avgResponseTime, stats.value.yesterdayStats?.avgResponseTime, true))
+  buildVsChange(totals.value.avgResponseTime, prevTotals.value.avgResponseTime, true))
 const vsOutputSpeed = computed(() =>
-  buildVsChange(stats.value.avgOutputSpeed, stats.value.yesterdayStats?.avgOutputSpeed))
+  buildVsChange(totals.value.avgOutputSpeed, prevTotals.value.avgOutputSpeed))
 
-function formatTime(dateStr: string) {
-  return formatLocalTime(dateStr)
+const currentModelRank = computed<(ModelRankItem & { channelName?: string })[]>(() => {
+  return modelRankTab.value === 'entry' ? (stats.value.modelRank ?? []) : (stats.value.channelModelRank ?? [])
+})
+
+// 排行表格：成功率由 成功数/请求数 推导（口径与卡片一致，恒 ≤100%）
+function successRateOf(row: { requests: number; success: number }): string {
+  if (!row.requests) return '0.0'
+  const rate = Math.min(100, (row.success / row.requests) * 100)
+  return rate.toFixed(1)
 }
 
-function getChangePercent(key: 'requests' | 'totalTokens' | 'successRate' | 'avgResponseTime' | 'avgOutputSpeed' | 'failCount'): string {
-  const current = (stats.value.monthlyStats as any)?.[key] ?? 0
-  const prev = (stats.value.monthlyStats as any)?.prev?.[key] ?? 0
-  if (prev === 0) return current === 0 ? '0.0' : '100.0'
-  const change = ((current - prev) / prev) * 100
-  return (change > 0 ? '+' : '') + change.toFixed(1)
-}
-
-function getChangeArrow(key: 'requests' | 'totalTokens' | 'successRate' | 'avgResponseTime' | 'avgOutputSpeed' | 'failCount', invert = false): string {
-  const current = (stats.value.monthlyStats as any)?.[key] ?? 0
-  const prev = (stats.value.monthlyStats as any)?.prev?.[key] ?? 0
-  if (prev === 0 && current === 0) return '→'
-  const isUp = current > prev
-  if (invert) {
-    return isUp ? '↑' : '↓'
+// 排行首字母色块（与模型列表页同一套配色算法）
+const iconPalette = [
+  'linear-gradient(135deg, #61afef, #2b6cb0)',
+  'linear-gradient(135deg, #98c379, #3f7d3a)',
+  'linear-gradient(135deg, #e5c07b, #b8860b)',
+  'linear-gradient(135deg, #c678dd, #7c3a9e)',
+  'linear-gradient(135deg, #56b6c2, #1a7a8a)',
+  'linear-gradient(135deg, #e06c75, #b33b3b)',
+  'linear-gradient(135deg, #d4a0f0, #8b5cf6)',
+  'linear-gradient(135deg, #7ee787, #2d7d46)',
+]
+function iconGradient(name: string): string {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash) + name.charCodeAt(i)
+    hash |= 0
   }
-  return isUp ? '↑' : '↓'
+  return iconPalette[Math.abs(hash) % iconPalette.length]
 }
 
-function getChangeClass(key: 'requests' | 'totalTokens' | 'successRate' | 'avgResponseTime' | 'avgOutputSpeed' | 'failCount', invert = false): string {
-  const current = (stats.value.monthlyStats as any)?.[key] ?? 0
-  const prev = (stats.value.monthlyStats as any)?.prev?.[key] ?? 0
-  if (prev === 0 && current === 0) return ''
-  const isUp = current > prev
-  if (invert) {
-    return isUp ? 'down' : 'up'
+function currentRangeParams(): DashboardRangeParams {
+  if (rangeKey.value === 'custom') {
+    return { range: 'custom', from: fromDate.value, to: toDate.value }
   }
-  return isUp ? 'up' : 'down'
+  return { range: rangeKey.value }
 }
 
 async function fetchStats() {
+  if (rangeInvalid.value) return
   try {
-    const res = await dashboardApi.getStats({
-      channelRankPeriod: channelRankPeriod.value,
-      modelRankPeriod: modelRankPeriod.value,
-      date: selectedDate.value
-    })
+    const res = await dashboardApi.getStats(currentRangeParams())
     stats.value = res.data
   } catch {
     // stats will show empty values
   }
 }
 
-watch([channelRankPeriod, modelRankPeriod, selectedDate], fetchStats)
+// 快捷时间段切换时同步起止日期，便于切到「自定义」时以此为初始区间
+function syncRangeDates() {
+  if (rangeKey.value === 'custom') return
+  const today = todayStr()
+  const d = new Date()
+  if (rangeKey.value === 'today') {
+    fromDate.value = today
+    toDate.value = today
+  } else if (rangeKey.value === 'week') {
+    const wd = d.getDay() === 0 ? 7 : d.getDay()
+    const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - wd + 1)
+    fromDate.value = toISO(monday)
+    toDate.value = today
+  } else if (rangeKey.value === 'month') {
+    fromDate.value = toISO(new Date(d.getFullYear(), d.getMonth(), 1))
+    toDate.value = today
+  }
+}
+
+function toISO(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+watch(rangeKey, () => {
+  syncRangeDates()
+  fetchStats()
+})
+watch([fromDate, toDate], () => {
+  if (rangeKey.value === 'custom') fetchStats()
+})
 
 // 供 keep-alive 按组件名缓存（Layout.vue cachedViews）
 defineOptions({ name: 'Dashboard' })
@@ -484,9 +395,13 @@ defineOptions({ name: 'Dashboard' })
 let activatedCount = 0
 onMounted(async () => {
   loading.value = true
+  syncRangeDates()
   await fetchStats()
   loading.value = false
-  dashboardRefreshTimer = setInterval(fetchStats, 15000)
+  // 60 秒轮询；页面隐藏（切到其它标签页）时跳过，避免无谓的数据库聚合压力
+  dashboardRefreshTimer = setInterval(() => {
+    if (!document.hidden) fetchStats()
+  }, 60000)
 })
 onActivated(async () => {
   if (activatedCount++ > 0) {
@@ -508,12 +423,14 @@ onUnmounted(() => {
   gap: 0;
 }
 
-/* Header */
+/* ── Header ── */
 .dashboard-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 .dashboard-header .header-left h2 {
@@ -524,39 +441,57 @@ onUnmounted(() => {
 }
 
 .dashboard-header .header-left p {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-muted);
   margin-top: 4px;
 }
 
-.date-picker-wrap {
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 日期区间选择器（仅「自定义」时间段展示） */
+.range-picker {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 12px;
+  padding: 6px 12px;
   background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--accent-blue) 40%, var(--border-color));
+  border-radius: var(--radius, 6px);
   color: var(--text-secondary);
 }
-.date-picker-wrap .date-input {
+.range-icon { color: var(--text-muted); flex-shrink: 0; }
+.range-chevron { color: var(--text-muted); flex-shrink: 0; }
+.range-input {
   border: none;
   background: transparent;
   color: var(--text-primary);
   font-size: 13px;
-  padding: 2px 0;
+  padding: 1px 0;
   outline: none;
-  min-width: 130px;
+  width: 118px;
+  font-family: inherit;
 }
-.date-picker-wrap .date-input::-webkit-calendar-picker-indicator {
+.range-input::-webkit-calendar-picker-indicator {
   filter: invert(0.6);
   cursor: pointer;
 }
-[data-theme="dark"] .date-picker-wrap .date-input::-webkit-calendar-picker-indicator {
+[data-theme="dark"] .range-input::-webkit-calendar-picker-indicator {
   filter: invert(0.8);
 }
+.range-sep { color: var(--text-muted); font-size: 12px; }
 
-/* Stats Grid */
+.range-error-bar {
+  margin: -8px 0 12px;
+  font-size: 12px;
+  color: var(--accent-red);
+}
+
+/* ── Stats Grid：桌面宽度下四张卡片保持同一行 ── */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -565,15 +500,18 @@ onUnmounted(() => {
 }
 
 .stat-card {
+  position: relative;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md, 12px);
-  padding: 20px;
+  padding: 16px 18px;
   box-shadow: var(--shadow-sm);
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .stat-card:hover {
@@ -581,49 +519,76 @@ onUnmounted(() => {
   transform: translateY(-2px);
 }
 
-.stat-card-main {
+.stat-top {
   display: flex;
-  gap: 16px;
   align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
 
 .stat-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--radius-md, 12px);
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
+.stat-card--blue .stat-icon { background: color-mix(in srgb, var(--accent-blue) 16%, transparent); color: var(--accent-blue); }
+.stat-card--green .stat-icon { background: color-mix(in srgb, var(--accent-green) 16%, transparent); color: var(--accent-green); }
+.stat-card--purple .stat-icon { background: rgba(188,140,255,0.16); color: #bc8cff; }
+.stat-card--yellow .stat-icon { background: color-mix(in srgb, var(--accent-yellow, #d29922) 16%, transparent); color: var(--accent-yellow, #d29922); }
 
-.stat-body { flex: 1; min-width: 0; }
-.stat-label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500; }
-.stat-value { font-size: 28px; font-weight: 700; line-height: 1.2; color: var(--text-primary); }
-.stat-value small { font-size: 14px; font-weight: 400; color: var(--text-muted); margin-left: 2px; }
-.stat-hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
-.hint-sep { color: var(--border-color); margin: 0 4px; }
+.stat-head { min-width: 0; flex: 1; }
+.stat-label { font-size: 12px; color: var(--text-muted); margin-bottom: 2px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-value { font-size: 26px; font-weight: 700; line-height: 1.15; color: var(--text-primary); white-space: nowrap; }
+.stat-value small { font-size: 13px; font-weight: 400; color: var(--text-muted); margin-left: 2px; }
 
-/* 卡片"较昨日"环比 */
+/* 卡片右侧迷你趋势线（随时间段变化的稀疏折线） */
+.stat-spark {
+  width: 92px;
+  height: 34px;
+  flex-shrink: 0;
+  overflow: visible;
+}
+.stat-spark .spark-line { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; }
+.stat-spark .spark-area { stroke: none; }
+.stat-card--blue .spark-line { stroke: var(--accent-blue); }
+.stat-card--blue .spark-area { fill: color-mix(in srgb, var(--accent-blue) 14%, transparent); }
+.stat-card--green .spark-line { stroke: var(--accent-green); }
+.stat-card--green .spark-area { fill: color-mix(in srgb, var(--accent-green) 14%, transparent); }
+.stat-card--purple .spark-line { stroke: #bc8cff; }
+.stat-card--purple .spark-area { fill: rgba(188,140,255,0.14); }
+.stat-card--yellow .spark-line { stroke: var(--accent-yellow, #d29922); }
+.stat-card--yellow .spark-area { fill: color-mix(in srgb, var(--accent-yellow, #d29922) 14%, transparent); }
+
+.stat-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 20px;
+}
+.stat-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.stat-badges { display: inline-flex; gap: 4px; }
+
+/* 环比（较昨日 / 较上周同期 / 较上月同期 / 较上期） */
 .stat-change {
   font-size: 12px; font-weight: 600;
   display: inline-flex; align-items: center; gap: 3px;
-  margin-left: 8px; white-space: nowrap;
+  white-space: nowrap;
 }
 .stat-change.up { color: var(--accent-green); }
 .stat-change.down { color: var(--accent-red); }
 .stat-change .change-arrow { font-size: 10px; }
-
-.stat-sparkline {
-  height: 30px;
-  width: 100%;
-}
-
-.stat-sparkline svg {
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
 
 .stat-card-loading {
   min-height: 120px;
@@ -632,229 +597,108 @@ onUnmounted(() => {
   justify-content: center;
 }
 
-/* Monthly Stats */
-.monthly-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md, 12px);
-  padding: 20px;
-  overflow: hidden;
-  margin-bottom: 20px;
-  box-shadow: var(--shadow-sm);
-}
+/* ── Rankings ── */
+.rank-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
 
-.view-detail-link {
+.rank-card { display: flex; flex-direction: column; }
+
+.view-all-link {
+  margin-left: auto;
   font-size: 13px;
-  color: var(--text-muted);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  transition: color 0.15s;
-}
-
-.view-detail-link:hover {
   color: var(--accent-blue);
+  text-decoration: none;
 }
+.view-all-link:hover { text-decoration: underline; }
 
-.monthly-body {
-  display: flex;
-  align-items: stretch;
-  padding: 16px 0 8px;
-  gap: 0;
-}
-
-.monthly-stat-item {
-  flex: 1;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 0 20px;
-  position: relative;
-}
-
-.monthly-stat-item:not(:last-child)::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 1px;
-  background: var(--border-color);
-}
-
-.monthly-stat-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-md, 12px);
+.rank-state {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 40px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.rank-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.rank-table thead th {
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+.rank-table thead th.col-num,
+.rank-table thead th.col-rate { text-align: left; }
+.rank-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+.rank-table tbody tr:last-child td { border-bottom: none; }
+.rank-table tbody tr:hover { background: var(--bg-hover); }
+
+.col-idx { width: 34px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.col-num { width: 84px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.col-rate { width: 150px; }
+
+.rank-name-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rank-avatar {
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: #fff;
   flex-shrink: 0;
 }
+.rank-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-channel-tag { color: var(--text-muted); font-size: 12px; }
 
-.monthly-stat-info {
-  min-width: 0;
-}
-
-.monthly-label {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 4px;
-  font-weight: 500;
-}
-
-.monthly-value {
-  font-size: 22px;
-  font-weight: 700;
-  line-height: 1.2;
-  color: var(--text-primary);
-}
-
-.monthly-value small {
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--text-muted);
-  margin-left: 2px;
-}
-
-.monthly-change {
-  font-size: 12px;
-  font-weight: 600;
-  margin-top: 4px;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.monthly-change.up {
-  color: var(--accent-green);
-}
-
-.monthly-change.down {
-  color: var(--accent-red);
-}
-
-.change-label {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text-muted);
-  margin-right: 2px;
-}
-
-.change-arrow {
-  font-size: 10px;
-}
-
-/* Rank section */
-.rank-list {
+.rate-cell { display: flex; align-items: center; gap: 8px; }
+.rate-text { width: 46px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.rate-bar {
   flex: 1;
-  overflow-y: auto;
-  min-height: 200px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-right: 4px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--bg-primary);
+  overflow: hidden;
+  min-width: 40px;
 }
-.rank-list::-webkit-scrollbar {
-  width: 5px;
+.rate-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #3fb950, #56d364);
+  transition: width 0.3s;
 }
-.rank-list::-webkit-scrollbar-track {
-  background: transparent;
+.rate-bar--purple .rate-bar-fill {
+  background: linear-gradient(90deg, #bc8cff, #d4a0f0);
 }
-.rank-list::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--text-muted) 40%, transparent);
-  border-radius: 3px;
-}
-.rank-list::-webkit-scrollbar-thumb:hover {
-  background: var(--text-muted);
-}
-.rank-item { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--border-color); transition: background 0.15s, transform 0.15s; }
-.rank-item:hover { background: var(--bg-hover); transform: translateX(4px); }
-.rank-pos { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; flex-shrink: 0; }
-.rank-pos.gold { background: linear-gradient(135deg, #ffd700, #ffb700); color: #1a1a1a; }
-.rank-pos.silver { background: linear-gradient(135deg, #c0c0c0, #a8a8a8); color: #1a1a1a; }
-.rank-pos.bronze { background: linear-gradient(135deg, #cd7f32, #b87333); color: #fff; }
-.rank-info { flex: 1; min-width: 0; }
-.rank-name { display: flex; align-items: center; font-size: 14px; font-weight: 600; min-width: 0; color: var(--text-primary); }
-.rank-model-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.rank-meta { font-size: 12px; color: var(--text-muted); display: flex; gap: 8px; margin-top: 3px; align-items: center; }
-.rank-meta-time { color: var(--text-muted); font-size: 11px; }
-.rank-meta-tokens { color: #ec4899; font-size: 11px; font-weight: 600; }
-.rank-channel-tag {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: var(--radius-sm, 4px);
-  font-size: 11px;
-  font-weight: 600;
-  background: rgba(88,166,255,0.15);
-  color: var(--accent-blue);
-  margin-right: 6px;
-  line-height: 1.4;
-}
-.rank-bar-bg { width: 80px; height: 6px; background: var(--bg-primary); border-radius: var(--radius-full, 9999px); overflow: hidden; flex-shrink: 0; min-width: 20px; }
-.rank-bar { height: 100%; background: linear-gradient(90deg, var(--accent-blue), color-mix(in srgb, var(--accent-blue) 70%, white)); border-radius: var(--radius-full, 9999px); transition: width 0.3s; min-width: 4px; }
 
-/* Tab switch */
-.card-header-right { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-
-/* Activity */
-.activity-list { display: flex; flex-direction: column; gap: 6px; }
-.activity-item { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--radius); font-size: 13px; border: 1px solid var(--border-color); transition: background 0.12s; }
-.activity-item:hover { background: var(--bg-hover); }
-.activity-channel { font-size: 12px; color: var(--text-secondary); flex: 1; text-align: right; }
-.activity-time { font-size: 11px; color: var(--text-muted); white-space: nowrap; font-family: var(--font-mono, monospace); }
-
-@media (max-width: 1400px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+/* ── Responsive ── */
 @media (max-width: 1200px) {
-  .monthly-body {
-    flex-wrap: wrap;
-    gap: 16px 0;
-  }
-  .monthly-stat-item {
-    flex: 0 0 33.33%;
-  }
-  .monthly-stat-item:nth-child(3)::after {
-    display: none;
-  }
+  .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .rank-grid { grid-template-columns: 1fr; }
 }
-@media (max-width: 1000px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 768px) {
   .stats-grid { grid-template-columns: 1fr; }
-  .monthly-body {
-    padding: 12px 0 4px;
-  }
-  .monthly-stat-item {
-    flex: 0 0 50%;
-    padding: 0 12px;
-    gap: 8px;
-  }
-  .monthly-stat-item::after {
-    display: none;
-  }
-  .monthly-stat-icon {
-    width: 32px;
-    height: 32px;
-  }
-  .monthly-value {
-    font-size: 18px;
-  }
-  .rank-meta-time { display: none; }
-  .rank-item { gap: 8px; }
-  .rank-bar-bg { width: 60px; margin-left: auto; }
   .dashboard-header {
     flex-direction: column;
+    align-items: flex-start;
     gap: 12px;
   }
-}
-@media (max-width: 400px) {
-  .monthly-stat-item {
-    padding: 0 8px;
+  .header-right {
+    width: 100%;
+    justify-content: space-between;
   }
-  .monthly-label {
-    font-size: 11px;
-  }
-  .monthly-value {
-    font-size: 16px;
-  }
+  .range-picker { flex: 1; justify-content: space-between; }
+  .range-input { width: 100px; }
+  .stat-spark { width: 70px; }
+  .col-rate { width: 110px; }
 }
 </style>

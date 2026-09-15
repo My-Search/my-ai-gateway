@@ -1,29 +1,36 @@
 <template>
   <div class="trend-card card">
     <div class="card-header">
-      <div class="card-title"><SvgIcon name="chart" :size="18" /> {{ t('dashboard.todayTrend') }}</div>
+      <div class="card-title-block">
+        <div class="card-title"><SvgIcon name="chart" :size="18" /> {{ t('dashboard.trendTitle') }}</div>
+        <p class="card-subtitle">{{ t('dashboard.trendSubtitle') }}</p>
+      </div>
       <div class="tab-switch">
         <button :class="['tab-btn', mode === 'all' ? 'active' : '']" @click="switchMode('all')">{{ t('dashboard.trendSuccessFail') }}</button>
         <button :class="['tab-btn', mode === 'entry' ? 'active' : '']" @click="switchMode('entry')">{{ t('dashboard.trendEntry') }}</button>
         <button :class="['tab-btn', mode === 'channel' ? 'active' : '']" @click="switchMode('channel')">{{ t('dashboard.trendChannel') }}</button>
       </div>
     </div>
-    <div class="trend-body" ref="chartRef" style="width:100%;height:240px;"></div>
+    <div class="trend-body" ref="chartRef" style="width:100%;height:300px;"></div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { dashboardApi, type TodayTrendData } from '@/api/dashboard'
+import { dashboardApi, type TodayTrendData, type DashboardRangeKey, type DashboardRangeParams } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
 import * as echarts from 'echarts'
 
 const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
-  date?: string
+  rangeKey?: DashboardRangeKey
+  from?: string
+  to?: string
 }>(), {
-  date: ''
+  rangeKey: 'today',
+  from: '',
+  to: ''
 })
 
 const mode = ref<'all' | 'entry' | 'channel'>('entry')
@@ -37,10 +44,17 @@ function switchMode(newMode: 'all' | 'entry' | 'channel'): void {
   fetchData()
 }
 
+function rangeParams(): DashboardRangeParams {
+  if (props.rangeKey === 'custom') {
+    if (!props.from || !props.to || props.from > props.to) return { range: 'today' }
+    return { range: 'custom', from: props.from, to: props.to }
+  }
+  return { range: props.rangeKey }
+}
+
 async function fetchData() {
   try {
-    const dateVal = props.date || undefined
-    const res = await dashboardApi.getTodayTrend(mode.value, dateVal)
+    const res = await dashboardApi.getTodayTrend(mode.value, rangeParams())
     trendData.value = res.data
     nextTick(() => renderChart())
   } catch {
@@ -133,27 +147,34 @@ function renderChart() {
     legend: isMulti ? {
       type: 'scroll',
       bottom: 0,
+      // 图例用线条而非色块，与折线本身保持一致
+      icon: 'line',
+      itemStyle: { borderColor: 'auto', borderWidth: 2 },
       textStyle: { color: 'var(--text-secondary)', fontSize: 11 },
       pageTextStyle: { color: 'var(--text-secondary)' }
     } : undefined,
     grid: {
-      left: 40,
-      right: 16,
-      top: 20,
-      bottom: isMulti ? 40 : 24
+      left: 44,
+      right: 20,
+      top: 16,
+      bottom: isMulti ? 44 : 24
     },
     xAxis: {
       type: 'category',
       data: data.buckets,
       boundaryGap: false,
       axisLine: { lineStyle: { color: 'var(--border-color)' } },
-      axisLabel: { color: 'var(--text-muted)', fontSize: 10, interval: 5, showMaxLabel: true },
+      axisTick: { show: false },
+      // 10 分钟桶（单日 144 个）每 5 个显示一个标签；按天分桶时自动抽稀
+      axisLabel: { color: 'var(--text-muted)', fontSize: 10, interval: data.bucketUnit === '1d' ? 'auto' : 5, showMaxLabel: true },
       splitLine: { show: false }
     },
     yAxis: {
       type: 'value',
       minInterval: 1,
-      splitLine: { lineStyle: { color: 'var(--border-color)', type: 'dashed' } },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: 'var(--border-color)', type: 'dashed', opacity: 0.6 } },
       axisLabel: { color: 'var(--text-muted)', fontSize: 10 }
     },
     series: seriesList
@@ -183,44 +204,75 @@ watch(() => t('dashboard.trendRequests'), () => {
   nextTick(() => renderChart())
 }, { flush: 'post' })
 
-watch(() => props.date, () => {
+watch(() => props.rangeKey, () => {
   fetchData()
+})
+
+watch([() => props.from, () => props.to], () => {
+  if (props.rangeKey === 'custom') fetchData()
 })
 </script>
 
 <style scoped>
 .trend-card {
-  margin-top: 20px;
+  margin-bottom: 20px;
 }
 .trend-body {
-  min-height: 200px;
+  min-height: 240px;
 }
 
-/* Tab switch - match Dashboard.vue style */
+.card-title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.card-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+  font-weight: 400;
+}
+
+/* Tab 选中态：淡蓝底 + 主色文字（实心蓝过于抢眼） */
 .tab-switch {
   display: flex;
-  gap: 4px;
-  background: var(--bg-primary);
+  gap: 6px;
+  background: transparent;
   border-radius: 6px;
-  padding: 2px;
+  padding: 0;
 }
 .tab-btn {
-  padding: 4px 10px;
-  border: none;
+  padding: 6px 14px;
+  border: 1px solid var(--border-color);
   background: transparent;
-  color: var(--text-muted);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
   font-weight: 500;
-  border-radius: 4px;
+  border-radius: var(--radius, 6px);
   cursor: pointer;
   transition: all 0.15s;
+  white-space: nowrap;
+  font-family: inherit;
 }
 .tab-btn:hover {
   color: var(--text-primary);
+  background: var(--bg-hover);
 }
 .tab-btn.active {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+  background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  border-color: color-mix(in srgb, var(--accent-blue) 45%, transparent);
+  color: var(--accent-blue);
+  box-shadow: none;
+}
+.tab-btn.active:hover {
+  background: color-mix(in srgb, var(--accent-blue) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent-blue) 55%, transparent);
+  color: var(--accent-blue);
+}
+
+@media (max-width: 768px) {
+  .tab-switch { flex-wrap: wrap; }
+  .tab-btn { padding: 5px 10px; font-size: 12px; }
 }
 </style>

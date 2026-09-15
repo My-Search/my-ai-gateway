@@ -1,32 +1,15 @@
-### Java / Maven ###
+### Java (已迁移至 Go，不再需要) ###
+src/
+pom.xml
 target/
-*.class
 *.jar
-*.war
-*.nar
-*.ear
-*.zip
-*.tar.gz
-*.rar
-pom.xml.tag
-pom.xml.releaseBackup
-pom.xml.versionsBackup
-pom.xml.next
-release.properties
-dependency-reduced-pom.xml
-buildNumber.properties
-.mvn/timing.properties
-.mvn/wrapper/maven-wrapper.jar
 
-### Spring Boot ###
-*.db
-*.log
-*.err
-logs/
-**/application-local.yml
-**/application-dev.yml
-**/application-*.properties
-!.mvn/wrapper/maven-wrapper.jar
+### Go ###
+/mag-gateway
+/mag-gateway.exe
+*.test
+*.out
+/dist/
 
 ### Frontend / Node ###
 frontend/node_modules/
@@ -69,7 +52,6 @@ test-spacing-*.png
 frontend/test-*.html
 
 ### Dev scratch outputs ###
-*.out
 /original_controller.java
 
 ### Vite temp files ###
@@ -79,14 +61,16 @@ frontend/*.timestamp-*.mjs
 /FILE
 /_check_md5.ps1
 
+### Build logs ###
+*.log
+boot-final.*
+backendStart.bat
+
 ### OpenCode / Agent workspace ###
 .omo/
 .agentswork/
 memory/
 .playwright-mcp/
 
-### Environment files ###
-.env
-.env.*
-!.env.example
-!.env.compose.example
+### Agent workspace ###
+.zcode/

@@ -9,13 +9,10 @@ services:
     env_file:
       - .env.compose
     environment:
-      # transaction_mode=IMMEDIATE：避免 @Transactional 先读后写升级写锁时 SQLITE_BUSY_SNAPSHOT（见 application.yml）
-      SPRING_DATASOURCE_URL: jdbc:sqlite:/app/data/gateway.db?transaction_mode=IMMEDIATE
-      # -Xmx512m：显式限制堆上限。未设置且容器无 mem_limit 时，JVM 按宿主机总内存的 25% 计算堆上限
-      # （如 96GB 宿主机 → 24GB），导致内存占用不可预期；同时 MaxDirectMemorySize 默认等于 MaxHeapSize，
-      # 一并压住 reactor-netty DataBuffer 所用的 direct buffer 天花板。
-      # 个人/小团队场景 512MB 堆足够（按 20 并发含图请求、单请求数 MB 估算）。
-      JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8 -Xmx512m
+      # 数据库路径（兼容旧版 SPRING_DATASOURCE_URL，新版优先使用 MAG_DB_PATH）
+      MAG_DB_PATH: /app/data/gateway.db
+      # 内存上限（Go：GOMEMLIMIT 控制 GC 触发时机，数值略低于容器内存限制）
+      GOMEMLIMIT: 480MiB
     volumes:
       - ./data:/app/data
     healthcheck:

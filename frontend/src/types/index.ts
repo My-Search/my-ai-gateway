@@ -126,49 +126,6 @@ export interface LogListResponse {
   number: number
 }
 
-// Dashboard Stats Types
-export interface DashboardStats {
-  todayRequests: number
-  yesterdayRequests: number
-  todaySuccess: number
-  todayFail: number
-  successRate: number
-  avgResponseTime: number
-  channelCount: number
-  customModelCount: number
-  apiKeyCount: number
-  dailyTrend: DailyTrend[]
-  channelRank: ChannelRank[]
-  modelRank: ModelRank[]
-  recentLogs: RecentLog[]
-}
-
-export interface DailyTrend {
-  label: string
-  requests: number
-}
-
-export interface ChannelRank {
-  name: string
-  requests: number
-  success: number
-  avgTime: number
-}
-
-export interface ModelRank {
-  name: string
-  requests: number
-  success: number
-}
-
-export interface RecentLog {
-  id: number
-  modelName: string
-  channelName: string
-  phase: string
-  createdAt: string
-}
-
 // Playground Types
 export interface PlaygroundRequest {
   modelId: number
