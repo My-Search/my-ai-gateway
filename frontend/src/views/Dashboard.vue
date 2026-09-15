@@ -447,6 +447,17 @@ async function fetchStats() {
   }
 }
 
+// 时间段切换时的加载：先置 loading 再拉取，避免旧数据残留（脏读）；
+// 60s 轮询与 keep-alive 恢复仍走原始 fetchStats，保持静默不闪烁
+async function refreshStatsOnSwitch() {
+  loading.value = true
+  try {
+    await fetchStats()
+  } finally {
+    loading.value = false
+  }
+}
+
 // 快捷时间段切换时同步起止日期，便于切到「自定义」时以此为初始区间
 function syncRangeDates() {
   if (rangeKey.value === 'custom') return
@@ -473,12 +484,22 @@ function toISO(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+// 切换时间段时先置 loading 再拉取，避免旧数据残留造成脏读
+async function fetchStatsWithLoading() {
+  loading.value = true
+  try {
+    await fetchStats()
+  } finally {
+    loading.value = false
+  }
+}
+
 watch(rangeKey, () => {
   syncRangeDates()
-  fetchStats()
+  fetchStatsWithLoading()
 })
 watch([fromDate, toDate], () => {
-  if (rangeKey.value === 'custom') fetchStats()
+  if (rangeKey.value === 'custom') fetchStatsWithLoading()
 })
 
 // 供 keep-alive 按组件名缓存（Layout.vue cachedViews）
