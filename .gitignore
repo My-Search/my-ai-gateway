@@ -64,7 +64,6 @@ frontend/*.timestamp-*.mjs
 ### Build logs ###
 *.log
 boot-final.*
-backendStart.bat
 
 ### OpenCode / Agent workspace ###
 .omo/

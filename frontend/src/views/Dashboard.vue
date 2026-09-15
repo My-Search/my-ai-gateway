@@ -3,44 +3,60 @@
     <!-- Page Header -->
     <div class="dashboard-header">
       <div class="header-left">
-        <h2>{{ t('nav.dashboard') }}</h2>
+        <div class="title-row">
+          <h2>{{ t('nav.dashboard') }}</h2>
+          <div class="header-controls">
+            <!-- 时间段下拉选择器 -->
+            <div class="period-dropdown" ref="periodDropdownRef">
+              <button class="period-trigger" @click="openPeriod">
+                <SvgIcon name="calendar" :size="14" />
+                <span>{{ periodOptions.find(o => o.value === rangeKey)?.label }}</span>
+                <SvgIcon name="chevron-down" :size="12" :class="{ rotated: periodOpen }" />
+              </button>
+              <Transition name="fade">
+                <div v-if="periodOpen" class="period-menu">
+                  <button
+                    v-for="opt in periodOptions"
+                    :key="opt.value"
+                    :class="['period-option', { active: rangeKey === opt.value }]"
+                    @click="selectPeriod(opt.value)"
+                  >
+                    {{ opt.label }}
+                  </button>
+                </div>
+              </Transition>
+            </div>
+            <button class="btn-icon" :disabled="refreshing" @click="refreshStats" :title="t('common.refresh')">
+              <SvgIcon name="refresh" :size="14" :class="{ spinning: refreshing }" />
+            </button>
+          </div>
+        </div>
         <p>{{ t('dashboard.subtitle') }}</p>
       </div>
-      <div class="header-right">
-        <!-- 时间段下拉选择器 -->
-        <div class="period-dropdown" ref="periodDropdownRef">
-          <button class="period-trigger" @click="openPeriod">
-            <SvgIcon name="calendar" :size="14" />
-            <span>{{ periodOptions.find(o => o.value === rangeKey)?.label }}</span>
-            <SvgIcon name="chevron-down" :size="12" :class="{ rotated: periodOpen }" />
-          </button>
-          <Transition name="fade">
-            <div v-if="periodOpen" class="period-menu">
-              <button
-                v-for="opt in periodOptions"
-                :key="opt.value"
-                :class="['period-option', { active: rangeKey === opt.value }]"
-                @click="selectPeriod(opt.value)"
-              >
-                {{ opt.label }}
-              </button>
-            </div>
-          </Transition>
-        </div>
-        <!-- 起止日期选择器仅在选择「自定义」时展示 -->
-        <div v-if="rangeKey === 'custom'" class="range-picker">
-          <SvgIcon name="calendar" :size="15" class="range-icon" />
-          <input type="date" class="range-input" v-model="fromDate" :title="t('dashboard.rangeStart')" />
-          <span class="range-sep">~</span>
-          <input type="date" class="range-input" v-model="toDate" :title="t('dashboard.rangeEnd')" />
-          <SvgIcon name="chevron-down" :size="14" class="range-chevron" />
-        </div>
-        <button class="btn-icon" :disabled="refreshing" @click="refreshStats" :title="t('common.refresh')">
-          <SvgIcon name="refresh" :size="14" :class="{ spinning: refreshing }" />
-        </button>
-      </div>
     </div>
-    <div v-if="rangeInvalid" class="range-error-bar">{{ t('dashboard.rangeError') }}</div>
+
+    <!-- 自定义时间段选择弹框 -->
+    <Dialog
+      v-model="customDialogOpen"
+      :title="t('dashboard.rangeCustom')"
+      type="confirm"
+      :confirm-text="t('dialog.confirm')"
+      :cancel-text="t('dialog.cancel')"
+      width="420px"
+      @confirm="confirmCustomRange"
+    >
+      <div class="custom-range-form">
+        <div class="form-group">
+          <label>{{ t('dashboard.rangeStart') }}</label>
+          <input v-model="customFrom" type="date" class="form-control" />
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label>{{ t('dashboard.rangeEnd') }}</label>
+          <input v-model="customTo" type="date" class="form-control" />
+        </div>
+        <p v-if="customInvalid" class="custom-range-error">{{ t('dashboard.rangeError') }}</p>
+      </div>
+    </Dialog>
 
     <!-- 请求趋势（跟随所选时间段） -->
     <TodayTrendChart :range-key="rangeKey" :from="fromDate" :to="toDate" />
@@ -220,7 +236,7 @@
               <td class="col-rate">
                 <div class="rate-cell">
                   <span class="rate-text">{{ successRateOf(m) }}%</span>
-                  <span class="rate-bar rate-bar--purple"><span class="rate-bar-fill" :style="{ width: successRateOf(m) + '%' }"></span></span>
+                  <span class="rate-bar"><span class="rate-bar-fill" :style="{ width: successRateOf(m) + '%' }"></span></span>
                 </div>
               </td>
               <td class="col-num">{{ m.avgTime > 0 ? formatSeconds(m.avgTime) : '-' }}</td>
@@ -240,6 +256,7 @@ import { useI18n } from '@/composables/useI18n'
 import { formatNumber, formatSeconds, formatTokens } from '@/utils/format'
 import { sparklinePaths } from '@/utils/sparkline'
 import TodayTrendChart from '@/components/dashboard/TodayTrendChart.vue'
+import Dialog from '@/components/common/Dialog.vue'
 
 const { t } = useI18n()
 
@@ -263,9 +280,35 @@ function openPeriod() {
   periodOpen.value = !periodOpen.value
 }
 
+// 自定义时间段的弹框
+const customDialogOpen = ref(false)
+const customFrom = ref(todayStr())
+const customTo = ref(todayStr())
+const customInvalid = computed(() =>
+  !!customFrom.value && !!customTo.value && customFrom.value > customTo.value)
+
 function selectPeriod(val: DashboardRangeKey) {
-  rangeKey.value = val
   periodOpen.value = false
+  if (val === 'custom') {
+    // 打开弹框让用户选择起止日期
+    customFrom.value = fromDate.value
+    customTo.value = toDate.value
+    customDialogOpen.value = true
+    return
+  }
+  rangeKey.value = val
+}
+
+function confirmCustomRange() {
+  if (customInvalid.value) {
+    // 非法区间：保持弹框打开并提示
+    customDialogOpen.value = true
+    return
+  }
+  fromDate.value = customFrom.value
+  toDate.value = customTo.value
+  rangeKey.value = 'custom'
+  customDialogOpen.value = false
 }
 
 function onPeriodClickOutside(e: MouseEvent) {
@@ -491,7 +534,7 @@ onUnmounted(() => {
   justify-content: space-between;
   margin-bottom: 20px;
   gap: 16px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .dashboard-header .header-left h2 {
@@ -507,7 +550,19 @@ onUnmounted(() => {
   margin-top: 4px;
 }
 
-.header-right {
+.header-left {
+  width: 100%;
+  min-width: 0;
+}
+.header-left .title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: nowrap;
+}
+
+.header-controls {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -595,40 +650,14 @@ onUnmounted(() => {
   transform: translateY(-4px);
 }
 
-/* 日期区间选择器（仅「自定义」时间段展示） */
-.range-picker {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: var(--bg-secondary);
-  border: 1px solid color-mix(in srgb, var(--accent-blue) 40%, var(--border-color));
-  border-radius: var(--radius, 6px);
-  color: var(--text-secondary);
+/* 自定义时间段弹框 */
+.custom-range-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
-.range-icon { color: var(--text-muted); flex-shrink: 0; }
-.range-chevron { color: var(--text-muted); flex-shrink: 0; }
-.range-input {
-  border: none;
-  background: transparent;
-  color: var(--text-primary);
-  font-size: 13px;
-  padding: 1px 0;
-  outline: none;
-  width: 118px;
-  font-family: inherit;
-}
-.range-input::-webkit-calendar-picker-indicator {
-  filter: invert(0.6);
-  cursor: pointer;
-}
-[data-theme="dark"] .range-input::-webkit-calendar-picker-indicator {
-  filter: invert(0.8);
-}
-.range-sep { color: var(--text-muted); font-size: 12px; }
-
-.range-error-bar {
-  margin: -8px 0 12px;
+.custom-range-error {
+  margin: 0;
   font-size: 12px;
   color: var(--accent-red);
 }
@@ -802,7 +831,7 @@ onUnmounted(() => {
 .col-num { width: 84px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .col-rate { width: 150px; }
 
-.header-right .btn-icon {
+.btn-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -816,15 +845,15 @@ onUnmounted(() => {
   transition: all 0.15s;
   padding: 0;
 }
-.header-right .btn-icon:hover:not(:disabled) {
+.btn-icon:hover:not(:disabled) {
   color: var(--text-primary);
   background: var(--bg-hover);
 }
-.header-right .btn-icon:disabled {
+.btn-icon:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.header-right .btn-icon .spinning {
+.btn-icon .spinning {
   animation: spin 1s linear infinite;
 }
 @keyframes spin {
@@ -860,9 +889,6 @@ onUnmounted(() => {
   background: linear-gradient(90deg, #3fb950, #56d364);
   transition: width 0.3s;
 }
-.rate-bar--purple .rate-bar-fill {
-  background: linear-gradient(90deg, #bc8cff, #d4a0f0);
-}
 
 /* ── Responsive ── */
 @media (max-width: 1200px) {
@@ -881,18 +907,11 @@ onUnmounted(() => {
   .dashboard-header .header-left h2 {
     font-size: 20px;
   }
-  .header-right {
-    flex-wrap: nowrap;
-    margin-left: auto;
-    gap: 4px;
-  }
   .period-trigger {
     padding: 4px 8px;
     font-size: 12px;
     gap: 4px;
   }
-  .range-picker { flex: 1; justify-content: space-between; padding: 4px 8px; }
-  .range-input { width: 100px; }
   .stat-spark { width: 70px; }
   .col-rate { width: 110px; }
 }

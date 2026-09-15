@@ -4,10 +4,26 @@
       <div class="trend-title-wrap">
         <div class="title-row">
           <div class="card-title"><SvgIcon name="chart" :size="18" /> {{ t('dashboard.trendTitle') }}</div>
-          <div class="tab-switch">
-            <button :class="['tab-btn', mode === 'all' ? 'active' : '']" @click="switchMode('all')">{{ t('dashboard.trendSuccessFail') }}</button>
-            <button :class="['tab-btn', mode === 'entry' ? 'active' : '']" @click="switchMode('entry')">{{ t('dashboard.trendEntry') }}</button>
-            <button :class="['tab-btn', mode === 'channel' ? 'active' : '']" @click="switchMode('channel')">{{ t('dashboard.trendChannel') }}</button>
+          <div class="trend-controls">
+            <!-- 模式下拉选择器 -->
+            <div class="mode-dropdown" ref="modeDropdownRef">
+            <button class="mode-trigger" @click="toggleModeDropdown">
+              <span>{{ modeLabel }}</span>
+              <SvgIcon name="chevron-down" :size="12" :class="{ rotated: modeOpen }" />
+            </button>
+            <Transition name="fade">
+              <div v-if="modeOpen" class="mode-menu">
+                <button
+                  v-for="opt in modeOptions"
+                  :key="opt.value"
+                  :class="['mode-option', { active: mode === opt.value }]"
+                  @click="selectMode(opt.value)"
+                >
+                  {{ opt.label }}
+                </button>
+              </div>
+            </Transition>
+          </div>
           </div>
         </div>
         <p class="card-subtitle">{{ t('dashboard.trendSubtitle') }}</p>
@@ -18,7 +34,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import { dashboardApi, type TodayTrendData, type DashboardRangeKey, type DashboardRangeParams } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
 import * as echarts from 'echarts'
@@ -40,10 +56,35 @@ const trendData = ref<TodayTrendData | null>(null)
 const chartRef = ref<HTMLDivElement | null>(null)
 let chart: echarts.ECharts | null = null
 
-function switchMode(newMode: 'all' | 'entry' | 'channel'): void {
-  if (mode.value === newMode) return
+// ===== 模式下拉选择器 =====
+const modeOpen = ref(false)
+const modeDropdownRef = ref<HTMLDivElement | null>(null)
+const modeOptions = computed(() => [
+  { value: 'all' as const, label: t('dashboard.trendSuccessFail') },
+  { value: 'entry' as const, label: t('dashboard.trendEntry') },
+  { value: 'channel' as const, label: t('dashboard.trendChannel') },
+])
+const modeLabel = computed(() => modeOptions.value.find(o => o.value === mode.value)?.label ?? '')
+
+function toggleModeDropdown() {
+  modeOpen.value = !modeOpen.value
+}
+
+function selectMode(newMode: 'all' | 'entry' | 'channel') {
+  if (mode.value === newMode) {
+    modeOpen.value = false
+    return
+  }
   mode.value = newMode
+  modeOpen.value = false
   fetchData()
+}
+
+function onModeClickOutside(e: MouseEvent) {
+  const el = modeDropdownRef.value
+  if (el && !el.contains(e.target as Node)) {
+    modeOpen.value = false
+  }
 }
 
 function rangeParams(): DashboardRangeParams {
@@ -167,8 +208,8 @@ function renderChart() {
       boundaryGap: false,
       axisLine: { lineStyle: { color: 'var(--border-color)' } },
       axisTick: { show: false },
-      // 10 分钟桶（单日 144 个）每 5 个显示一个标签；按天分桶时自动抽稀
-      axisLabel: { color: 'var(--text-muted)', fontSize: 10, interval: data.bucketUnit === '1d' ? 'auto' : 5, showMaxLabel: true },
+      // 时间标签默认隐藏，hover 时通过 tooltip 显示当前时间点
+      axisLabel: { show: false },
       splitLine: { show: false }
     },
     yAxis: {
@@ -176,7 +217,7 @@ function renderChart() {
       minInterval: 1,
       axisLine: { show: false },
       axisTick: { show: false },
-      splitLine: { lineStyle: { color: 'var(--border-color)', type: 'dashed', opacity: 0.6 } },
+      splitLine: { show: false },
       axisLabel: { color: 'var(--text-muted)', fontSize: 10 }
     },
     series: seriesList
@@ -193,10 +234,12 @@ function handleResize() {
 onMounted(() => {
   fetchData()
   window.addEventListener('resize', handleResize)
+  document.addEventListener('click', onModeClickOutside)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
+  document.removeEventListener('click', onModeClickOutside)
   chart?.dispose()
   chart = null
 })
@@ -243,6 +286,7 @@ watch([() => props.from, () => props.to], () => {
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
+  flex-wrap: nowrap;
 }
 .card-subtitle {
   font-size: 12px;
@@ -251,41 +295,85 @@ watch([() => props.from, () => props.to], () => {
   font-weight: 400;
 }
 
-/* Segmented control style tabs */
-.tab-switch {
+/* 模式下拉选择器 */
+.trend-controls {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  background: var(--bg-primary);
+  gap: 6px;
+  flex-shrink: 0;
+}
+.mode-dropdown {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.mode-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius, 6px);
-  padding: 3px;
-}
-.tab-btn {
-  padding: 5px 14px;
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
   font-size: 13px;
   font-weight: 500;
-  border-radius: var(--radius-sm, 4px);
   cursor: pointer;
-  transition: all 0.2s ease;
-  white-space: nowrap;
+  transition: all 0.15s;
   font-family: inherit;
   line-height: 1.5;
+  white-space: nowrap;
 }
-.tab-btn:hover {
-  color: var(--text-secondary);
+.mode-trigger:hover {
+  border-color: color-mix(in srgb, var(--text-muted) 40%, var(--border-color));
+  color: var(--text-primary);
 }
-.tab-btn.active {
+.mode-trigger .rotated {
+  transform: rotate(180deg);
+  transition: transform 0.2s ease;
+}
+
+.mode-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 120px;
   background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius, 6px);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mode-option {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.12s;
+  font-family: inherit;
+  text-align: left;
+  white-space: nowrap;
+}
+.mode-option:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.mode-option.active {
+  background: var(--bg-hover);
   color: var(--accent-blue);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  font-weight: 600;
 }
 
 @media (max-width: 768px) {
-  .tab-switch { flex-wrap: wrap; }
-  .tab-btn { padding: 5px 10px; font-size: 12px; }
+  .mode-trigger { padding: 4px 8px; font-size: 12px; gap: 4px; }
 }
 </style>
