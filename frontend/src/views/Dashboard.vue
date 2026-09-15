@@ -9,6 +9,7 @@
             <!-- 时间段下拉选择器 -->
             <div class="period-dropdown" ref="periodDropdownRef">
               <button class="period-trigger" @click="openPeriod">
+                <SvgIcon name="calendar" :size="14" />
                 <span>{{ periodOptions.find(o => o.value === rangeKey)?.label }}</span>
                 <SvgIcon name="chevron-down" :size="12" :class="{ rotated: periodOpen }" />
               </button>
