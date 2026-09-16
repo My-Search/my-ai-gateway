@@ -20,11 +20,11 @@
             <SvgIcon name="arrow-left" :size="14" style="transform: rotate(180deg);" />
           </button>
         </div>
-        <select class="form-input form-input-sm chart-filter" v-model="chartModelName" @change="loadUsageChart" :disabled="chartLoading">
+        <select class="form-input form-input-sm chart-filter" v-model="chartModelName" :disabled="chartLoading">
           <option value="">{{ t('log.chart.allModels') }}</option>
           <option v-for="m in entryModels" :key="m.id" :value="m.modelName">{{ m.modelName }}</option>
         </select>
-        <select class="form-input form-input-sm chart-filter" v-model="chartApiKeyId" @change="loadUsageChart" :disabled="chartLoading">
+        <select class="form-input form-input-sm chart-filter" v-model="chartApiKeyId" :disabled="chartLoading">
           <option :value="null">{{ t('log.chart.allKeys') }}</option>
           <option v-for="k in chartApiKeyOptions" :key="k.id" :value="k.id">{{ k.keyName }}</option>
         </select>
@@ -32,8 +32,13 @@
     </div>
 
     <div class="chart-wrapper" @mouseleave="hideUsageTooltip">
-      <!-- 无数据时叠加空状态提示，图表骨架依然可见 -->
-      <div v-if="!usageChartData || usageChartData.models.length === 0" class="chart-empty-overlay">
+      <!-- 加载中：首屏/翻月/切筛选时显示加载提示，响应回来前不显示「暂无数据」。
+           已有数据时叠加遮罩，避免旧图被误读为新筛选条件的结果。 -->
+      <div v-if="chartLoading" class="chart-overlay" :class="{ 'chart-overlay-mask': chartHasRendered }">
+        <LoadingSpinner :text="t('common.loading')" />
+      </div>
+      <!-- 无数据叠加空状态提示（仅在加载完成后判定），图表骨架依然可见 -->
+      <div v-else-if="!usageChartData || usageChartData.models.length === 0" class="chart-overlay">
         {{ t('log.chart.empty') }}
       </div>
       <svg :viewBox="`0 0 ${CHART_SVG_WIDTH} ${CHART_SVG_HEIGHT}`" class="chart-svg" preserveAspectRatio="none">
@@ -285,7 +290,15 @@ const chartModelType = ref<'entry' | 'channel'>('entry')
 const chartApiKeyId = ref<number | null>(null)
 const usageChartData = ref<LogUsageChart | null>(null)
 const chartLoading = ref(false)
+/** 是否已经成功渲染过一次图表数据（用于区分「首次加载中」与「已有数据翻月刷新」） */
+const chartHasRendered = ref(false)
 const chartApiKeyOptions = ref<ApiKey[]>([])
+
+/**
+ * 图表请求序号：快速连续切换筛选（翻月/切类型/换下拉）时，
+ * 只允许最后一次请求的结果落到图表上，避免旧响应覆盖新筛选的数据。
+ */
+let chartRequestSeq = 0
 
 /** API Key 列表（供图表 Key 下拉） */
 async function fetchChartApiKeys() {
@@ -318,7 +331,14 @@ function nextChartMonth() {
   }
 }
 
-async function loadUsageChart() {
+/**
+ * 加载图表数据。
+ * @param silent 静默刷新（15s 定时器）：不显示加载态，避免周期性闪烁；
+ *               用户主动切换筛选时始终显示加载态。
+ */
+async function loadUsageChart(silent = false) {
+  const seq = ++chartRequestSeq
+  if (!silent) chartLoading.value = true
   try {
     const res = await logApi.usageChart({
       year: chartYear.value,
@@ -327,10 +347,15 @@ async function loadUsageChart() {
       modelName: chartModelName.value || undefined,
       gatewayApiKeyId: chartApiKeyId.value ?? undefined,
     })
+    // 过期响应（期间又切换过筛选）直接丢弃，防止旧数据覆盖新筛选结果
+    if (seq !== chartRequestSeq) return
     usageChartData.value = res.data
+    chartHasRendered.value = true
   } catch (e) {
     console.warn('Failed to load usage chart:', e)
     // 失败时保留旧数据，图表不闪烁
+  } finally {
+    if (seq === chartRequestSeq) chartLoading.value = false
   }
 }
 
@@ -890,19 +915,26 @@ function cleanLogs() {
 }
 
 /**
- * 模型类型切换时仅重载图表（不影响日志列表过滤条件）。
+ * 模型类型切换时仅重载图表（modelType 不属于日志列表过滤条件，不影响列表）。
+ * 注意：必须用箭头函数包裹，否则 Vue 会把新值作为第一个参数传给
+ * loadUsageChart 的 silent 参数，导致切换时静默加载（不显示加载态）。
  */
-watch(chartModelType, loadUsageChart)
+watch(chartModelType, () => loadUsageChart())
 
 /**
- * 图表筛选状态变化时，日志列表按新条件重拉。
+ * 图表筛选状态变化时，图表与日志列表一起按新条件重拉。
  * 监听来源：月份翻页、All Models / All Keys 下拉。
+ *
+ * 注意：这里必须同步触发 loadUsageChart。此前只调用 loadLogs()，而日志列表请求
+ * 通常远快于图表聚合查询，导致翻月/换筛选后表现为"列表先刷新、图表不动"，
+ * 只能等 15s 自动刷新定时器才会更新（期间图表与筛选条件不一致）。
  */
 watch(
   [chartYear, chartMonth, chartModelName, chartApiKeyId],
   () => {
     // 翻月/换过滤时丢弃已展开状态，避免残留 trace id 跨过滤误命中
     expandedTraces.value.clear()
+    loadUsageChart()
     loadLogs()
   }
 )
@@ -923,7 +955,8 @@ onMounted(() => {
   fetchEntryModels()
   fetchChartApiKeys()
   loadUsageChart()
-  chartRefreshTimer = setInterval(loadUsageChart, 15000)
+  // 15s 静默自动刷新：只在后台更新数据，不弹加载遮罩（否则每 15s 闪烁一次）
+  chartRefreshTimer = setInterval(() => loadUsageChart(true), 15000)
   loadLogs()
   startSse()
 
@@ -1266,8 +1299,8 @@ onUnmounted(() => {
   color: var(--text-muted);
   font-size: 13px;
 }
-/* 图表空状态覆盖层：叠加在图表 SVG 之上，不隐藏图表骨架 */
-.chart-empty-overlay {
+/* 图表空/加载状态覆盖层：叠加在图表 SVG 之上，不隐藏图表骨架 */
+.chart-overlay {
   position: absolute;
   inset: 0;
   display: flex;
@@ -1277,6 +1310,10 @@ onUnmounted(() => {
   font-size: 13px;
   pointer-events: none;
   z-index: 5;
+}
+/* 已有数据时的刷新遮罩：轻微压暗旧图，明确提示「正在加载新筛选的数据」 */
+.chart-overlay-mask {
+  background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
 }
 .chart-wrapper {
   position: relative;
