@@ -1,19 +1,26 @@
 import http from './index'
 
-/** 时间段快捷选择：今日 / 本周(周一至今) / 本月(1日至今) / 自定义起止日期（含边界，上海时区） */
+/** 时间段快捷选择：今日 / 本周(周一至今) / 本月(1日至今) / 自定义起止时间（含边界，上海时区） */
 export type DashboardRangeKey = 'today' | 'week' | 'month' | 'custom'
 
 export interface DashboardRangeParams {
   range?: DashboardRangeKey
-  from?: string   // yyyy-MM-dd，仅 range=custom 时使用
-  to?: string     // yyyy-MM-dd，仅 range=custom 时使用
+  /**
+   * 起始时间，仅 range=custom 时使用。支持 "yyyy-MM-dd"（当天 00:00:00）
+   * 或 "yyyy-MM-ddTHH:mm:ss"（精确到秒的墙钟时间，按上海时区解释）。
+   */
+  from?: string
+  /** 结束时间，格式同 from；仅日期时表示含当天整天，带时间时含该秒。 */
+  to?: string
 }
 
 export interface DashboardRange {
   key: string
-  start: string   // 实际生效的起始日期（上海时区）
+  start: string   // 实际生效的起始日期（上海时区，yyyy-MM-dd）
   end: string     // 实际生效的结束日期（含）
-  prev: { start: string; end: string }
+  startAt: string // 实际生效的起始时刻（上海时区，yyyy-MM-ddTHH:mm:ss）
+  endAt: string   // 实际生效的结束时刻（含该秒）
+  prev: { start: string; end: string; startAt: string; endAt: string }
 }
 
 export interface DashboardTotals {
@@ -66,7 +73,11 @@ export interface DashboardStats {
 
 export interface TodayTrendData {
   range: DashboardRange
-  buckets: string[]              // 单日 ["00:00".."23:50"]；多日 ["2026-09-01"..]
+  /**
+   * 分桶标签：窗口不超过 24h 时为桶起点的 "HH:mm"；
+   * 超过 24h 时为桶起点的 "yyyy-MM-dd"（起点非零点时带 HH:mm）。
+   */
+  buckets: string[]
   bucketUnit: '10m' | '1d'
   mode: 'all' | 'entry' | 'channel'
   series: Record<string, number[]>   // { success:[...], fail:[...] } 或 { "模型名":[...] }

@@ -43,6 +43,7 @@
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import { dashboardApi, type TodayTrendData, type DashboardRangeKey, type DashboardRangeParams } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
+import { validateRange } from '@/utils/datetime'
 import * as echarts from 'echarts'
 
 const { t } = useI18n()
@@ -98,7 +99,10 @@ function onModeClickOutside(e: MouseEvent) {
 
 function rangeParams(): DashboardRangeParams {
   if (props.rangeKey === 'custom') {
-    if (!props.from || !props.to || props.from > props.to) return { range: 'today' }
+    // 非法区间（缺失/倒置/超长）时不发无效请求，退回今日
+    if (!props.from || !props.to || validateRange(props.from, props.to) !== null) {
+      return { range: 'today' }
+    }
     return { range: 'custom', from: props.from, to: props.to }
   }
   return { range: props.rangeKey }

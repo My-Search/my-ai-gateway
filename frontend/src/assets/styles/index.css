@@ -534,7 +534,19 @@ select.form-input option {
   font-size: 12px;
   border-radius: var(--radius-sm);
 }
-.form-input-sm[type="datetime-local"] {
+
+/* 原生日期/时间控件的弹出面板（日历、时间列表）用 color-scheme 跟随主题，
+   否则深色主题下仍是白底系统面板，与页面割裂。 */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"],
+input[type="month"] {
+  color-scheme: light;
+}
+[data-theme="dark"] input[type="date"],
+[data-theme="dark"] input[type="time"],
+[data-theme="dark"] input[type="datetime-local"],
+[data-theme="dark"] input[type="month"] {
   color-scheme: dark;
 }
 

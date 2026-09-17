@@ -239,10 +239,11 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 
 	// GET /admin/api/dashboard/today-trend
 	//
-	// Follows the selected window: single-day windows are bucketed every 10
-	// minutes (144 buckets), multi-day windows by Shanghai calendar day.
-	// Failures are derived as requests - success (start-anchored), never by
-	// summing phase='start' rows as if they were failures.
+	// Follows the selected window. Buckets sit on a grid anchored at the window
+	// start: windows up to 24h are split every 10 minutes, longer windows by
+	// day (a multi-day window starting mid-day keeps its offsets). Failures are
+	// derived as requests - success (start-anchored), never by summing
+	// phase='start' rows as if they were failures.
 	g.GET("/dashboard/today-trend", func(c *gin.Context) {
 		ctx := c.Request.Context()
 		mode := strings.ToLower(strings.TrimSpace(c.DefaultQuery("mode", "all")))
@@ -251,39 +252,36 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 		}
 		dr := parseDashRange(c)
 
-		days := int(math.Round(float64(dr.until.Sub(dr.since)) / float64(24*time.Hour)))
-		if days < 1 {
-			days = 1
-		}
-
-		var bucketExpr string
+		// Buckets are laid out on a grid anchored at since (not at Shanghai
+		// midnight): a custom window may start at any second, and anchoring by
+		// wall clock would merge, say, day-1 10:00 with day-2 10:00 into one
+		// 10-minute label. Integer epoch seconds keep bucket edges exact.
 		bucketUnit := "10m"
-		if days == 1 {
-			bucketExpr = `printf('%02d:%02d',
-					CAST(STRFTIME('%H', DATETIME(created_at, '+8 hours')) AS INTEGER),
-					(CAST(STRFTIME('%M', DATETIME(created_at, '+8 hours')) AS INTEGER) / 10) * 10)`
-		} else {
+		bucketSecs := int64(600)
+		if dr.until.Sub(dr.since) > 24*time.Hour {
 			bucketUnit = "1d"
-			bucketExpr = `DATE(DATETIME(created_at, '+8 hours'))`
+			bucketSecs = 24 * 60 * 60
 		}
+		bucketExpr := fmt.Sprintf(
+			`CAST((CAST(STRFTIME('%%s', created_at) AS INTEGER) - %d) / %d AS INTEGER)`,
+			dr.since.Unix(), bucketSecs)
 
-		// Pre-fill the bucket labels (144 ten-minute slots for a single day,
-		// one per Shanghai calendar day otherwise) plus an index lookup.
+		// Pre-fill the bucket labels: HH:MM within the first 24h, calendar dates
+		// beyond that (with the clock time appended when since is not midnight).
 		var buckets []string
-		if days == 1 {
-			buckets = make([]string, 144)
-			for i := range buckets {
-				buckets[i] = fmt.Sprintf("%02d:%02d", i/6, (i%6)*10)
+		for i := 0; ; i++ {
+			start := dr.since.Add(time.Duration(int64(i)*bucketSecs) * time.Second)
+			if !start.Before(dr.until) {
+				break
 			}
-		} else {
-			buckets = make([]string, 0, days)
-			for day := dr.since; day.Before(dr.until); day = day.AddDate(0, 0, 1) {
-				buckets = append(buckets, dashDate(day))
+			if bucketUnit == "10m" {
+				buckets = append(buckets, start.In(jtime.Shanghai).Format("15:04"))
+			} else {
+				buckets = append(buckets, dashBucketLabel(start))
 			}
 		}
-		bucketIdx := make(map[string]int, len(buckets))
-		for i, b := range buckets {
-			bucketIdx[b] = i
+		if len(buckets) == 0 {
+			buckets = []string{dashBucketLabel(dr.since)}
 		}
 
 		rows, _ := d.Store.Query(ctx,
@@ -295,11 +293,18 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 			  ORDER BY bucket`,
 			jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
 
+		// Rows carry the integer bucket index; anything outside the grid is
+		// dropped (it can only come from rounded edges of the scan window).
+		bucketOf := func(r store.Row) (int, bool) {
+			i := int(r.I64("bucket", -1))
+			return i, i >= 0 && i < len(buckets)
+		}
+
 		if mode == "all" {
 			starts := make([]int64, len(buckets))
 			success := make([]int64, len(buckets))
 			for _, r := range rows {
-				idx, ok := bucketIdx[r.Str("bucket")]
+				idx, ok := bucketOf(r)
 				if !ok {
 					continue
 				}
@@ -333,7 +338,7 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 			if r.Str("phase") != "start" {
 				continue
 			}
-			idx, ok := bucketIdx[r.Str("bucket")]
+			idx, ok := bucketOf(r)
 			if !ok {
 				continue
 			}
@@ -373,33 +378,49 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 // roughly a year.
 const dashMaxRangeDays = 366
 
-// dashRange is a resolved, day-aligned dashboard window. since/until are UTC
-// instants (until exclusive); startDate/endDate are inclusive Shanghai dates.
-// prevSince/prevUntil describe the comparison window of the same shape one
-// period earlier (yesterday / same point last week / same point last month /
-// previous equal-length window).
+// dashRange is a resolved dashboard window. since/until are UTC instants
+// (until exclusive); prevSince/prevUntil describe the comparison window of the
+// same shape one period earlier (yesterday / same point last week / same point
+// last month / previous equal-length window).
+//
+// The window is not necessarily day-aligned: a custom range may start and end
+// at any second (e.g. 09:30:00 → 12:00:00 of the same day).
 type dashRange struct {
 	key       string
 	since     time.Time
 	until     time.Time
-	startDate string
-	endDate   string
 	prevSince time.Time
 	prevUntil time.Time
 }
 
+// meta describes the effective window to the client. start/end stay
+// Shanghai calendar dates for backwards compatibility; startAt/endAt carry the
+// full Shanghai wall-clock bounds so sub-day windows are not misreported as
+// whole days. end/endAt are inclusive (the last second inside the window).
 func (r dashRange) meta() map[string]any {
+	end := r.until.Add(-time.Second)
+	prevEnd := r.prevUntil.Add(-time.Second)
 	return map[string]any{
-		"key":   r.key,
-		"start": r.startDate,
-		"end":   r.endDate,
-		"prev":  map[string]any{"start": dashDate(r.prevSince), "end": dashDate(r.prevUntil.Add(-time.Second))},
+		"key":     r.key,
+		"start":   dashDate(r.since),
+		"end":     dashDate(end),
+		"startAt": dashDateTime(r.since),
+		"endAt":   dashDateTime(end),
+		"prev": map[string]any{
+			"start":   dashDate(r.prevSince),
+			"end":     dashDate(prevEnd),
+			"startAt": dashDateTime(r.prevSince),
+			"endAt":   dashDateTime(prevEnd),
+		},
 	}
 }
 
 // parseDashRange resolves ?range=today|week|month|custom plus optional
-// ?from=/?to= (inclusive Shanghai dates). Invalid or inverted custom input
-// falls back to today; over-long windows are clamped to dashMaxRangeDays.
+// ?from=/?to=. Both bounds accept either a Shanghai date (yyyy-MM-dd, meaning
+// 00:00:00 / the whole day) or a Shanghai wall-clock timestamp
+// (yyyy-MM-ddTHH:mm[:ss], an offset-aware RFC3339 value, or the same two with a
+// space separator). Invalid or inverted custom input falls back to today;
+// over-long windows are clamped to dashMaxRangeDays.
 func parseDashRange(c *gin.Context) dashRange {
 	now := time.Now().UTC().In(jtime.Shanghai)
 	todayStart := jtime.ShanghaiStart(now)
@@ -410,8 +431,6 @@ func parseDashRange(c *gin.Context) dashRange {
 			key:       "today",
 			since:     todayStart,
 			until:     tomorrow,
-			startDate: dashDate(todayStart),
-			endDate:   dashDate(tomorrow.Add(-time.Second)),
 			prevSince: todayStart.AddDate(0, 0, -1),
 			prevUntil: todayStart,
 		}
@@ -423,7 +442,6 @@ func parseDashRange(c *gin.Context) dashRange {
 		since := jtime.ShanghaiWeekStart(now)
 		prevSince := since.AddDate(0, 0, -7)
 		return dashRange{key: "week", since: since, until: tomorrow,
-			startDate: dashDate(since), endDate: dashDate(tomorrow.Add(-time.Second)),
 			prevSince: prevSince, prevUntil: prevSince.Add(tomorrow.Sub(since))}
 	case "month":
 		// 本月至今 vs 上月同期（上月 1 日起、同一跨度，不越过本月起点）
@@ -434,29 +452,32 @@ func parseDashRange(c *gin.Context) dashRange {
 			prevUntil = since
 		}
 		return dashRange{key: "month", since: since, until: tomorrow,
-			startDate: dashDate(since), endDate: dashDate(tomorrow.Add(-time.Second)),
 			prevSince: prevSince, prevUntil: prevUntil}
 	case "custom":
-		from, okFrom := dashParseDate(c.Query("from"))
+		from, fromHasTime, okFrom := dashParseInstant(c.Query("from"))
 		if !okFrom {
 			return todayRange()
 		}
-		to, okTo := dashParseDate(c.Query("to"))
+		to, toHasTime, okTo := dashParseInstant(c.Query("to"))
 		if !okTo {
-			to = from
+			to, toHasTime = from, fromHasTime
 		}
 		if to.Before(from) {
 			return todayRange()
 		}
 		since := from
-		until := to.AddDate(0, 0, 1)
+		// until 始终为开区间上界：带时间时把结束秒本身含入（+1s），
+		// 仅有日期时含入整天（次日 00:00 前），与旧版语义一致。
+		until := to.Add(time.Second)
+		if !toHasTime {
+			until = to.AddDate(0, 0, 1)
+		}
 		if maxSpan := time.Duration(dashMaxRangeDays) * 24 * time.Hour; until.Sub(since) > maxSpan {
 			since = until.Add(-maxSpan)
 		}
 		// 自定义区间：上一期 = 紧邻其前的等长区间
 		prevSince := since.Add(-until.Sub(since))
 		return dashRange{key: "custom", since: since, until: until,
-			startDate: dashDate(since), endDate: dashDate(until.Add(-time.Second)),
 			prevSince: prevSince, prevUntil: since}
 	default:
 		return todayRange()
@@ -465,6 +486,23 @@ func parseDashRange(c *gin.Context) dashRange {
 
 // dashDate renders an instant as its Shanghai calendar date (yyyy-MM-dd).
 func dashDate(t time.Time) string { return t.In(jtime.Shanghai).Format("2006-01-02") }
+
+// dashDateTime renders an instant as its Shanghai wall-clock timestamp
+// (yyyy-MM-ddTHH:mm:ss) — the same shape ?from=/?to= accept.
+func dashDateTime(t time.Time) string {
+	return t.In(jtime.Shanghai).Format("2006-01-02T15:04:05")
+}
+
+// dashBucketLabel renders the label of a >24h trend bucket: its Shanghai
+// calendar date, plus the clock time when the bucket does not start at
+// midnight (which happens when a custom window starts mid-day).
+func dashBucketLabel(start time.Time) string {
+	sh := start.In(jtime.Shanghai)
+	if sh.Hour() == 0 && sh.Minute() == 0 && sh.Second() == 0 {
+		return sh.Format("2006-01-02")
+	}
+	return sh.Format("2006-01-02 15:04")
+}
 
 // dashWindowTotals aggregates the headline metrics for one [since, until)
 // window. success is start-anchored (mirroring the Java collector), so
@@ -513,17 +551,39 @@ func dashWindowTotals(ctx context.Context, d Deps, since, until time.Time) map[s
 	return out
 }
 
-// dashParseDate parses a yyyy-MM-dd date in Shanghai time.
-func dashParseDate(s string) (time.Time, bool) {
+// dashParseInstant parses a dashboard range bound. Accepted shapes:
+//
+//	2006-01-02                  → Shanghai midnight, hasTime=false
+//	2006-01-02T15:04            → Shanghai wall clock
+//	2006-01-02T15:04:05         → Shanghai wall clock
+//	2006-01-02 15:04[:05]       → space-separated variants of the above
+//	RFC3339 (with Z or ±hh:mm)  → explicit instant, offset honoured
+//
+// Date-only input deliberately means *Shanghai* midnight (not UTC like
+// jtime.Parse), because the dashboard window is defined in Shanghai time.
+// hasTime reports whether an explicit time-of-day was supplied, which decides
+// how the range end is interpreted (that second vs the whole day).
+func dashParseInstant(s string) (t time.Time, hasTime, ok bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return time.Time{}, false
+		return time.Time{}, false, false
 	}
-	t, err := time.ParseInLocation("2006-01-02", s, jtime.Shanghai)
-	if err != nil {
-		return time.Time{}, false
+	// Explicit offset / Z: honour the instant as given.
+	if withOffset, err := time.Parse(time.RFC3339, s); err == nil {
+		return withOffset.UTC(), true, true
 	}
-	return t, true
+	// Date-only: Shanghai midnight, whole-day semantics.
+	if d, err := time.ParseInLocation("2006-01-02", s, jtime.Shanghai); err == nil {
+		return d.UTC(), false, true
+	}
+	// Wall-clock timestamp: both 'T' and ' ' separators, seconds optional.
+	normalized := strings.Replace(s, " ", "T", 1)
+	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02T15:04"} {
+		if d, err := time.ParseInLocation(layout, normalized, jtime.Shanghai); err == nil {
+			return d.UTC(), true, true
+		}
+	}
+	return time.Time{}, false, false
 }
 
 // channelRankList maps channel rank rows for the dashboard payload.
@@ -571,10 +631,11 @@ func dashSparklines(ctx context.Context, d Deps, dr dashRange) map[string][]floa
 		bucketSecs = 1
 	}
 
-	// Bucket index is derived from the offset from `since`, so no timezone
-	// conversions are needed and the scan uses the created_at index range.
+	// Bucket index is derived from the offset from `since` in whole epoch
+	// seconds, so no timezone conversions or floating-point day arithmetic are
+	// needed and the scan uses the created_at index range.
 	rows, _ := d.Store.Query(ctx,
-		`SELECT (CAST((julianday(created_at) - julianday(?)) * 86400 AS INTEGER) / ?) AS bucket,
+		`SELECT CAST((CAST(STRFTIME('%s', created_at) AS INTEGER) - ?) / ? AS INTEGER) AS bucket,
 		        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
 		        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
 		        AVG(CASE WHEN first_byte_ms>0 THEN first_byte_ms END) AS avg_ttfb,
@@ -583,7 +644,7 @@ func dashSparklines(ctx context.Context, d Deps, dr dashRange) map[string][]floa
 		   FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
 		  WHERE created_at >= ? AND created_at < ? AND phase IN ('start','success')
 		  GROUP BY bucket`,
-		jtime.FormatDefault(dr.since), bucketSecs,
+		dr.since.Unix(), bucketSecs,
 		jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
 
 	requests := make([]float64, dashSparklinePoints)

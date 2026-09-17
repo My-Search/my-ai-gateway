@@ -32,26 +32,57 @@
       </div>
     </div>
 
-    <!-- 自定义时间段选择弹框 -->
+    <!-- 自定义时间段选择弹框：日期可就地选择或手动输入，时间默认 00:00:00 / 23:59:59 -->
     <Dialog
       v-model="customDialogOpen"
       :title="t('dashboard.rangeCustom')"
       type="confirm"
       :confirm-text="t('dialog.confirm')"
       :cancel-text="t('dialog.cancel')"
-      width="420px"
+      width="460px"
       @confirm="confirmCustomRange"
     >
       <div class="custom-range-form">
         <div class="form-group">
           <label>{{ t('dashboard.rangeStart') }}</label>
-          <input v-model="customFrom" type="date" class="form-control" />
+          <div class="range-row">
+            <input
+              v-model="customFromDate"
+              type="date"
+              class="form-control range-date"
+              :aria-label="t('dashboard.rangeStart')"
+            />
+            <input
+              v-model="customFromTime"
+              type="time"
+              step="1"
+              class="form-control range-time"
+              :aria-label="t('dashboard.rangeStart')"
+              @blur="customFromTime = normalizeCustomTime(customFromTime, DEFAULT_START_TIME)"
+            />
+          </div>
         </div>
         <div class="form-group" style="margin-bottom:0;">
           <label>{{ t('dashboard.rangeEnd') }}</label>
-          <input v-model="customTo" type="date" class="form-control" />
+          <div class="range-row">
+            <input
+              v-model="customToDate"
+              type="date"
+              class="form-control range-date"
+              :aria-label="t('dashboard.rangeEnd')"
+            />
+            <input
+              v-model="customToTime"
+              type="time"
+              step="1"
+              class="form-control range-time"
+              :aria-label="t('dashboard.rangeEnd')"
+              @blur="customToTime = normalizeCustomTime(customToTime, DEFAULT_END_TIME)"
+            />
+          </div>
         </div>
-        <p v-if="customInvalid" class="custom-range-error">{{ t('dashboard.rangeError') }}</p>
+        <p v-if="customError" class="custom-range-error">{{ t(customError) }}</p>
+        <p v-else class="custom-range-hint">{{ t('dashboard.rangeHint') }}</p>
       </div>
     </Dialog>
 
@@ -251,6 +282,16 @@ import { ref, computed, onMounted, onUnmounted, watch, onActivated } from 'vue'
 import { dashboardApi, type DashboardRangeKey, type DashboardRangeParams, type DashboardStats, type ModelRankItem, type DashboardSparklines } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
 import { formatNumber, formatSeconds, formatTokens } from '@/utils/format'
+import {
+  DEFAULT_END_TIME,
+  DEFAULT_START_TIME,
+  formatDate,
+  joinDateTime,
+  normalizeTime,
+  splitDateTime,
+  todayDate,
+  validateRange,
+} from '@/utils/datetime'
 import { sparklinePaths } from '@/utils/sparkline'
 import TodayTrendChart from '@/components/dashboard/TodayTrendChart.vue'
 import Dialog from '@/components/common/Dialog.vue'
@@ -276,19 +317,46 @@ function openPeriod() {
   periodOpen.value = !periodOpen.value
 }
 
-// 自定义时间段的弹框
+// ===== 自定义时间段弹框 =====
+// 日期可选可手输；时间默认为 00:00:00 / 23:59:59（可改，精确到秒）。
 const customDialogOpen = ref(false)
-const customFrom = ref(todayStr())
-const customTo = ref(todayStr())
-const customInvalid = computed(() =>
-  !!customFrom.value && !!customTo.value && customFrom.value > customTo.value)
+const customFromDate = ref(todayDate())
+const customFromTime = ref(DEFAULT_START_TIME)
+const customToDate = ref(todayDate())
+const customToTime = ref(DEFAULT_END_TIME)
+
+/** 弹框内当前编辑的完整区间（时间留空时按默认值补齐） */
+const customFromValue = computed(() =>
+  joinDateTime(customFromDate.value, customFromTime.value, DEFAULT_START_TIME))
+const customToValue = computed(() =>
+  joinDateTime(customToDate.value, customToTime.value, DEFAULT_END_TIME))
+
+/** 校验错误对应的 i18n key，无错误时为 null */
+const customError = computed(() => {
+  const err = validateRange(customFromValue.value, customToValue.value)
+  if (!err) return null
+  return {
+    missing: 'dashboard.rangeRequired',
+    inverted: 'dashboard.rangeError',
+    tooLong: 'dashboard.rangeTooLong',
+  }[err]
+})
+
+/** 时间输入框失焦时规范化（H:mm → HH:mm:00），无法识别则回落默认值 */
+function normalizeCustomTime(value: string, fallback: string): string {
+  return normalizeTime(value) || fallback
+}
 
 function selectPeriod(val: DashboardRangeKey) {
   periodOpen.value = false
   if (val === 'custom') {
-    // 打开弹框让用户选择起止日期
-    customFrom.value = fromDate.value
-    customTo.value = toDate.value
+    // 打开弹框让用户选择起止时间：回填当前生效区间（含时间）
+    const from = splitDateTime(fromDate.value)
+    const to = splitDateTime(toDate.value)
+    customFromDate.value = from.date || todayDate()
+    customFromTime.value = from.time || DEFAULT_START_TIME
+    customToDate.value = to.date || todayDate()
+    customToTime.value = to.time || DEFAULT_END_TIME
     customDialogOpen.value = true
     return
   }
@@ -296,13 +364,13 @@ function selectPeriod(val: DashboardRangeKey) {
 }
 
 function confirmCustomRange() {
-  if (customInvalid.value) {
+  if (customError.value) {
     // 非法区间：保持弹框打开并提示
     customDialogOpen.value = true
     return
   }
-  fromDate.value = customFrom.value
-  toDate.value = customTo.value
+  fromDate.value = customFromValue.value
+  toDate.value = customToValue.value
   rangeKey.value = 'custom'
   customDialogOpen.value = false
 }
@@ -323,22 +391,15 @@ onUnmounted(() => {
 
 // ===== 时间段选择 =====
 // today/week/month 由后端按上海时区计算（周=周一起、月=1日起，均为"至今"）；
-// custom 为用户自定义起止日期（含边界），非法输入时不发请求。
+// custom 为用户自定义起止时间（含边界，精确到秒），非法输入时不发请求。
+// fromDate/toDate 形如 "yyyy-MM-ddTHH:mm:ss"（快捷项为当天 00:00:00 ~ 23:59:59）。
 const rangeKey = ref<DashboardRangeKey>('today')
 
-function todayStr(): string {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
-const fromDate = ref(todayStr())
-const toDate = ref(todayStr())
+const fromDate = ref(`${todayDate()}T${DEFAULT_START_TIME}`)
+const toDate = ref(`${todayDate()}T${DEFAULT_END_TIME}`)
 
 const rangeInvalid = computed(() =>
-  rangeKey.value === 'custom' && !!fromDate.value && !!toDate.value && fromDate.value > toDate.value)
+  rangeKey.value === 'custom' && validateRange(fromDate.value, toDate.value) !== null)
 
 const totals = computed(() => stats.value.totals ?? {
   requests: 0, success: 0, fail: 0, successRate: 0, avgResponseTime: 0, avgOutputSpeed: 0, totalTokens: 0
@@ -458,30 +519,21 @@ async function refreshStatsOnSwitch() {
   }
 }
 
-// 快捷时间段切换时同步起止日期，便于切到「自定义」时以此为初始区间
+// 快捷时间段切换时同步起止时间，便于切到「自定义」时以此为初始区间。
+// 快捷项按整天处理：开始 00:00:00、结束 23:59:59（与后端一致）。
 function syncRangeDates() {
   if (rangeKey.value === 'custom') return
-  const today = todayStr()
+  const today = todayDate()
   const d = new Date()
-  if (rangeKey.value === 'today') {
-    fromDate.value = today
-    toDate.value = today
-  } else if (rangeKey.value === 'week') {
+  let from = today
+  if (rangeKey.value === 'week') {
     const wd = d.getDay() === 0 ? 7 : d.getDay()
-    const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - wd + 1)
-    fromDate.value = toISO(monday)
-    toDate.value = today
+    from = formatDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() - wd + 1))
   } else if (rangeKey.value === 'month') {
-    fromDate.value = toISO(new Date(d.getFullYear(), d.getMonth(), 1))
-    toDate.value = today
+    from = formatDate(new Date(d.getFullYear(), d.getMonth(), 1))
   }
-}
-
-function toISO(d: Date): string {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+  fromDate.value = `${from}T${DEFAULT_START_TIME}`
+  toDate.value = `${today}T${DEFAULT_END_TIME}`
 }
 
 // 切换时间段时先置 loading 再拉取，避免旧数据残留造成脏读
@@ -667,10 +719,24 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 14px;
 }
+/* 日期与时间同排：日期占满剩余宽度，时间定宽显示 HH:mm:ss */
+.range-row {
+  display: grid;
+  grid-template-columns: 1fr 132px;
+  gap: 10px;
+}
+.range-row .form-control {
+  min-width: 0;
+}
 .custom-range-error {
   margin: 0;
   font-size: 12px;
   color: var(--accent-red);
+}
+.custom-range-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 /* ── Stats Grid：桌面宽度下四张卡片保持同一行 ── */
