@@ -2,6 +2,8 @@ package relay
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -214,14 +216,15 @@ func TestUsageExtraction(t *testing.T) {
 
 // TestBuildFailMessage checks the provider-error unwrapping.
 func TestBuildFailMessage(t *testing.T) {
-	got := buildFailMessage(`Provider error: 500 body: {"error":{"message":"rate limited","type":"rate_limit"}}`)
+	got := buildFailMessage(fmt.Errorf(`Provider error: 500 body: {"error":{"message":"rate limited","type":"rate_limit"}}`))
 	if got != "[rate_limit] rate limited" {
 		t.Errorf("unwrap failed: %q", got)
 	}
-	if got := buildFailMessage("read timed out"); got != "请求超时" {
+	if got := buildFailMessage(errors.New("read timed out")); got != "请求超时" {
 		t.Errorf("timeout mapping failed: %q", got)
 	}
-	if got := buildFailMessage(""); got != "所有候选均失败" {
+	// nil error → "所有候选均失败"
+	if got := buildFailMessage(nil); got != "所有候选均失败" {
 		t.Errorf("empty mapping failed: %q", got)
 	}
 }

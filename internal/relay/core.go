@@ -57,15 +57,19 @@ func NewRelayCore(store DataStore) *RelayCore {
 		BalancerFunc:    NewBalancerFactory(),
 		streamUsage:     map[string][3]int{},
 		streamTranslate: NewStreamTranslateStates(),
-		// No client-level timeout: the Java build applied a per-first-byte timeout
-		// (streams) and a per-attempt timeout (non-stream) via Reactor, never a
-		// whole-body cap. Timeouts are enforced per attempt below.
+		// Transport-level timeouts protect against stuck upstream connections
+		// (Java applies CONNECT_TIMEOUT_MILLIS=5000 via Netty options and
+		// per-request timeouts via Reactor timeout operators).
+		// ResponseHeaderTimeout covers "TCP accepted but no response headers"
+		// which is otherwise unprotected in the per-first-byte approach.
 		httpClient: &http.Client{
 			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     30 * time.Second,
-				TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+				MaxIdleConns:         100,
+				MaxIdleConnsPerHost:  10,
+				IdleConnTimeout:      30 * time.Second,
+				TLSHandshakeTimeout:  10 * time.Second,
+				ResponseHeaderTimeout: time.Duration(DefaultMaxTimeoutMs) * time.Millisecond,
+				TLSClientConfig:      &tls.Config{MinVersion: tls.VersionTLS12},
 			},
 		},
 	}
@@ -114,18 +118,18 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 			"没有可用的路由候选（关联的渠道/API Key/模型均不可用）", "api_error", 503), StatusCode: 503}
 	}
 
-	// Java applies a 600s ceiling over the whole candidate loop.
-	deadline := startTime.Add(MaxTotalTimeoutMs * time.Millisecond)
-	if d, ok := ctx.Deadline(); !ok || d.After(deadline) {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithDeadline(ctx, deadline)
-		defer cancel()
-	}
+// Java applies a 600s ceiling over the whole candidate loop.
+		deadline := startTime.Add(MaxTotalTimeoutMs * time.Millisecond)
+		if d, ok := ctx.Deadline(); !ok || d.After(deadline) {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithDeadline(ctx, deadline)
+			defer cancel()
+		}
 
-	balancer := c.BalancerFunc(routingCtx.Strategy)
-	retryIndex := 0
-	var lastErrMsg string
-	remaining := append([]RoutingCandidate(nil), candidates...)
+		balancer := c.BalancerFunc(routingCtx.Strategy)
+		retryIndex := 0
+		var lastErr error
+		remaining := append([]RoutingCandidate(nil), candidates...)
 
 	for len(remaining) > 0 {
 		candidate := balancer.Select(remaining, routingCtx.ModelID)
@@ -167,21 +171,21 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 		body, firstByteMs, err := c.invokeCandidateWithRetries(ctx, traceID, gwKeyID, req, *candidate, provider,
 			retryIndex, maxAttempts, authHeader, false)
 		if err != nil {
-			var nre *NonRetryableProviderError
-			if errors.As(err, &nre) {
-				slog.Warn("候选返回400，不触发熔断，直接重路由", "channel", candidate.ChannelName)
-				c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
-					"400错误跳过 "+candidateLabel(*candidate)+" 原因: "+err.Error(), retryIndex, nil, nil)
+var nre *NonRetryableProviderError
+				if errors.As(err, &nre) {
+					slog.Warn("候选返回400，不触发熔断，直接重路由", "channel", candidate.ChannelName)
+					c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
+						"400错误跳过 "+candidateLabel(*candidate)+" 原因: "+err.Error(), retryIndex, nil, nil)
+					remaining = removeCandidate(remaining, candidate)
+					lastErr = err
+					retryIndex++
+					continue
+				}
+				slog.Warn("候选失败（重试耗尽）", "channel", candidate.ChannelName, "error", err)
+				c.handleFailure(ctx, req, *candidate)
+				balancer.MarkFailed(candidate)
 				remaining = removeCandidate(remaining, candidate)
-				lastErrMsg = err.Error()
-				retryIndex++
-				continue
-			}
-			slog.Warn("候选失败（重试耗尽）", "channel", candidate.ChannelName, "error", err)
-			c.handleFailure(ctx, req, *candidate)
-			balancer.MarkFailed(candidate)
-			remaining = removeCandidate(remaining, candidate)
-			lastErrMsg = err.Error()
+				lastErr = err
 			c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
 				"重试耗尽跳过 "+candidateLabel(*candidate)+" 原因: "+err.Error(), retryIndex, nil, nil)
 			retryIndex++
@@ -206,16 +210,16 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 		return RelayResult{Body: transformed, StatusCode: 200, ClientFormat: clientFormat}
 	}
 
-	failMsg := buildFailMessage(lastErrMsg)
-	elapsed := time.Since(startTime).Milliseconds()
-	if c.LogWriter != nil {
-		c.LogWriter.WriteFail(ctx, traceID, req.Model, gwKeyID, "error", failMsg, elapsed, nil, retryIndex)
+failMsg := buildFailMessage(lastErr)
+		elapsed := time.Since(startTime).Milliseconds()
+		if c.LogWriter != nil {
+			c.LogWriter.WriteFail(ctx, traceID, req.Model, gwKeyID, "error", failMsg, elapsed, nil, retryIndex)
+		}
+		if c.MetricsFn != nil {
+			c.MetricsFn(req.Model, "", "fail", elapsed)
+		}
+		return RelayResult{Body: BuildErrorBody(clientFormat, failMsg, "api_error", 503), StatusCode: 503, ClientFormat: clientFormat}
 	}
-	if c.MetricsFn != nil {
-		c.MetricsFn(req.Model, "", "fail", elapsed)
-	}
-	return RelayResult{Body: BuildErrorBody(clientFormat, failMsg, "api_error", 503), StatusCode: 503, ClientFormat: clientFormat}
-}
 
 // invokeCandidateWithRetries mirrors CandidateRouter.invokeCandidateWithRetries.
 // It returns the (already provider-formatted) body and the first-byte latency.
@@ -236,15 +240,15 @@ func (c *RelayCore) invokeCandidateWithRetries(ctx context.Context, traceID stri
 		body, status, fbMs, err := c.callProvider(ctx, attemptCtx, req, candidate, provider, traceID)
 		cancel()
 
-		if err == nil && strings.TrimSpace(body) == "" {
-			slog.Warn("候选返回空响应", "channel", candidate.ChannelName, "model", candidate.ModelName,
-				"attempt", attempt, "maxAttempts", maxAttempts)
-			err = errors.New("Provider returned empty response, treated as timeout")
-		}
-		if err == nil {
-			if strings.TrimSpace(body) == "" {
-				err = errors.New("Provider returned empty response, treated as timeout")
-			} else {
+if err == nil && strings.TrimSpace(body) == "" {
+				slog.Warn("候选返回空响应", "channel", candidate.ChannelName, "model", candidate.ModelName,
+					"attempt", attempt, "maxAttempts", maxAttempts)
+				err = newEmptyResponseTimeout()
+			}
+			if err == nil {
+				if strings.TrimSpace(body) == "" {
+					err = newEmptyResponseTimeout()
+				} else {
 				return body, fbMs, nil
 			}
 		}
@@ -377,12 +381,12 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 		return
 	}
 
-	balancer := c.BalancerFunc(routingCtx.Strategy)
-	retryIndex := 0
-	var lastErrMsg string
-	remaining := append([]RoutingCandidate(nil), candidates...)
-	currentReq := req
-	finalLogged := false
+balancer := c.BalancerFunc(routingCtx.Strategy)
+		retryIndex := 0
+		var lastErr error
+		remaining := append([]RoutingCandidate(nil), candidates...)
+		currentReq := req
+		finalLogged := false
 
 	for len(remaining) > 0 {
 		candidate := balancer.Select(remaining, routingCtx.ModelID)
@@ -468,26 +472,26 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 			currentReq = BuildRequestWithContext(req, accumulated)
 		}
 
-		var nre *NonRetryableProviderError
-		if errors.As(firstByte.err, &nre) {
-			slog.Warn("流式候选返回400，不触发熔断，直接重路由", "channel", candidate.ChannelName)
-			c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
-				"400错误跳过 "+candidateLabel(*candidate)+" 原因: "+firstByte.err.Error(), retryIndex, nil, nil)
-			remaining = removeCandidate(remaining, candidate)
-			lastErrMsg = firstByte.err.Error()
-			retryIndex++
-			if internalClient && sink.OnEvent != nil {
-				sink.OnEvent("", BuildRoutingProgressJSON("switching", candidate.ChannelType,
-					candidate.ChannelName, candidate.APIKeyName, candidate.ModelName, retryIndex, firstByte.err.Error()))
+var nre *NonRetryableProviderError
+			if errors.As(firstByte.err, &nre) {
+				slog.Warn("流式候选返回400，不触发熔断，直接重路由", "channel", candidate.ChannelName)
+				c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
+					"400错误跳过 "+candidateLabel(*candidate)+" 原因: "+firstByte.err.Error(), retryIndex, nil, nil)
+				remaining = removeCandidate(remaining, candidate)
+				lastErr = firstByte.err
+				retryIndex++
+				if internalClient && sink.OnEvent != nil {
+					sink.OnEvent("", BuildRoutingProgressJSON("switching", candidate.ChannelType,
+						candidate.ChannelName, candidate.APIKeyName, candidate.ModelName, retryIndex, firstByte.err.Error()))
+				}
+				continue
 			}
-			continue
-		}
 
-		slog.Warn("流式候选失败（重试耗尽）", "channel", candidate.ChannelName, "error", firstByte.err)
-		c.handleFailure(ctx, currentReq, *candidate)
-		balancer.MarkFailed(candidate)
-		remaining = removeCandidate(remaining, candidate)
-		lastErrMsg = firstByte.err.Error()
+			slog.Warn("流式候选失败（重试耗尽）", "channel", candidate.ChannelName, "error", firstByte.err)
+			c.handleFailure(ctx, currentReq, *candidate)
+			balancer.MarkFailed(candidate)
+			remaining = removeCandidate(remaining, candidate)
+			lastErr = firstByte.err
 		c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
 			"重试耗尽跳过 "+candidateLabel(*candidate)+" 原因: "+firstByte.err.Error(), retryIndex, nil, nil)
 		retryIndex++
@@ -497,7 +501,7 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 		}
 	}
 
-	failMsg := buildFailMessage(lastErrMsg)
+	failMsg := buildFailMessage(lastErr)
 	c.ContentMgr.Clear(traceID)
 	c.streamTranslate.Clear(traceID)
 	if c.LogWriter != nil {
@@ -615,10 +619,12 @@ func (c *RelayCore) callProviderStream(ctx context.Context, req *InternalRequest
 	}
 
 	var firstByte *int64
-	sawEvent := false
 	reader := resp.Body
 	buf := make([]byte, 0, 4096)
 	readBuf := make([]byte, 4096)
+	// First-byte timeout: waits timeoutMs for the first SSE event.
+	// After the first event, it is reset to StreamIdleTimeoutMs per chunk
+	// to detect semi-dead connections while allowing long-running streams.
 	timeout := time.NewTimer(time.Duration(timeoutMs) * time.Millisecond)
 	defer timeout.Stop()
 
@@ -632,60 +638,59 @@ func (c *RelayCore) callProviderStream(ctx context.Context, req *InternalRequest
 			n, err := reader.Read(readBuf)
 			resCh <- readResult{n, err}
 		}()
-		var n int
-		var readErr error
-		if !sawEvent {
-			select {
-			case rr := <-resCh:
-				n, readErr = rr.n, rr.err
-			case <-timeout.C:
-				return errors.New("did not observe any item within timeout"), firstByte
-			case <-ctx.Done():
-				return ctx.Err(), firstByte
-			}
-		} else {
-			select {
-			case rr := <-resCh:
-				n, readErr = rr.n, rr.err
-			case <-ctx.Done():
-				return ctx.Err(), firstByte
-			}
-		}
 
-		if n > 0 {
-			if firstByte == nil {
-				fb := time.Since(startTime).Milliseconds()
-				firstByte = &fb
-				c.LatencyTracker.Record(candidate.ChannelID, candidate.ChannelModelID, fb)
-			}
-			sawEvent = true
-			buf = append(buf, readBuf[:n]...)
-			for {
-				idx := bytes.Index(buf, []byte("\n\n"))
-				if idx < 0 {
-					break
+		select {
+		case rr := <-resCh:
+			n, readErr := rr.n, rr.err
+
+			if n > 0 {
+				if firstByte == nil {
+					fb := time.Since(startTime).Milliseconds()
+					firstByte = &fb
+					c.LatencyTracker.Record(candidate.ChannelID, candidate.ChannelModelID, fb)
+					// Switch from first-byte timeout to per-chunk idle timeout.
+					resetTimer(timeout, StreamIdleTimeoutMs*time.Millisecond)
+				} else {
+					// Reset idle timeout on every chunk.
+					resetTimer(timeout, StreamIdleTimeoutMs*time.Millisecond)
 				}
-				block := string(buf[:idx])
-				buf = buf[idx+2:]
-				c.dispatchSseBlock(block, provider, clientFormat, req.Model, state, acc, sink, traceID)
+				buf = append(buf, readBuf[:n]...)
+				for {
+					idx := bytes.Index(buf, []byte("\n\n"))
+					if idx < 0 {
+						break
+					}
+					block := string(buf[:idx])
+					buf = buf[idx+2:]
+					c.dispatchSseBlock(block, provider, clientFormat, req.Model, state, acc, sink, traceID)
+				}
 			}
-		}
-		if readErr != nil {
-			if readErr == io.EOF {
-				// Flush translator terminator (Java translateStreamEnd).
-				if clientFormat != provider {
-					if flushed := TranslateStreamEnd(state, provider, req.Model); len(flushed) > 0 {
-						for _, payload := range flushed {
-							addTranslated(sink, payload)
+			if readErr != nil {
+				if readErr == io.EOF {
+					// Flush translator terminator (Java translateStreamEnd).
+					if clientFormat != provider {
+						if flushed := TranslateStreamEnd(state, provider, req.Model); len(flushed) > 0 {
+							for _, payload := range flushed {
+								addTranslated(sink, payload)
+							}
 						}
 					}
+					if firstByte == nil {
+						return newEmptyResponseTimeout(), firstByte
+					}
+					return nil, firstByte
 				}
-				if !sawEvent {
-					return errors.New("流式候选返回空响应"), firstByte
-				}
-				return nil, firstByte
+				return readErr, firstByte
 			}
-			return readErr, firstByte
+
+		case <-timeout.C:
+			if firstByte == nil {
+				return newFirstByteTimeout(timeoutMs), firstByte
+			}
+			return newStreamIdleTimeout(StreamIdleTimeoutMs * time.Millisecond), firstByte
+
+		case <-ctx.Done():
+			return ctx.Err(), firstByte
 		}
 	}
 }
@@ -914,41 +919,47 @@ func removeCandidate(candidates []RoutingCandidate, c *RoutingCandidate) []Routi
 	return candidates
 }
 
-func buildFailMessage(msg string) string {
+func buildFailMessage(err error) string {
+	if err == nil {
+		return "所有候选均失败"
+	}
+	// Structured timeout detection via TimeoutError / context deadline / net.OpError
+	if isTimeoutError(err) {
+		return "请求超时"
+	}
+	msg := err.Error()
 	if strings.TrimSpace(msg) == "" {
 		return "所有候选均失败"
 	}
-	lower := strings.ToLower(msg)
-	if strings.Contains(lower, "timeout") || strings.Contains(lower, "did not observe") ||
-		strings.Contains(lower, "read timed out") || strings.Contains(lower, "connect timed out") {
-		return "请求超时"
-	}
-	if strings.HasPrefix(msg, "Provider error:") {
+	if strings.HasPrefix(msg, "Provider error:") || strings.HasPrefix(msg, "Provider stream error:") {
+		// Extract upstream body after "body: "
+		var body string
 		if bodyIdx := strings.Index(msg, "body: "); bodyIdx > 0 {
-			body := msg[bodyIdx+6:]
-			var parsed map[string]any
-			if json.Unmarshal([]byte(body), &parsed) == nil {
-				if errNode, ok := parsed["error"]; ok {
-					switch e := errNode.(type) {
-					case map[string]any:
-						message := strVal(e["message"])
-						if message != "" {
-							if t := strVal(e["type"]); t != "" && t != "null" {
-								return "[" + t + "] " + message
-							}
-							return message
+			body = msg[bodyIdx+6:]
+		} else {
+			return msg
+		}
+		var parsed map[string]any
+		if json.Unmarshal([]byte(body), &parsed) == nil {
+			if errNode, ok := parsed["error"]; ok {
+				switch e := errNode.(type) {
+				case map[string]any:
+					message := strVal(e["message"])
+					if message != "" {
+						if t := strVal(e["type"]); t != "" && t != "null" {
+							return "[" + t + "] " + message
 						}
-					case string:
-						return e
+						return message
 					}
+				case string:
+					return e
 				}
 			}
-			return strings.TrimSpace(msg[len("Provider error:"):bodyIdx]) + " " + body
 		}
-		return msg
-	}
-	if strings.Contains(lower, "empty response") || strings.Contains(lower, "treated as timeout") {
-		return "请求超时"
+		statusPart := strings.TrimSpace(msg[:bodyIdx])
+		statusPart = strings.TrimPrefix(statusPart, "Provider error:")
+		statusPart = strings.TrimPrefix(statusPart, "Provider stream error:")
+		return strings.TrimSpace(statusPart) + " " + body
 	}
 	return msg
 }
@@ -1057,3 +1068,17 @@ func max(a, b int) int {
 
 var _ = context.Background
 var _ = fmt.Sprintf
+
+// resetTimer safely stops a *time.Timer and resets it to the given duration.
+// After the caller has already drained (or never triggered) the timer's channel
+// the standard t.Reset(d) is safe.  This wrapper exists to make the intent
+// explicit and to guard the rare path where the channel needs draining.
+func resetTimer(t *time.Timer, d time.Duration) {
+	if !t.Stop() {
+		select {
+		case <-t.C:
+		default:
+		}
+	}
+	t.Reset(d)
+}
