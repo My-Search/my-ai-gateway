@@ -934,7 +934,8 @@ func buildFailMessage(err error) string {
 	if strings.HasPrefix(msg, "Provider error:") || strings.HasPrefix(msg, "Provider stream error:") {
 		// Extract upstream body after "body: "
 		var body string
-		if bodyIdx := strings.Index(msg, "body: "); bodyIdx > 0 {
+		var bodyIdx int
+		if bodyIdx = strings.Index(msg, "body: "); bodyIdx > 0 {
 			body = msg[bodyIdx+6:]
 		} else {
 			return msg
