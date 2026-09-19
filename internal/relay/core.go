@@ -39,7 +39,16 @@ type RelayCore struct {
 	// PreprocessDeps supplies prompt-injection / model-flag lookups.
 	PreprocessDeps PreprocessDeps
 
-	httpClient *http.Client
+	// baseTransport is the connection-pool placeholder template: it is never
+	// used for real requests, only cloned per dynamic timeout value
+	// (ResponseHeaderTimeout depends on the per-model dynamic first-byte
+	// timeout, so it cannot be a fixed field on a shared Transport).
+	baseTransport    *http.Transport
+	// clientCache maps timeoutMs -> transport clone so connection pools are
+	// reused while the dynamic timeout stays stable.
+	clientMu         sync.Mutex
+	clientCache      map[int64]*http.Client
+	maxCachedClients int
 
 	mu               sync.Mutex
 	streamUsage      map[string][3]int
@@ -61,18 +70,44 @@ func NewRelayCore(store DataStore) *RelayCore {
 		// (Java applies CONNECT_TIMEOUT_MILLIS=5000 via Netty options and
 		// per-request timeouts via Reactor timeout operators).
 		// ResponseHeaderTimeout covers "TCP accepted but no response headers"
-		// which is otherwise unprotected in the per-first-byte approach.
-		httpClient: &http.Client{
-			Transport: &http.Transport{
-				MaxIdleConns:         100,
-				MaxIdleConnsPerHost:  10,
-				IdleConnTimeout:      30 * time.Second,
-				TLSHandshakeTimeout:  10 * time.Second,
-				ResponseHeaderTimeout: time.Duration(DefaultMaxTimeoutMs) * time.Millisecond,
-				TLSClientConfig:      &tls.Config{MinVersion: tls.VersionTLS12},
-			},
+		// which is otherwise unprotected in the per-first-byte approach. It is
+		// set per request via clientFor() to the model's dynamic timeout
+		// (system-config min/max clamped avg*3), see LatencyTracker.GetTimeout.
+		baseTransport: &http.Transport{
+			MaxIdleConns:         100,
+			MaxIdleConnsPerHost:  10,
+			IdleConnTimeout:      30 * time.Second,
+			TLSHandshakeTimeout:  10 * time.Second,
+			ResponseHeaderTimeout: time.Duration(DefaultMaxTimeoutMs) * time.Millisecond,
+			TLSClientConfig:      &tls.Config{MinVersion: tls.VersionTLS12},
 		},
+		clientCache:      map[int64]*http.Client{},
+		maxCachedClients: 16,
 	}
+}
+
+// clientFor returns an http.Client whose ResponseHeaderTimeout equals the
+// dynamic per-model first-byte timeout (LatencyTracker.GetTimeout: system
+// config min/max clamped avg*3). Transports are cloned from baseTransport so
+// each distinct timeout value keeps its own connection pool; the cache is
+// bounded and old clients' idle connections are released when it overflows.
+func (c *RelayCore) clientFor(timeoutMs int64) *http.Client {
+	c.clientMu.Lock()
+	defer c.clientMu.Unlock()
+	if cli, ok := c.clientCache[timeoutMs]; ok {
+		return cli
+	}
+	if len(c.clientCache) >= c.maxCachedClients {
+		for k, cli := range c.clientCache {
+			cli.CloseIdleConnections()
+			delete(c.clientCache, k)
+		}
+	}
+	tr := c.baseTransport.Clone()
+	tr.ResponseHeaderTimeout = time.Duration(timeoutMs) * time.Millisecond
+	cli := &http.Client{Transport: tr}
+	c.clientCache[timeoutMs] = cli
+	return cli
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +272,7 @@ func (c *RelayCore) invokeCandidateWithRetries(ctx context.Context, traceID stri
 		c.firstByteArrival.Delete(traceID)
 
 		attemptCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
-		body, status, fbMs, err := c.callProvider(ctx, attemptCtx, req, candidate, provider, traceID)
+		body, status, fbMs, err := c.callProvider(ctx, attemptCtx, req, candidate, provider, traceID, timeoutMs)
 		cancel()
 
 if err == nil && strings.TrimSpace(body) == "" {
@@ -282,7 +317,7 @@ if err == nil && strings.TrimSpace(body) == "" {
 // callProvider performs one upstream non-stream call, returning body, status and
 // the first-byte latency in ms (measured when the first body byte arrives).
 func (c *RelayCore) callProvider(ctx context.Context, attemptCtx context.Context,
-	req *InternalRequest, candidate RoutingCandidate, provider, traceID string) (string, int, *int64, error) {
+	req *InternalRequest, candidate RoutingCandidate, provider, traceID string, timeoutMs int64) (string, int, *int64, error) {
 
 	upstreamBody := BuildProviderRequest(ReqForCandidate(req, candidate), provider)
 	endpoint := buildProviderURL(candidate, provider)
@@ -297,7 +332,7 @@ func (c *RelayCore) callProvider(ctx context.Context, attemptCtx context.Context
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := c.clientFor(timeoutMs).Do(httpReq)
 	if err != nil {
 		return "", 0, nil, err
 	}
@@ -598,7 +633,7 @@ func (c *RelayCore) callProviderStream(ctx context.Context, req *InternalRequest
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := c.clientFor(timeoutMs).Do(httpReq)
 	if err != nil {
 		return err, nil
 	}
