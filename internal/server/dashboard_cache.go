@@ -19,7 +19,7 @@ type dashCache struct {
 }
 
 type dashCacheEntry struct {
-	data      map[string]any
+	data      any
 	expiresAt time.Time
 }
 
@@ -40,7 +40,7 @@ func (dc *dashCache) cacheKey(key, from, to string) string {
 }
 
 // Get returns cached data if a fresh entry exists.
-func (dc *dashCache) Get(key, from, to string) (map[string]any, bool) {
+func (dc *dashCache) Get(key, from, to string) (any, bool) {
 	if dc == nil {
 		return nil, false
 	}
@@ -56,7 +56,7 @@ func (dc *dashCache) Get(key, from, to string) (map[string]any, bool) {
 }
 
 // Set stores data with the configured TTL.
-func (dc *dashCache) Set(key, from, to string, data map[string]any) {
+func (dc *dashCache) Set(key, from, to string, data any) {
 	if dc == nil {
 		return
 	}
