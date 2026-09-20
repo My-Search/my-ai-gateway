@@ -925,6 +925,11 @@ func applyRelBrokenMarks(ctx context.Context, st *store.Store, rels []models.Mod
 			if mark.ExpireAt != nil {
 				rel.CircuitBrokenExpireAt = jtime.NewAPITime(*mark.ExpireAt)
 			}
+			if mark.LastProbeAt != nil {
+				rel.LastProbeAt = jtime.NewAPITime(*mark.LastProbeAt)
+			}
+			rel.LastProbeStatus = mark.LastProbeStatus
+			rel.LastProbeDetail = mark.LastProbeDetail
 		}
 	}
 }
@@ -943,6 +948,9 @@ func circuitStateFromRow(r store.Row) circuit.CircuitBreakerState {
 		FailCount:       r.Int("fail_count", 0),
 		OpenedAt:        jtime.ScanTime(r["opened_at"]),
 		ExpireAt:        jtime.ScanTime(r["expire_at"]),
+		LastProbeAt:     jtime.ScanTime(r["last_probe_at"]),
+		LastProbeStatus: r.IntPtr("last_probe_status"),
+		LastProbeDetail: r.StrPtr("last_probe_detail"),
 	}
 }
 

@@ -209,7 +209,7 @@
                   <template v-else-if="rel.circuitBrokenScope === 'model'">（{{ t('model.rels.brokenModel') }}）</template>
                   <template v-else-if="rel.circuitBrokenScope === 'both'">（{{ t('model.rels.brokenBoth') }}）</template>
                 </span>
-                <span class="cb-hint" @click="toggleProbeHint">
+                <span class="cb-hint" @click="toggleProbeHint($event, rel)">
                   <SvgIcon name="question" :size="12" class="cb-hint-icon" />
                 </span>
                 <button class="btn btn-sm btn-secondary cb-recover-btn" @click="recoverRel(rel)">
@@ -273,15 +273,35 @@
     {{ dialogMessage }}
   </Dialog>
 
-  <!-- 探测机制说明气泡：点击问号图标切换显示 -->
+  <!-- 探测机制说明气泡：点击问号图标切换显示；含该关联最近一次探测时间与结果 -->
   <Teleport to="body">
     <div
       v-if="probeHintVisible"
+      ref="probeHintRef"
       class="probe-hint-pop"
       :class="{ below: probeHintPos.below }"
       :style="{ left: probeHintPos.x + 'px', top: probeHintPos.y + 'px' }"
+      @click.stop
     >
-      {{ t('model.rels.brokenProbeHint') }}
+      <div>{{ t('model.rels.brokenProbeHint') }}</div>
+      <div class="probe-hint-probe">
+        <template v-if="probeHintRel?.circuitBrokenLastProbeAt">
+          <div class="probe-hint-title">{{ t('model.rels.lastProbeTitle') }}</div>
+          <div class="probe-hint-row">
+            <span class="probe-hint-label">{{ t('model.rels.lastProbeTime') }}</span>
+            <span>{{ formatLocalDateTimeFull(probeHintRel.circuitBrokenLastProbeAt) }}</span>
+          </div>
+          <div v-if="probeHintRel.circuitBrokenLastProbeStatus != null" class="probe-hint-row">
+            <span class="probe-hint-label">{{ t('model.rels.lastProbeStatus') }}</span>
+            <span>{{ probeHintRel.circuitBrokenLastProbeStatus }}</span>
+          </div>
+          <template v-if="probeHintRel.circuitBrokenLastProbeDetail">
+            <div class="probe-hint-detail-label">{{ t('model.rels.lastProbeDetail') }}</div>
+            <pre class="probe-hint-detail">{{ probeHintRel.circuitBrokenLastProbeDetail }}</pre>
+          </template>
+        </template>
+        <div v-else class="probe-hint-empty">{{ t('model.rels.lastProbeNone') }}</div>
+      </div>
     </div>
   </Teleport>
 </template>
@@ -293,6 +313,7 @@ import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import { modelApi, type CustomModel, type ModelChannelRel, type RelMode } from '@/api/model'
+import { formatLocalDateTimeFull } from '@/utils/date'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
 import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
@@ -428,13 +449,18 @@ function effortLabel(value: string): string {
 /** 探测说明气泡状态：visible 是否显示；pos 为 fixed 定位坐标（基于图标位置计算）及方位 */
 const probeHintVisible = ref(false)
 const probeHintPos = ref({ x: 0, y: 0, below: true })
+/** 气泡内展示的关联（最近一次探测信息来自该行） */
+const probeHintRel = ref<ModelChannelRel | null>(null)
+/** 气泡根元素：用于区分「气泡内滚动」与「页面滚动」，避免内部滚动误关闭气泡 */
+const probeHintRef = ref<HTMLElement | null>(null)
 
 /**
  * 点击问号图标切换探测说明气泡。
- * 主流程：若气泡已显示则关闭；否则取图标位置，顶部空间不足时显示在下方，然后打开气泡。
+ * 主流程：若气泡已显示则关闭；否则记录该行关联（气泡内展示其最近一次探测信息）并取图标位置，
+ * 顶部空间不足时显示在下方，然后打开气泡。
  * 图标点击在事件阶段被标记 stopPropagation，避免触发 document 上的关闭监听。
  */
-function toggleProbeHint(e: MouseEvent) {
+function toggleProbeHint(e: MouseEvent, rel: ModelChannelRel) {
   e.stopPropagation()
   if (probeHintVisible.value) {
     probeHintVisible.value = false
@@ -447,11 +473,15 @@ function toggleProbeHint(e: MouseEvent) {
     y: below ? rect.bottom + 8 : rect.top - 8,
     below
   }
+  probeHintRel.value = rel
   probeHintVisible.value = true
 }
 
-/** 关闭气泡（点击气泡外任意位置 / 滚动 / 窗口缩放时触发） */
-function closeProbeHint() {
+/** 关闭气泡（点击气泡外任意位置 / 滚动 / 窗口缩放时触发；气泡内部滚动不关闭） */
+function closeProbeHint(e?: Event) {
+  if (e && e.type === 'scroll' && e.target instanceof Node && probeHintRef.value?.contains(e.target)) {
+    return
+  }
   probeHintVisible.value = false
 }
 
@@ -1216,11 +1246,52 @@ table td {
   line-height: 1.5;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   transform: translate(-50%, -100%);
-  pointer-events: none;
+  pointer-events: auto;
   white-space: normal;
 }
 .probe-hint-pop.below {
   transform: translate(-50%, 0);
+}
+
+/* 最近一次探测信息：时间/状态码/响应详情（响应内容原样展示） */
+.probe-hint-probe {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+.probe-hint-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.probe-hint-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+.probe-hint-label,
+.probe-hint-detail-label {
+  flex: none;
+  color: #a3a3ab;
+}
+.probe-hint-detail-label {
+  margin-top: 4px;
+}
+.probe-hint-detail {
+  margin: 2px 0 0;
+  padding: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1.45;
+}
+.probe-hint-empty {
+  margin-top: 4px;
+  color: #a3a3ab;
 }
 
 .cb-recover-btn {

@@ -40,12 +40,17 @@ func main() {
 	}
 	defer conn.Close()
 
+	readConn := db.OpenReadOnly(cfg.DBPath)
+	if readConn != nil {
+		defer readConn.Close()
+	}
+
 	if err := db.Migrate(conn); err != nil {
 		slog.Error("数据库迁移失败", "error", err)
 		os.Exit(1)
 	}
 
-	st := store.New(conn)
+	st := store.New(conn, readConn)
 	cfgSvc := service.NewConfigService(st)
 
 	metricsRegistry := metrics.NewRegistry()
@@ -58,7 +63,10 @@ func main() {
 	logWriter := logsvc.NewLogWriter(st, logSSE, cfgSvc)
 	relayCore.LogWriter = logWriter
 
+	dashCache := server.NewDashCache()
+
 	app := server.New(server.Deps{
+		DashCache: dashCache,
 		Cfg:       cfg,
 		Store:     st,
 		Config:    cfgSvc,
@@ -71,7 +79,7 @@ func main() {
 
 	// --- Circuit breaker + background tasks (Java services + schedule package) ---
 	circuitBreaker := server.WireRelayRuntime(relayCore, st, cfgSvc, metricsRegistry)
-	stopTasks := server.StartBackgroundTasks(relayCore, st, cfgSvc, circuitBreaker)
+	stopTasks := server.StartBackgroundTasks(relayCore, st, cfgSvc, circuitBreaker, dashCache)
 
 	// Background maintenance: expire idle sessions.
 	go func() {

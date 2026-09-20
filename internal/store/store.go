@@ -27,12 +27,15 @@ import (
 // ErrNotFound is returned by single-row lookups that find nothing.
 var ErrNotFound = errors.New("not found")
 
-// Store wraps the database handle.
+// Store wraps the database handle. ReadDB is an optional read-only connection
+// pool; dashboard and other read-heavy queries should use QueryReadOnly to
+// reduce lock contention with write transactions on the main pool.
 type Store struct {
-	DB *sql.DB
+	DB     *sql.DB
+	ReadDB *sql.DB
 }
 
-func New(db *sql.DB) *Store { return &Store{DB: db} }
+func New(db *sql.DB, readDB *sql.DB) *Store { return &Store{DB: db, ReadDB: readDB} }
 
 // ---------------------------------------------------------------------------
 // Generic helpers
@@ -172,9 +175,10 @@ func toInt(v any) int {
 	return 0
 }
 
-// Query runs a SELECT and returns every row as a Row.
-func (s *Store) Query(ctx context.Context, query string, args ...any) ([]Row, error) {
-	rows, err := s.DB.QueryContext(ctx, query, args...)
+// queryOn runs a query on the given DB and returns rows. It is the shared
+// implementation behind Query and QueryReadOnly.
+func (s *Store) queryOn(db *sql.DB, ctx context.Context, query string, args ...any) ([]Row, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -203,9 +207,36 @@ func (s *Store) Query(ctx context.Context, query string, args ...any) ([]Row, er
 	return out, rows.Err()
 }
 
+// Query runs a SELECT and returns every row as a Row.
+func (s *Store) Query(ctx context.Context, query string, args ...any) ([]Row, error) {
+	return s.queryOn(s.DB, ctx, query, args...)
+}
+
+// QueryReadOnly is like Query but routes through the read-only connection pool
+// when available. Falls back to the main connection when ReadDB is nil.
+func (s *Store) QueryReadOnly(ctx context.Context, query string, args ...any) ([]Row, error) {
+	db := s.DB
+	if s.ReadDB != nil {
+		db = s.ReadDB
+	}
+	return s.queryOn(db, ctx, query, args...)
+}
+
 // QueryOne returns the first row or ErrNotFound.
 func (s *Store) QueryOne(ctx context.Context, query string, args ...any) (Row, error) {
 	rows, err := s.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, ErrNotFound
+	}
+	return rows[0], nil
+}
+
+// QueryOneReadOnly is the single-row variant of QueryReadOnly.
+func (s *Store) QueryOneReadOnly(ctx context.Context, query string, args ...any) (Row, error) {
+	rows, err := s.QueryReadOnly(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

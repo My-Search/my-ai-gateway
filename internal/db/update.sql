@@ -407,8 +407,8 @@ UPDATE models SET hidden = 0 WHERE hidden IS NULL;
   
 -- ========================================  
 -- VERSION:v1.24.0  
--- Prompt ע������  
--- ֧�ְ����ģ�������Զ�ע�� system/user/assistant ��Ϣ  
+-- Prompt ע  
+-- ְ֧ģԶע system/user/assistant Ϣ  
 -- ========================================  
   
 CREATE TABLE IF NOT EXISTS prompt_injections (  
@@ -526,3 +526,38 @@ UPDATE admin_config SET description = '重试/失败请求数据保留时长（�
 --   复合索引使 MAX(created_at) / ORDER BY created_at 直接在索引内完成（覆盖索引，零回表）。
 -- ========================================
 CREATE INDEX IF NOT EXISTS idx_request_logs_trace_id_created_at ON request_logs(trace_id, created_at);
+
+-- ========================================
+-- VERSION:v1.37.0
+-- 熔断探测信息展示：circuit_breaker_states 新增最近一次探测结果字段（供入口模型关联页气泡展示）。
+--   last_probe_at：最近一次探测时间。熔断记录不会自动过期，探测失败会续期并写入；
+--                  探测成功时记录即被删除，因此存续记录上的探测结果通常为失败信息。
+--   last_probe_status：探测响应的 HTTP 状态码（连接失败/超时等无响应时为 NULL）。
+--   last_probe_detail：探测失败详情（响应体摘要或网络错误信息，原样展示）。
+-- ========================================
+ALTER TABLE circuit_breaker_states ADD COLUMN last_probe_at TIMESTAMP;
+ALTER TABLE circuit_breaker_states ADD COLUMN last_probe_status INTEGER;
+ALTER TABLE circuit_breaker_states ADD COLUMN last_probe_detail TEXT;
+
+-- ========================================
+-- VERSION:v1.38.0
+-- 性能优化：新增 log_stats_hourly 预聚合表，用于 Dashboard 小时级统计查询，
+-- 避免每次仪表盘加载都对 request_logs 执行 6~8 条全表范围聚合扫描。
+-- ========================================
+CREATE TABLE IF NOT EXISTS log_stats_hourly (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hour_bucket TEXT NOT NULL,                -- 聚合小时桶 "yyyy-MM-ddTHH:00:00"（UTC）
+    model_name TEXT NOT NULL DEFAULT '',
+    channel_name TEXT NOT NULL DEFAULT '',
+    channel_model_name TEXT NOT NULL DEFAULT '',
+    phase TEXT NOT NULL DEFAULT '',           -- 统计阶段：'start' / 'success'
+    requests INTEGER NOT NULL DEFAULT 0,      -- 该桶该维度的 trace_id 去重计数
+    first_byte_ms_sum REAL NOT NULL DEFAULT 0, -- first_byte_ms 总和（用于重新计算均值）
+    first_byte_ms_count INTEGER NOT NULL DEFAULT 0, -- first_byte_ms 非空计数
+    response_time_ms_sum REAL NOT NULL DEFAULT 0,  -- response_time_ms 总和（用于计算生成速度）
+    completion_tokens_sum INTEGER NOT NULL DEFAULT 0, -- completion_tokens 总和
+    total_tokens_sum INTEGER NOT NULL DEFAULT 0,      -- total_tokens 总和
+    UNIQUE(hour_bucket, model_name, channel_name, channel_model_name, phase)
+);
+
+CREATE INDEX IF NOT EXISTS idx_log_stats_hourly_bucket ON log_stats_hourly(hour_bucket);

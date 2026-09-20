@@ -54,6 +54,12 @@ export interface ModelChannelRel {
   circuitBrokenScope?: 'model' | 'channel' | 'both' | null
   /** 熔断最早到期时间 */
   circuitBrokenExpireAt?: string | null
+  /** 最近一次熔断探测时间（熔断续期时写入；探测成功即恢复，不再携带探测信息） */
+  circuitBrokenLastProbeAt?: string | null
+  /** 最近一次探测的 HTTP 状态码（连接失败/超时等无响应时为 null） */
+  circuitBrokenLastProbeStatus?: number | null
+  /** 最近一次探测的响应详情（响应体摘要或网络错误，原样展示） */
+  circuitBrokenLastProbeDetail?: string | null
 }
 
 export interface CircuitBreakerConfig {

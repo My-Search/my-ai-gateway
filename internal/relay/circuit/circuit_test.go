@@ -30,14 +30,15 @@ func newTestStore(t *testing.T) *store.Store {
 		`CREATE TABLE circuit_breaker_states (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER, channel_model_id INTEGER,
 			is_open INTEGER, fail_count INTEGER, opened_at TEXT, expire_at TEXT,
-			created_at TEXT, updated_at TEXT, channel_api_key_id INTEGER)`,
+			created_at TEXT, updated_at TEXT, channel_api_key_id INTEGER,
+			last_probe_at TEXT, last_probe_status INTEGER, last_probe_detail TEXT)`,
 	}
 	for _, q := range ddl {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatal(err)
 		}
 	}
-	return store.New(db)
+	return store.New(db, nil)
 }
 
 // TestListExpiredStatesMixedTimestampFormats is the regression test for the
@@ -231,6 +232,102 @@ func TestConfigManagerDefaults(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected exactly 1 config row, got %d", count)
+	}
+}
+
+// TestRenewStatePersistsProbeOutcome checks that a failed probe's outcome is
+// written to last_probe_* alongside the renewal, and stays NULL when no probe
+// outcome was stamped.
+func TestRenewStatePersistsProbeOutcome(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	gate := &Gate{Store: st}
+	now := jtime.FormatApp(time.Now().UTC())
+
+	id, err := st.Insert(ctx,
+		"INSERT INTO circuit_breaker_states (channel_id, channel_api_key_id, channel_model_id, is_open, fail_count, opened_at, expire_at, created_at, updated_at) VALUES (1, 7, 100, 1, 1, ?, ?, ?, ?)",
+		now, now, now, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now().UTC().Add(-time.Second)
+	state := CircuitBreakerState{ID: id, ChannelID: 1, ChannelAPIKeyID: i64ptr(7), ChannelModelID: i64ptr(100), FailCount: 1}
+	gate.RenewState(ctx, withProbeOutcome(state, ProbeResult{StatusCode: 502, Detail: "  upstream exploded  "}), 60)
+
+	row, err := st.QueryOne(ctx, "SELECT * FROM circuit_breaker_states WHERE id = ?", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := row.Int("fail_count", 0); got != 2 {
+		t.Errorf("fail_count = %d, want 2", got)
+	}
+	if ts := jtime.ScanTime(row["last_probe_at"]); ts == nil || ts.Before(before) {
+		t.Errorf("last_probe_at = %v, want a fresh timestamp", ts)
+	}
+	if got := row.IntPtr("last_probe_status"); got == nil || *got != 502 {
+		t.Errorf("last_probe_status = %v, want 502", got)
+	}
+	if got := row.Str("last_probe_detail"); got != "upstream exploded" {
+		t.Errorf("last_probe_detail = %q, want the trimmed detail", got)
+	}
+
+	// Renewal without a probe outcome must leave the probe columns NULL.
+	id2, err := st.Insert(ctx,
+		"INSERT INTO circuit_breaker_states (channel_id, is_open, fail_count, opened_at, expire_at, created_at, updated_at) VALUES (2, 1, 1, ?, ?, ?, ?)",
+		now, now, now, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate.RenewState(ctx, CircuitBreakerState{ID: id2, ChannelID: 2, FailCount: 1}, 60)
+	row2, err := st.QueryOne(ctx, "SELECT * FROM circuit_breaker_states WHERE id = ?", id2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row2["last_probe_at"] != nil || row2["last_probe_status"] != nil || row2["last_probe_detail"] != nil {
+		t.Errorf("probe columns must stay NULL without a probe outcome: %v / %v / %v",
+			row2["last_probe_at"], row2["last_probe_status"], row2["last_probe_detail"])
+	}
+}
+
+// TestEvaluateRelBrokenLatestProbe checks that the mark carries the probe
+// outcome of the most recently probed record within the broken scope.
+func TestEvaluateRelBrokenLatestProbe(t *testing.T) {
+	key := int64(7)
+	older := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+	newer := older.Add(5 * time.Minute)
+	oldStatus, newStatus := 500, 429
+	oldDetail, newDetail := "old body", "new body"
+
+	states := []CircuitBreakerState{
+		{ChannelID: 1, ChannelAPIKeyID: i64ptr(7), IsOpen: 1, ExpireAt: &older,
+			LastProbeAt: &older, LastProbeStatus: &oldStatus, LastProbeDetail: &oldDetail},
+		{ChannelID: 1, ChannelAPIKeyID: i64ptr(7), ChannelModelID: i64ptr(100), IsOpen: 1, ExpireAt: &older,
+			LastProbeAt: &newer, LastProbeStatus: &newStatus, LastProbeDetail: &newDetail},
+	}
+	mark := EvaluateRelBroken(100, 1, &key, states, nil, map[int64]KeyRef{7: {ID: 7, Enabled: true}})
+	if mark == nil {
+		t.Fatal("expected a fully-broken mark")
+	}
+	if mark.LastProbeAt == nil || !mark.LastProbeAt.Equal(newer) {
+		t.Errorf("LastProbeAt = %v, want %v", mark.LastProbeAt, newer)
+	}
+	if mark.LastProbeStatus == nil || *mark.LastProbeStatus != 429 {
+		t.Errorf("LastProbeStatus = %v, want 429", mark.LastProbeStatus)
+	}
+	if mark.LastProbeDetail == nil || *mark.LastProbeDetail != "new body" {
+		t.Errorf("LastProbeDetail = %v, want new body", mark.LastProbeDetail)
+	}
+
+	// No probe recorded yet: the mark keeps nil probe fields.
+	states = []CircuitBreakerState{
+		{ChannelID: 1, ChannelAPIKeyID: i64ptr(7), IsOpen: 1, ExpireAt: &older},
+	}
+	mark = EvaluateRelBroken(100, 1, &key, states, nil, map[int64]KeyRef{7: {ID: 7, Enabled: true}})
+	if mark == nil {
+		t.Fatal("expected a fully-broken mark")
+	}
+	if mark.LastProbeAt != nil || mark.LastProbeStatus != nil || mark.LastProbeDetail != nil {
+		t.Errorf("expected nil probe fields, got %+v", mark)
 	}
 }
 

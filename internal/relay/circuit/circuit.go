@@ -33,10 +33,14 @@ const (
 	defaultEnabled              = 1
 	FullScanMark                = int64(-1)
 	// ProbeTimeoutSeconds is the total connect+response timeout of a probe request.
-	ProbeTimeoutSeconds         = 5
+	ProbeTimeoutSeconds         = 30
 	defaultProbeIntervalMinutes = 30
 	defaultProbeThrottleSeconds = 6
 )
+
+// probeDetailMaxRunes caps the stored probe response detail (raw body or
+// error text) so a misbehaving upstream cannot bloat every breaker row.
+const probeDetailMaxRunes = 2000
 
 // ConfigManager reads/writes circuit_breaker_configs.
 type ConfigManager struct {
@@ -325,19 +329,59 @@ func (g *Gate) RecoverModelState(ctx context.Context, state CircuitBreakerState)
 }
 
 // RenewState mirrors CircuitGate.renewState: keep the gate closed, extend expiry.
+// When the caller stamped a probe outcome (state.LastProbeAt set by
+// withProbeOutcome), the probe time/status/detail are persisted as well so
+// the admin UI can show the most recent probe result.
 func (g *Gate) RenewState(ctx context.Context, state CircuitBreakerState, durationSeconds int) {
 	if durationSeconds < 1 {
 		durationSeconds = 1
 	}
 	now := time.Now().UTC()
 	failCount := state.FailCount + 1
-	g.Store.Exec(ctx, "UPDATE circuit_breaker_states SET expire_at=?, fail_count=?, updated_at=? WHERE id=?",
-		jtime.FormatApp(now.Add(time.Duration(durationSeconds)*time.Second)), failCount, jtime.FormatApp(now), state.ID)
+	expireAt := jtime.FormatApp(now.Add(time.Duration(durationSeconds) * time.Second))
+	if state.LastProbeAt != nil {
+		g.Store.Exec(ctx, "UPDATE circuit_breaker_states SET expire_at=?, fail_count=?, last_probe_at=?, last_probe_status=?, last_probe_detail=?, updated_at=? WHERE id=?",
+			expireAt, failCount, jtime.FormatApp(*state.LastProbeAt), state.LastProbeStatus, state.LastProbeDetail, jtime.FormatApp(now), state.ID)
+	} else {
+		g.Store.Exec(ctx, "UPDATE circuit_breaker_states SET expire_at=?, fail_count=?, updated_at=? WHERE id=?",
+			expireAt, failCount, jtime.FormatApp(now), state.ID)
+	}
 
 	// 续期后缓存中的 expire_at 已过时，整体失效确保一致性
 	if g.StateCache != nil {
 		g.StateCache.InvalidateAll()
 	}
+}
+
+// withProbeOutcome stamps a failed probe's outcome onto the state so that
+// RenewState persists last_probe_at/status/detail for the admin UI bubble.
+func withProbeOutcome(state CircuitBreakerState, result ProbeResult) CircuitBreakerState {
+	at := time.Now().UTC()
+	state.LastProbeAt = &at
+	state.LastProbeStatus = nil
+	if result.StatusCode > 0 {
+		status := result.StatusCode
+		state.LastProbeStatus = &status
+	}
+	state.LastProbeDetail = nil
+	if detail := clampProbeDetail(result.Detail); detail != "" {
+		state.LastProbeDetail = &detail
+	}
+	return state
+}
+
+// clampProbeDetail trims the raw probe response/error to a storable size,
+// appending an ellipsis when the content had to be cut.
+func clampProbeDetail(detail string) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return ""
+	}
+	runes := []rune(detail)
+	if len(runes) > probeDetailMaxRunes {
+		return string(runes[:probeDetailMaxRunes]) + "…"
+	}
+	return detail
 }
 
 // RemoveState deletes the record (opens the gate).
@@ -400,6 +444,10 @@ type CircuitBreakerState struct {
 	FailCount       int
 	OpenedAt        *time.Time
 	ExpireAt        *time.Time
+	// 最近一次探测信息：探测失败续期时写入；探测成功时记录即被删除。
+	LastProbeAt     *time.Time
+	LastProbeStatus *int
+	LastProbeDetail *string
 }
 
 func rowToCircuitBreakerState(r store.Row) CircuitBreakerState {
@@ -412,6 +460,9 @@ func rowToCircuitBreakerState(r store.Row) CircuitBreakerState {
 		FailCount:       r.Int("fail_count", 0),
 		OpenedAt:        jtime.ScanTime(r["opened_at"]),
 		ExpireAt:        jtime.ScanTime(r["expire_at"]),
+		LastProbeAt:     jtime.ScanTime(r["last_probe_at"]),
+		LastProbeStatus: r.IntPtr("last_probe_status"),
+		LastProbeDetail: r.StrPtr("last_probe_detail"),
 	}
 }
 
@@ -432,12 +483,25 @@ type ProbeTarget struct {
 	ChannelModelID int64
 }
 
+// ProbeResult is the outcome of one probe request. Alive means the upstream
+// answered 2xx; StatusCode is the HTTP status (0 when no response arrived) and
+// Detail carries the raw failure explanation (response body or network error).
+type ProbeResult struct {
+	Alive      bool
+	StatusCode int
+	Detail     string
+}
+
 // ProbeService probes a channel's health with a minimal chat request
 // (Java CircuitBreakerProbeService: max_tokens=1, 5s total timeout, 2xx = alive).
 type ProbeService struct {
 	Store *store.Store
 	// HTTPDo performs the probe POST; injected so the relay package can own the client.
-	HTTPDo func(ctx context.Context, target ProbeTarget, endpoint string, headers map[string]string, body string) bool
+	HTTPDo func(ctx context.Context, target ProbeTarget, endpoint string, headers map[string]string, body string) ProbeResult
+
+	// TimeoutFn returns the timeout in milliseconds for probing a specific model.
+	// When nil, ProbeTimeoutSeconds is used as the default.
+	TimeoutFn func(channelID, channelModelID int64) int64
 }
 
 // BuildEndpoint mirrors CandidateRouter.buildEndpoint.
@@ -487,15 +551,21 @@ func BuildProviderHeaders(channelType, apiKey, customHeadersJSON string) map[str
 	return h
 }
 
-// Probe sends the minimal request. A nil target or missing HTTPDo counts as failure.
-func (s *ProbeService) Probe(ctx context.Context, target ProbeTarget) bool {
+// Probe sends the minimal request. A missing HTTPDo or model name counts as failure.
+func (s *ProbeService) Probe(ctx context.Context, target ProbeTarget) ProbeResult {
 	if s.HTTPDo == nil || target.ModelName == "" {
-		return false
+		return ProbeResult{Detail: "探测配置无效（缺少模型名或 HTTP 客户端）"}
 	}
 	endpoint := BuildEndpoint(target.ChannelType, target.BaseURL, target.ChannelType)
 	headers := BuildProviderHeaders(target.ChannelType, target.APIKey, target.CustomHeaders)
 	body := `{"model":` + jsonString(target.ModelName) + `,"max_tokens":1,"messages":[{"role":"user","content":"ping"}]}`
-	probeCtx, cancel := context.WithTimeout(ctx, ProbeTimeoutSeconds*time.Second)
+	timeoutMs := int64(ProbeTimeoutSeconds * 1000)
+	if s.TimeoutFn != nil {
+		if t := s.TimeoutFn(target.ChannelID, target.ChannelModelID); t > 0 {
+			timeoutMs = t
+		}
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
 	return s.HTTPDo(probeCtx, target, endpoint, headers, body)
 }
@@ -698,16 +768,16 @@ func (s *RecoveryService) handleChannelGate(ctx context.Context, state CircuitBr
 		s.Gate.RemoveState(ctx, state.ID)
 		return
 	}
-	alive := s.Probe.Probe(ctx, ProbeTarget{
+	result := s.Probe.Probe(ctx, ProbeTarget{
 		ChannelID: state.ChannelID, ChannelName: chName, ChannelType: chType,
 		BaseURL: baseURL, CustomHeaders: customHeaders,
 		ModelName: modelName, APIKey: apiKey, APIKeyName: keyName, ChannelModelID: cmID,
 	})
-	if alive {
+	if result.Alive {
 		s.Gate.RemoveState(ctx, state.ID)
 	} else {
 		duration := s.ConfigMgr.GetDurationByChannelModelID(ctx, cmID)
-		s.Gate.RenewState(ctx, state, duration)
+		s.Gate.RenewState(ctx, withProbeOutcome(state, result), duration)
 		slog.Warn("渠道级探测失败，门保持关闭并续期", "channel", chName, "key", keyName, "duration", duration)
 	}
 }
@@ -747,16 +817,16 @@ func (s *RecoveryService) handleModelGate(ctx context.Context, state CircuitBrea
 			return
 		}
 	}
-	alive := s.Probe.Probe(ctx, ProbeTarget{
+	result := s.Probe.Probe(ctx, ProbeTarget{
 		ChannelID: channelID, ChannelName: chName, ChannelType: chType,
 		BaseURL: baseURL, CustomHeaders: customHeaders,
 		ModelName: modelName, APIKey: apiKey, APIKeyName: keyName, ChannelModelID: channelModelID,
 	})
-	if alive {
+	if result.Alive {
 		s.Gate.RecoverModelState(ctx, state)
 	} else {
 		duration := s.ConfigMgr.GetDurationByChannelModelID(ctx, channelModelID)
-		s.Gate.RenewState(ctx, state, duration)
+		s.Gate.RenewState(ctx, withProbeOutcome(state, result), duration)
 		slog.Warn("熔断探测失败，门保持关闭并续期", "channel", chName, "model", modelName, "key", keyName, "duration", duration)
 	}
 }
@@ -765,6 +835,10 @@ func (s *RecoveryService) handleModelGate(ctx context.Context, state CircuitBrea
 type RelBrokenMark struct {
 	Scope    string     // "channel" | "model" | "both"
 	ExpireAt *time.Time // earliest expiry = next probe time
+	// 最近一次探测信息：取熔断范围内探测时间最新的一条记录；从未探测时为 nil。
+	LastProbeAt     *time.Time
+	LastProbeStatus *int
+	LastProbeDetail *string
 }
 
 // PathAvailable mirrors CircuitCheck.isPathAvailable over pre-grouped states.
@@ -838,10 +912,28 @@ func EvaluateRelBroken(channelModelID, channelID int64, relKeyID *int64,
 	default:
 		mark.Scope = "model"
 	}
-	for _, s := range append(append([]CircuitBreakerState{}, channelStates...), modelStates...) {
+	combined := append(append([]CircuitBreakerState{}, channelStates...), modelStates...)
+	for _, s := range combined {
 		if s.ExpireAt != nil && (mark.ExpireAt == nil || s.ExpireAt.Before(*mark.ExpireAt)) {
 			t := *s.ExpireAt
 			mark.ExpireAt = &t
+		}
+	}
+	// 最近探测信息：多条记录时取探测时间最新的一条（状态码/详情与其成组）
+	for _, s := range combined {
+		if s.LastProbeAt != nil && (mark.LastProbeAt == nil || s.LastProbeAt.After(*mark.LastProbeAt)) {
+			t := *s.LastProbeAt
+			mark.LastProbeAt = &t
+			mark.LastProbeStatus = nil
+			if s.LastProbeStatus != nil {
+				v := *s.LastProbeStatus
+				mark.LastProbeStatus = &v
+			}
+			mark.LastProbeDetail = nil
+			if s.LastProbeDetail != nil {
+				v := *s.LastProbeDetail
+				mark.LastProbeDetail = &v
+			}
 		}
 	}
 	return mark

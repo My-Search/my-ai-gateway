@@ -8,6 +8,7 @@ package server
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -44,10 +45,10 @@ func WireRelayRuntime(core *relay.RelayCore, st *store.Store, cfgSvc *service.Co
 
 	probe := &circuit.ProbeService{
 		Store: st,
-		HTTPDo: func(ctx context.Context, target circuit.ProbeTarget, endpoint string, headers map[string]string, body string) bool {
+		HTTPDo: func(ctx context.Context, target circuit.ProbeTarget, endpoint string, headers map[string]string, body string) circuit.ProbeResult {
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(body))
 			if err != nil {
-				return false
+				return circuit.ProbeResult{Detail: err.Error()}
 			}
 			for k, v := range headers {
 				req.Header.Set(k, v)
@@ -55,16 +56,15 @@ func WireRelayRuntime(core *relay.RelayCore, st *store.Store, cfgSvc *service.Co
 			resp, err := probeHTTPClient.Do(req)
 			if err != nil {
 				slog.Warn("熔断探测失败", "channel", target.ChannelName, "model", target.ModelName, "error", err)
-				return false
+				return circuit.ProbeResult{Detail: err.Error()}
 			}
 			defer resp.Body.Close()
-			buf := make([]byte, 4096)
-			for i := 0; i < 16; i++ {
-				if _, err := resp.Body.Read(buf); err != nil {
-					break
-				}
+			// 读取响应体作为失败详情（成功时不会展示）；连接异常时上面已返回错误详情。
+			raw, _ := io.ReadAll(io.LimitReader(resp.Body, probeDetailReadLimit))
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				return circuit.ProbeResult{Alive: true, StatusCode: resp.StatusCode}
 			}
-			return resp.StatusCode >= 200 && resp.StatusCode < 300
+			return circuit.ProbeResult{StatusCode: resp.StatusCode, Detail: string(raw)}
 		},
 	}
 
@@ -80,12 +80,12 @@ func WireRelayRuntime(core *relay.RelayCore, st *store.Store, cfgSvc *service.Co
 
 	// 探测成功/失败后也失效缓存，使下一请求立即感知状态变化
 	oldHTTPDo := probe.HTTPDo
-	probe.HTTPDo = func(ctx context.Context, target circuit.ProbeTarget, endpoint string, headers map[string]string, body string) bool {
-		alive := oldHTTPDo(ctx, target, endpoint, headers, body)
+	probe.HTTPDo = func(ctx context.Context, target circuit.ProbeTarget, endpoint string, headers map[string]string, body string) circuit.ProbeResult {
+		result := oldHTTPDo(ctx, target, endpoint, headers, body)
 		// 探测操作后失效一次整个缓存（Java CircuitBreakerRecoveryService 成功后
 		// 删除/续期状态记录，CandidateRouter 事件监听器失效整缓存）
 		stateCache.InvalidateAll()
-		return alive
+		return result
 	}
 
 	// --- CandidateRouter hooks (with state cache) --------------------------------
@@ -165,6 +165,12 @@ func WireRelayRuntime(core *relay.RelayCore, st *store.Store, cfgSvc *service.Co
 		},
 	)
 
+	// Probe timeout mirrors the real request's dynamic timeout (LatencyTracker.GetTimeout)
+	// so that slow upstreams are probed with the same patience as actual requests.
+	probe.TimeoutFn = func(channelID, channelModelID int64) int64 {
+		return core.LatencyTracker.GetTimeout(channelID, channelModelID)
+	}
+
 	// Request preprocessing (RequestPreprocessor dependencies).
 	core.PreprocessDeps = relay.PreprocessDeps{
 		ModelID: func(ctx context.Context, modelName string) int64 {
@@ -203,7 +209,17 @@ func WireRelayRuntime(core *relay.RelayCore, st *store.Store, cfgSvc *service.Co
 	}
 }
 
-var probeHTTPClient = &http.Client{Timeout: (circuit.ProbeTimeoutSeconds + 1) * time.Second}
+// probeDetailReadLimit bounds how much of a probe response body is captured
+// as the failure detail (the circuit package clamps it further before storage).
+const probeDetailReadLimit = 16 * 1024
+
+var probeHTTPClient = &http.Client{
+	// No client-level timeout—the request context carries the dynamic timeout
+	// (LatencyTracker.GetTimeout, clamped 20-60s) via context.WithTimeout,
+	// set inside ProbeService.Probe. The transport stays alive for the context
+	// deadline, and too-long connections are released by the transport's own
+	// ResponseHeaderTimeout (inherited from baseTransport defaults).
+}
 
 // CircuitBundle groups the breaker components shared with the recovery task.
 type CircuitBundle struct {
@@ -289,14 +305,19 @@ func moveAPIKeyToEnd(ctx context.Context, st *store.Store, channelID, apiKeyID i
 // Scheduled tasks (Java schedule package)
 // ---------------------------------------------------------------------------
 
-// StartBackgroundTasks launches the three Java @Scheduled equivalents and the
-// circuit recovery worker. The returned stop function shuts them down.
-func StartBackgroundTasks(core *relay.RelayCore, st *store.Store, cfgSvc *service.ConfigService, bundle *CircuitBundle) func() {
+// StartBackgroundTasks launches the three Java @Scheduled equivalents, the
+// circuit recovery worker and the log stats aggregator. The returned stop
+// function shuts them down.
+func StartBackgroundTasks(core *relay.RelayCore, st *store.Store, cfgSvc *service.ConfigService, bundle *CircuitBundle, dashCache *dashCache) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
 	// CircuitBreakerRecoveryTask worker: consumes probe signals.
 	bundle.Recovery.Start()
+
+	// LogStatsAggregator: 每小时聚合 request_logs 到 log_stats_hourly 预聚合表
+	aggregator := newLogStatsAggregator(st, dashCache)
+	aggregator.Start(ctx)
 
 	// ChannelModelRefreshTask: 60s tick, interval from system config, immediate
 	// first run (Java lastFullRefreshAt starts null).

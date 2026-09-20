@@ -53,7 +53,7 @@ func newDashboardTestStore(t *testing.T) *store.Store {
 		`CREATE INDEX idx_request_logs_created_at_phase_trace ON request_logs(created_at, phase, trace_id)`); err != nil {
 		t.Fatal(err)
 	}
-	return store.New(db)
+	return store.New(db, nil)
 }
 
 // insertLog writes one request_logs row the way the relay writer does, using

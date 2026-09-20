@@ -29,6 +29,38 @@ var updateSQL string
 
 const versionTable = "db_schema_version"
 
+// OpenReadOnly opens a read-only SQLite connection for dashboard / read-only
+// queries. WAL mode readers do not block each other or compete for the
+// immediate transaction lock, so heavy aggregation queries on request_logs
+// no longer contend with write transactions.
+//
+// Returns nil when the db path does not exist (e.g. first run before Open),
+// so callers should treat nil as a transient fallback to the write pool.
+func OpenReadOnly(path string) *sql.DB {
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	dsn := path + "?" + strings.Join([]string{
+		"_pragma=busy_timeout(30000)",
+		"_pragma=journal_mode(WAL)",
+		"_pragma=synchronous(NORMAL)",
+		"_pragma=cache_size(-16000)",
+		"_pragma=temp_store(MEMORY)",
+		"_pragma=mmap_size(268435456)",
+		"_pragma=query_only(true)",   // 强制只读，禁止写操作
+		"_pragma=foreign_keys(ON)",
+	}, "&")
+
+	conn, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil
+	}
+	// 只读池使用较少的连接，因为它们是辅助的
+	conn.SetMaxOpenConns(4)
+	conn.SetMaxIdleConns(2)
+	return conn
+}
+
 // Open opens (creating directories as needed) the SQLite database with the same
 // PRAGMA settings and pool sizing the Java build used via HikariCP.
 func Open(path string) (*sql.DB, error) {

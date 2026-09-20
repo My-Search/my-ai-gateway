@@ -114,6 +114,11 @@ type ModelChannelRel struct {
 	CircuitBroken        *int    `json:"circuitBroken"`
 	CircuitBrokenScope   *string `json:"circuitBrokenScope"`
 	CircuitBrokenExpireAt APITime `json:"circuitBrokenExpireAt"`
+	// 最近一次熔断探测（仅熔断关联上有值）：探测时间 / HTTP 状态码 / 失败详情。
+	// 探测成功后熔断记录即被删除，因此存续记录上的探测结果通常为失败信息。
+	LastProbeAt           APITime `json:"circuitBrokenLastProbeAt"`
+	LastProbeStatus       *int    `json:"circuitBrokenLastProbeStatus"`
+	LastProbeDetail       *string `json:"circuitBrokenLastProbeDetail"`
 }
 
 // CircuitBreakerConfig mirrors circuit_breaker_configs.

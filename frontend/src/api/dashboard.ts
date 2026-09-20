@@ -84,8 +84,8 @@ export interface TodayTrendData {
 }
 
 export const dashboardApi = {
-  getStats(params?: DashboardRangeParams) {
-    return http.get<DashboardStats>('/dashboard/stats', { params })
+  getStats(params?: DashboardRangeParams, config?: { signal?: AbortSignal }) {
+    return http.get<DashboardStats>('/dashboard/stats', { params, ...config })
   },
   getTodayTrend(mode: 'all' | 'entry' | 'channel' = 'all', params?: DashboardRangeParams) {
     return http.get<TodayTrendData>('/dashboard/today-trend', { params: { mode, ...params } })

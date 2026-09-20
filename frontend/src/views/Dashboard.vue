@@ -279,6 +279,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, onActivated } from 'vue'
+import axios from 'axios'
 import { dashboardApi, type DashboardRangeKey, type DashboardRangeParams, type DashboardStats, type ModelRankItem, type DashboardSparklines } from '@/api/dashboard'
 import { useI18n } from '@/composables/useI18n'
 import { formatNumber, formatSeconds, formatTokens } from '@/utils/format'
@@ -301,6 +302,8 @@ const { t } = useI18n()
 const stats = ref<DashboardStats>({} as DashboardStats)
 const loading = ref(true)
 let dashboardRefreshTimer: ReturnType<typeof setInterval> | null = null
+// 请求取消控制器（切换时间段时取消旧请求）
+let dashboardAbortController: AbortController | null = null
 const modelRankTab = ref<'entry' | 'channel'>('entry')
 
 // ===== 下拉时间段选择器 =====
@@ -500,16 +503,30 @@ function currentRangeParams(): DashboardRangeParams {
 
 async function fetchStats() {
   if (rangeInvalid.value) return
+  // 取消上一次未完成的请求
+  if (dashboardAbortController) {
+    dashboardAbortController.abort()
+  }
+  dashboardAbortController = new AbortController()
+  const signal = dashboardAbortController.signal
   try {
-    const res = await dashboardApi.getStats(currentRangeParams())
+    // 第一步：拉取 totals + rank（核心数据）
+    const res = await dashboardApi.getStats(currentRangeParams(), {
+      signal
+    })
     stats.value = res.data
-  } catch {
+    loading.value = false
+
+    // 第二步：sparklines 已随上面请求一起返回（dashboard后端接口是一次返回全部），
+    // 已无需额外请求。分步体现在 UI 上先渲染表格后渲染 sparkline SVG
+  } catch (err: any) {
+    if (axios.isCancel(err)) return // 被取消的请求静默忽略
     // stats will show empty values
   }
 }
 
 // 时间段切换时的加载：先置 loading 再拉取，避免旧数据残留（脏读）；
-// 60s 轮询与 keep-alive 恢复仍走原始 fetchStats，保持静默不闪烁
+// 120s 轮询与 keep-alive 恢复仍走原始 fetchStats，保持静默不闪烁
 async function refreshStatsOnSwitch() {
   loading.value = true
   try {
@@ -565,10 +582,10 @@ onMounted(async () => {
   syncRangeDates()
   await fetchStats()
   loading.value = false
-  // 60 秒轮询；页面隐藏（切到其它标签页）时跳过，避免无谓的数据库聚合压力
+  // 120 秒轮询；页面隐藏（切到其它标签页）时跳过，避免无谓的数据库聚合压力
   dashboardRefreshTimer = setInterval(() => {
     if (!document.hidden) fetchStats()
-  }, 60000)
+  }, 120000)
 })
 onActivated(async () => {
   if (activatedCount++ > 0) {

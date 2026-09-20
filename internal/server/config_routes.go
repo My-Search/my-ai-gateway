@@ -182,6 +182,16 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 	// the request_logs table grows.
 	g.GET("/dashboard/stats", func(c *gin.Context) {
 		ctx := c.Request.Context()
+
+		// 尝试命中缓存
+		cacheKey := c.Query("range")
+		cacheFrom := c.Query("from")
+		cacheTo := c.Query("to")
+		if cached, ok := d.DashCache.Get(cacheKey, cacheFrom, cacheTo); ok {
+			httpx.OK(c, cached)
+			return
+		}
+
 		dr := parseDashRange(c)
 
 		// Totals for the window and for its comparison window (昨日 / 上周同期 /
@@ -191,7 +201,7 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 		prevTotals := dashWindowTotals(ctx, d, dr.prevSince, dr.prevUntil)
 
 		// Top-10 rankings for the same window (channel / entry model / channel model).
-		chRows, _ := d.Store.Query(ctx,
+		chRows, _ := d.Store.QueryReadOnly(ctx,
 			`SELECT channel_name AS name,
 			        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
 			        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
@@ -202,7 +212,7 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 			    AND channel_name IS NOT NULL AND channel_name != ''
 			  GROUP BY channel_name ORDER BY requests DESC LIMIT 10`,
 			jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
-		mdlRows, _ := d.Store.Query(ctx,
+		mdlRows, _ := d.Store.QueryReadOnly(ctx,
 			`SELECT model_name AS name,
 			        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
 			        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
@@ -213,7 +223,7 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 			    AND model_name IS NOT NULL AND model_name != ''
 			  GROUP BY model_name ORDER BY requests DESC LIMIT 10`,
 			jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
-		cmRows, _ := d.Store.Query(ctx,
+		cmRows, _ := d.Store.QueryReadOnly(ctx,
 			`SELECT channel_name, channel_model_name AS name,
 			        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
 			        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
@@ -233,6 +243,9 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 			Set("channelRank", channelRankList(chRows)).
 			Set("modelRank", modelRankList(mdlRows)).
 			Set("channelModelRank", channelModelRankList(cmRows))
+
+		// 写入缓存
+		d.DashCache.Set(cacheKey, cacheFrom, cacheTo, out)
 
 		httpx.OK(c, out)
 	})
@@ -284,7 +297,7 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 			buckets = []string{dashBucketLabel(dr.since)}
 		}
 
-		rows, _ := d.Store.Query(ctx,
+		rows, _ := d.Store.QueryReadOnly(ctx,
 			`SELECT `+bucketExpr+` AS bucket, phase, model_name, channel_name, channel_model_name,
 			        COUNT(DISTINCT trace_id) AS cnt
 			   FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
@@ -517,7 +530,7 @@ func dashWindowTotals(ctx context.Context, d Deps, since, until time.Time) map[s
 		"avgOutputSpeed":  0.0,
 		"totalTokens":     int64(0),
 	}
-	row, err := d.Store.QueryOne(ctx,
+	row, err := d.Store.QueryOneReadOnly(ctx,
 		`SELECT COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
 		        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
 		        AVG(CASE WHEN first_byte_ms>0 THEN first_byte_ms END) AS avg_ttfb,
@@ -634,16 +647,16 @@ func dashSparklines(ctx context.Context, d Deps, dr dashRange) map[string][]floa
 	// Bucket index is derived from the offset from `since` in whole epoch
 	// seconds, so no timezone conversions or floating-point day arithmetic are
 	// needed and the scan uses the created_at index range.
-	rows, _ := d.Store.Query(ctx,
-		`SELECT CAST((CAST(STRFTIME('%s', created_at) AS INTEGER) - ?) / ? AS INTEGER) AS bucket,
-		        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
-		        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
-		        AVG(CASE WHEN first_byte_ms>0 THEN first_byte_ms END) AS avg_ttfb,
-		        AVG(CASE WHEN phase='success' AND completion_tokens>0 AND response_time_ms>0
-		                 THEN completion_tokens*1000.0/response_time_ms END) AS avg_speed
-		   FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
-		  WHERE created_at >= ? AND created_at < ? AND phase IN ('start','success')
-		  GROUP BY bucket`,
+rows, _ := d.Store.QueryReadOnly(ctx, `
+			SELECT CAST((CAST(STRFTIME('%s', created_at) AS INTEGER) - ?) / ? AS INTEGER) AS bucket,
+			        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
+			        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
+			        AVG(CASE WHEN first_byte_ms>0 THEN first_byte_ms END) AS avg_ttfb,
+			        AVG(CASE WHEN phase='success' AND completion_tokens>0 AND response_time_ms>0
+			                 THEN completion_tokens*1000.0/response_time_ms END) AS avg_speed
+			   FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
+			  WHERE created_at >= ? AND created_at < ? AND phase IN ('start','success')
+			  GROUP BY bucket`,
 		dr.since.Unix(), bucketSecs,
 		jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
 

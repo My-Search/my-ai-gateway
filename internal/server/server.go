@@ -24,14 +24,15 @@ import (
 
 // Deps are the shared dependencies handed to every handler group.
 type Deps struct {
-	Cfg      *config.Config
-	Store    *store.Store
-	Config   *service.ConfigService
-	Sessions *auth.SessionStore
-	Tokens   *auth.TokenProvider
-	Metrics  *metrics.Registry
-	Relay    *relay.RelayCore
-	LogSSE   *logsvc.LogSseService
+	DashCache *dashCache
+	Cfg       *config.Config
+	Store     *store.Store
+	Config    *service.ConfigService
+	Sessions  *auth.SessionStore
+	Tokens    *auth.TokenProvider
+	Metrics   *metrics.Registry
+	Relay     *relay.RelayCore
+	LogSSE    *logsvc.LogSseService
 }
 
 // App holds registered handlers and background services.
