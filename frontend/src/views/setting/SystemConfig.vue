@@ -93,6 +93,7 @@
               <option value="info">{{ t('systemConfig.saveLevelInfo') }}</option>
               <option value="warn">{{ t('systemConfig.saveLevelWarn') }}</option>
               <option value="error">{{ t('systemConfig.saveLevelError') }}</option>
+              <option value="none">{{ t('systemConfig.saveLevelNone') }}</option>
             </select>
           </div>
         </div>

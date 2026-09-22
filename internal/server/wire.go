@@ -305,19 +305,14 @@ func moveAPIKeyToEnd(ctx context.Context, st *store.Store, channelID, apiKeyID i
 // Scheduled tasks (Java schedule package)
 // ---------------------------------------------------------------------------
 
-// StartBackgroundTasks launches the three Java @Scheduled equivalents, the
-// circuit recovery worker and the log stats aggregator. The returned stop
-// function shuts them down.
-func StartBackgroundTasks(core *relay.RelayCore, st *store.Store, cfgSvc *service.ConfigService, bundle *CircuitBundle, dashCache *dashCache) func() {
+// StartBackgroundTasks launches the three Java @Scheduled equivalents and the
+// circuit recovery worker. The returned stop function shuts them down.
+func StartBackgroundTasks(core *relay.RelayCore, st *store.Store, cfgSvc *service.ConfigService, bundle *CircuitBundle) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
 	// CircuitBreakerRecoveryTask worker: consumes probe signals.
 	bundle.Recovery.Start()
-
-	// LogStatsAggregator: 每小时聚合 request_logs 到 log_stats_hourly 预聚合表
-	aggregator := newLogStatsAggregator(st, dashCache)
-	aggregator.Start(ctx)
 
 	// ChannelModelRefreshTask: 60s tick, interval from system config, immediate
 	// first run (Java lastFullRefreshAt starts null).

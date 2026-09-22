@@ -46,6 +46,10 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		}
 		since := jtime.ShanghaiStart(refDate)
 
+		// 仅当显式 withTrends=true/1 时才计算趋势（144 桶 GROUP BY 聚合）；
+		// 默认关闭，让入口模型页首屏只拉统计信息，避免拖慢打开速度。
+		withTrends := c.Query("withTrends") == "true" || c.Query("withTrends") == "1"
+
 		// Get all model names
 		rows, _ := d.Store.Query(ctx, "SELECT model_name FROM models ORDER BY model_name ASC")
 		modelNames := make([]string, 0, len(rows))
@@ -53,32 +57,65 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 			modelNames = append(modelNames, r.Str("model_name"))
 		}
 
-		// Stats per model
+		// Per-model stats, computed with a handful of GROUP BY scans instead of
+		// one correlated query fan-out per model (N models → N×4 queries before).
+		// Keep the same start-anchored semantics: requests counts distinct start
+		// traces, success counts those traces that also carry a success row.
 		type modelStat struct {
-			ModelName      string  `json:"modelName"`
-			Requests       int64   `json:"requests"`
-			SuccessRate    float64 `json:"successRate"`
-			AvgResponseTime int64  `json:"avgResponseTime"`
-			AvgOutputSpeed float64 `json:"avgOutputSpeed"`
+			ModelName       string  `json:"modelName"`
+			Requests        int64   `json:"requests"`
+			SuccessRate     float64 `json:"successRate"`
+			AvgResponseTime int64   `json:"avgResponseTime"`
+			AvgOutputSpeed  float64 `json:"avgOutputSpeed"`
 		}
+
+		// 1) requests: distinct start traces per model
+		reqCount := make(map[string]int64)
+		reqRows, _ := d.Store.Query(ctx,
+			`SELECT model_name, COUNT(DISTINCT trace_id) as cnt
+			 FROM request_logs WHERE phase='start' AND created_at>=? AND model_name IS NOT NULL AND model_name!=''
+			 GROUP BY model_name`,
+			jtime.FormatDefault(since))
+		for _, r := range reqRows {
+			reqCount[r.Str("model_name")] = r.I64("cnt", 0)
+		}
+
+		// 2) success: distinct start traces that also have a success row in window
+		succCount := make(map[string]int64)
+		succRows, _ := d.Store.Query(ctx,
+			`SELECT s.model_name, COUNT(DISTINCT s.trace_id) as cnt
+			 FROM (SELECT DISTINCT trace_id, model_name FROM request_logs
+			         WHERE phase='start' AND created_at>=? AND model_name IS NOT NULL AND model_name!='') s
+			 JOIN (SELECT DISTINCT trace_id FROM request_logs WHERE phase='success' AND created_at>=?) su
+			   ON s.trace_id = su.trace_id
+			 GROUP BY s.model_name`,
+			jtime.FormatDefault(since), jtime.FormatDefault(since))
+		for _, r := range succRows {
+			succCount[r.Str("model_name")] = r.I64("cnt", 0)
+		}
+
+		// 3) avg response time + avg output speed per model in a single scan
+		type modelAgg struct {
+			avgRt  *float64
+			avgSpd *float64
+		}
+		agg := make(map[string]modelAgg)
+		aggRows, _ := d.Store.Query(ctx,
+			`SELECT model_name,
+			        AVG(CASE WHEN first_byte_ms>0 THEN first_byte_ms END) as avg_rt,
+			        AVG(CASE WHEN phase='success' AND completion_tokens>0 AND response_time_ms>0
+			                 THEN completion_tokens*1000.0/response_time_ms END) as avg_spd
+			 FROM request_logs WHERE created_at>=? AND model_name IS NOT NULL AND model_name!=''
+			 GROUP BY model_name`,
+			jtime.FormatDefault(since))
+		for _, r := range aggRows {
+			agg[r.Str("model_name")] = modelAgg{avgRt: r.F64Ptr("avg_rt"), avgSpd: r.F64Ptr("avg_spd")}
+		}
+
 		stats := make([]modelStat, 0, len(modelNames))
 		for _, mn := range modelNames {
-			// start-anchored pairing (Java selectTodayModelStats): requests counts
-			// distinct start traces, success counts those traces that also have a
-			// success row inside the window. This keeps success <= requests.
-			startRow, _ := d.Store.QueryOne(ctx,
-				`SELECT COUNT(DISTINCT r.trace_id) as cnt FROM request_logs r WHERE r.model_name=? AND r.phase='start' AND r.created_at>=?`,
-				mn, jtime.FormatDefault(since))
-			reqs := startRow.I64("cnt", 0)
-			succRow, _ := d.Store.QueryOne(ctx,
-				`SELECT COUNT(*) as cnt FROM (
-				   SELECT DISTINCT r.trace_id FROM request_logs r
-				    WHERE r.model_name=? AND r.phase='start' AND r.created_at>=?
-				  ) s WHERE EXISTS (
-				   SELECT 1 FROM request_logs r2 WHERE r2.trace_id = s.trace_id
-				     AND r2.phase='success' AND r2.created_at>=?)`,
-				mn, jtime.FormatDefault(since), jtime.FormatDefault(since))
-			succ := succRow.I64("cnt", 0)
+			reqs := reqCount[mn]
+			succ := succCount[mn]
 			sr := 0.0
 			if reqs > 0 {
 				// Java clamps with Math.min(100.0, ...) as a defensive measure.
@@ -88,19 +125,15 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 				}
 				sr = float64(int64(rate*10+0.5)) / 10.0
 			}
-			art, _ := d.Store.QueryOne(ctx,
-				`SELECT AVG(CASE WHEN first_byte_ms>0 THEN first_byte_ms ELSE NULL END) as avg_rt FROM request_logs WHERE model_name=? AND created_at>=?`,
-				mn, jtime.FormatDefault(since))
 			artVal := int64(0)
-			if v := art.F64Ptr("avg_rt"); v != nil {
-				artVal = int64(*v + 0.5)
-			}
-			spdRow, _ := d.Store.QueryOne(ctx,
-				`SELECT AVG(completion_tokens*1000.0/response_time_ms) as avg_spd FROM request_logs WHERE model_name=? AND phase='success' AND completion_tokens>0 AND response_time_ms>0 AND created_at>=?`,
-				mn, jtime.FormatDefault(since))
 			spd := 0.0
-			if v := spdRow.F64Ptr("avg_spd"); v != nil {
-				spd = float64(int64(*v*10+0.5)) / 10.0
+			if a, ok := agg[mn]; ok {
+				if v := a.avgRt; v != nil {
+					artVal = int64(*v + 0.5)
+				}
+				if v := a.avgSpd; v != nil {
+					spd = float64(int64(*v*10+0.5)) / 10.0
+				}
 			}
 			stats = append(stats, modelStat{
 				ModelName:       mn,
@@ -111,38 +144,41 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 			})
 		}
 
-		// Trends (144 buckets)
-		buckets := make([]string, 144)
-		for i := 0; i < 144; i++ {
-			h := i / 6
-			m := (i % 6) * 10
-			buckets[i] = fmt.Sprintf("%02d:%02d", h, m)
-		}
+		// Trends (144 buckets) — opt-in only
+		buckets := make([]string, 0)
 		trends := make(map[string][]int64)
-		for _, mn := range modelNames {
-			trends[mn] = make([]int64, 144)
-		}
-		trendRaw, _ := d.Store.Query(ctx,
-			`SELECT model_name,
-			         printf('%02d:%02d',
-			           CAST(STRFTIME('%H', DATETIME(created_at, '+8 hours')) AS INTEGER),
-			           (CAST(STRFTIME('%M', DATETIME(created_at, '+8 hours')) AS INTEGER) / 10) * 10) bucket,
-			         COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) as cnt
-			  FROM request_logs WHERE created_at>=? AND model_name IS NOT NULL AND model_name!=''
-			  GROUP BY model_name, bucket`,
-			jtime.FormatDefault(since))
-		bucketIdx := make(map[string]int)
-		for i, b := range buckets {
-			bucketIdx[b] = i
-		}
-		for _, r := range trendRaw {
-			mn := r.Str("model_name")
-			bi, ok := bucketIdx[r.Str("bucket")]
-			if !ok {
-				continue
+		if withTrends {
+			buckets = make([]string, 144)
+			for i := 0; i < 144; i++ {
+				h := i / 6
+				m := (i % 6) * 10
+				buckets[i] = fmt.Sprintf("%02d:%02d", h, m)
 			}
-			if _, exists := trends[mn]; exists {
-				trends[mn][bi] = r.I64("cnt", 0)
+			for _, mn := range modelNames {
+				trends[mn] = make([]int64, 144)
+			}
+			trendRaw, _ := d.Store.Query(ctx,
+				`SELECT model_name,
+				         printf('%02d:%02d',
+				           CAST(STRFTIME('%H', DATETIME(created_at, '+8 hours')) AS INTEGER),
+				           (CAST(STRFTIME('%M', DATETIME(created_at, '+8 hours')) AS INTEGER) / 10) * 10) bucket,
+				         COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) as cnt
+				  FROM request_logs WHERE created_at>=? AND model_name IS NOT NULL AND model_name!=''
+				  GROUP BY model_name, bucket`,
+				jtime.FormatDefault(since))
+			bucketIdx := make(map[string]int)
+			for i, b := range buckets {
+				bucketIdx[b] = i
+			}
+			for _, r := range trendRaw {
+				mn := r.Str("model_name")
+				bi, ok := bucketIdx[r.Str("bucket")]
+				if !ok {
+					continue
+				}
+				if _, exists := trends[mn]; exists {
+					trends[mn][bi] = r.I64("cnt", 0)
+				}
 			}
 		}
 

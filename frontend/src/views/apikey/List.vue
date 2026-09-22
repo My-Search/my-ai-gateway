@@ -23,18 +23,8 @@
             <th>{{ t('apikey.list.status') }}</th>
             <th>{{ t('apikey.list.share') }}</th>
             <th>{{ t('apikey.list.lastUsed') }}</th>
-            <th style="min-width:160px;">
-              <div style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
-                <span>{{ t('apikey.list.today') }}</span>
-                <span style="font-weight:400;font-size:11px;cursor:pointer;user-select:none;" @click.stop="showToken = !showToken">
-                  [ <span :style="{color: showToken ? 'var(--accent-blue)' : 'var(--text-muted)'}">{{ t('apikey.list.showTokens') }}</span>
-                  /
-                  <span :style="{color: showToken ? 'var(--text-muted)' : 'var(--accent-blue)'}">{{ t('apikey.list.showRequests') }}</span> ]
-                </span>
-              </div>
-            </th>
-            <th>{{ t('apikey.list.week') }}</th>
-            <th>{{ t('apikey.list.month') }}</th>
+            <th>{{ t('apikey.list.requests') }}</th>
+            <th>{{ t('apikey.list.tokenUsage') }}</th>
             <th>{{ t('apikey.list.createdAt') }}</th>
             <th>{{ t('apikey.list.actions') }}</th>
           </tr>
@@ -57,32 +47,53 @@
               </span>
             </td>
             <td>
-              <span v-if="key.shared === 1" class="share-badge on">{{ t('apikey.list.shared') }}</span>
-              <span v-else class="share-badge off">{{ t('apikey.list.notShared') }}</span>
+              <div style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                <ToggleSwitch
+                  :model-value="key.shared === 1"
+                  size="sm"
+                  :show-label="false"
+                  :title="key.shared === 1 ? t('apikey.list.clickToUnshare') : t('apikey.list.clickToShare')"
+                  :disabled="shareToggling === key.id"
+                  @update:model-value="toggleShare(key)"
+                />
+                <button
+                  v-if="key.shared === 1"
+                  class="btn-icon-link"
+                  :title="t('apikey.list.copyShareLink')"
+                  @click="shareKey(key)"
+                >
+                  <SvgIcon name="link" :size="14" />
+                </button>
+              </div>
             </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ key.lastUsedAt ? formatLocalDateTimeFull(key.lastUsedAt) : t('apikey.list.neverUsed') }}</td>
-            <td style="font-size:12px;font-variant-numeric:tabular-nums;">
-              {{ formatUsageValue(getPeriodStats(key.id, 'day')) }}
+            <td style="text-align:right;font-variant-numeric:tabular-nums;">
+              <span style="font-weight:600;">{{ formatNumber(key.requestCount ?? 0) }}</span>
             </td>
             <td style="font-size:12px;font-variant-numeric:tabular-nums;">
-              {{ formatUsageValue(getPeriodStats(key.id, 'week')) }}
-            </td>
-            <td style="font-size:12px;font-variant-numeric:tabular-nums;">
-              {{ formatUsageValue(getPeriodStats(key.id, 'month')) }}
+              <template v-if="key.totalTokens && key.totalTokens > 0">
+                <div style="display:flex;flex-direction:column;gap:2px;">
+                  <span :title="t('apikey.list.inputTokens') + ': ' + formatNumber(key.promptTokens ?? 0) + ' | ' + t('apikey.list.outputTokens') + ': ' + formatNumber(key.completionTokens ?? 0)">
+                    {{ formatTokens(key.totalTokens) }}
+                  </span>
+                  <span style="color:var(--text-muted);font-size:11px;">
+                    {{ t('apikey.list.inputTokens') }} {{ formatTokens(key.promptTokens ?? 0) }} / {{ t('apikey.list.outputTokens') }} {{ formatTokens(key.completionTokens ?? 0) }}
+                  </span>
+                </div>
+              </template>
+              <span v-else style="color:var(--text-muted);">-</span>
             </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(key.createdAt) }}</td>
             <td>
-              <div style="display:flex;gap:6px;align-items:center;">
-                <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)" :title="t('apikey.list.shareLink')"><SvgIcon name="link" :size="14" /> {{ t('apikey.list.shareLink') }}</button>
-                <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)" :title="t('apikey.list.shareLink')"><SvgIcon name="link" :size="14" /> {{ t('apikey.list.shareLink') }}</button>
-                <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)"><SvgIcon name="x-bold" :size="14" /> {{ t('apikey.list.revoke') }}</button>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <router-link :to="`/admin/apikey/usage/${key.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="list" :size="14" /> {{ t('apikey.list.view') }}</router-link>
                 <button class="btn btn-sm btn-secondary" @click="openForm(key)"><SvgIcon name="edit" :size="14" /> {{ t('apikey.list.edit') }}</button>
                 <button class="btn btn-sm btn-danger" @click="confirmDelete(key)"><SvgIcon name="trash" :size="14" /> {{ t('apikey.list.delete') }}</button>
               </div>
             </td>
           </tr>
           <tr v-if="!apiKeys.length">
-            <td colspan="10" style="text-align:center;color:var(--text-muted);padding:40px;">
+            <td colspan="9" style="text-align:center;color:var(--text-muted);padding:40px;">
               {{ t('apikey.list.empty') }}
             </td>
           </tr>
@@ -113,26 +124,41 @@
           <span class="mobile-card-value">{{ key.lastUsedAt ? formatLocalDateTimeFull(key.lastUsedAt) : t('apikey.list.neverUsed') }}</span>
         </div>
         <div class="mobile-card-row">
-          <span class="mobile-card-label">{{ t('apikey.list.today') }}</span>
-          <span class="mobile-card-value">{{ formatUsageValue(getPeriodStats(key.id, 'day')) }}</span>
+          <span class="mobile-card-label">{{ t('apikey.list.requests') }}</span>
+          <span class="mobile-card-value">{{ formatNumber(key.requestCount ?? 0) }}</span>
         </div>
         <div class="mobile-card-row">
-          <span class="mobile-card-label">{{ t('apikey.list.week') }}</span>
-          <span class="mobile-card-value">{{ formatUsageValue(getPeriodStats(key.id, 'week')) }}</span>
-        </div>
-        <div class="mobile-card-row">
-          <span class="mobile-card-label">{{ t('apikey.list.month') }}</span>
-          <span class="mobile-card-value">{{ formatUsageValue(getPeriodStats(key.id, 'month')) }}</span>
+          <span class="mobile-card-label">{{ t('apikey.list.tokenUsage') }}</span>
+          <span class="mobile-card-value">{{ key.totalTokens && key.totalTokens > 0 ? formatTokens(key.totalTokens) : '-' }}</span>
         </div>
         <div class="mobile-card-row">
           <span class="mobile-card-label">{{ t('apikey.list.createdAt') }}</span>
           <span class="mobile-card-value">{{ formatLocalDateTimeFull(key.createdAt) }}</span>
         </div>
+        <div class="mobile-card-row">
+          <span class="mobile-card-label">{{ t('apikey.list.share') }}</span>
+          <span class="mobile-card-value" style="display:flex;align-items:center;gap:8px;">
+            <ToggleSwitch
+              :model-value="key.shared === 1"
+              size="sm"
+              :show-label="false"
+              :title="key.shared === 1 ? t('apikey.list.clickToUnshare') : t('apikey.list.clickToShare')"
+              :disabled="shareToggling === key.id"
+              @update:model-value="toggleShare(key)"
+            />
+            <button
+              v-if="key.shared === 1"
+              class="btn-icon-link"
+              :title="t('apikey.list.copyShareLink')"
+              @click="shareKey(key)"
+            >
+              <SvgIcon name="link" :size="14" />
+            </button>
+          </span>
+        </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
-          <button v-if="key.shared === 1" class="btn btn-sm btn-secondary" @click="shareKey(key)"><SvgIcon name="link" :size="14" /> {{ t('apikey.list.shareLink') }}</button>
-          <button v-else class="btn btn-sm btn-secondary" @click="enableShare(key)"><SvgIcon name="link" :size="14" /> {{ t('apikey.list.shareLink') }}</button>
-          <button v-if="key.shared === 1" class="btn btn-sm btn-warning" @click="confirmRevoke(key)"><SvgIcon name="x-bold" :size="14" /> {{ t('apikey.list.revoke') }}</button>
+          <router-link :to="`/admin/apikey/usage/${key.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="list" :size="14" /> {{ t('apikey.list.view') }}</router-link>
           <button class="btn btn-sm btn-secondary" @click="openForm(key)"><SvgIcon name="edit" :size="14" /> {{ t('apikey.list.edit') }}</button>
           <button class="btn btn-sm btn-danger" @click="confirmDelete(key)"><SvgIcon name="trash" :size="14" /> {{ t('apikey.list.delete') }}</button>
         </div>
@@ -190,11 +216,12 @@
 <script setup lang="ts">
 import { ref, onMounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
-import { apikeyApi, type ApiKey, type ApiKeyUsageStats, type ApiKeyPeriodStats } from '@/api/apikey'
+import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { shareApi } from '@/api/share'
 import Dialog from '@/components/common/Dialog.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
@@ -208,25 +235,9 @@ const { showToast } = useToast()
 const router = useRouter()
 
 const apiKeys = ref<ApiKey[]>([])
-const usageStats = ref<Record<number, ApiKeyUsageStats>>({})
 const loading = ref(true)
-const showToken = ref(true) // true=显示Token, false=显示请求次数
-
-/** 获取某 API Key 的指定周期统计 */
-function getPeriodStats(id: number | undefined, period: 'day' | 'week' | 'month'): ApiKeyPeriodStats | undefined {
-  if (id == null) return undefined
-  return usageStats.value[id]?.[period]
-}
-
-/** 格式化用量值：根据 showToken 显示 Token 或次数 */
-function formatUsageValue(stats: ApiKeyPeriodStats | undefined): string {
-  if (!stats) return '-'
-  if (showToken.value) {
-    return formatTokens(stats.totalTokens)
-  } else {
-    return formatNumber(stats.requestCount)
-  }
-}
+/** 正在切换分享状态的密钥 id（用于禁用开关防重复点击） */
+const shareToggling = ref<number | null>(null)
 
 /* ---------- Form Dialog state ---------- */
 const formDialogVisible = ref(false)
@@ -316,39 +327,47 @@ function shareKey(key: ApiKey) {
 }
 
 /**
+ * 切换分享开关：开启时自动复制分享链接；关闭需二次确认（会使分享链接失效）
+ */
+function toggleShare(key: ApiKey) {
+  if (!key.id) return
+  if (key.shared === 1) {
+    open({
+      title: t('apikey.list.revokeConfirm'),
+      message: t('apikey.list.revokeMsg', { name: key.keyName }),
+      type: 'confirm',
+      confirmClass: 'btn-warning',
+      confirmText: t('apikey.list.confirmRevoke'),
+      onConfirm: () => revokeShare(key)
+    })
+  } else {
+    enableShare(key)
+  }
+}
+
+/**
  * Enable sharing first, then copy the link
  */
 async function enableShare(key: ApiKey) {
   if (!key.id) return
+  shareToggling.value = key.id
   try {
     const res = await shareApi.toggleShare(key.id, true)
     if (!res.data.success) {
-      open({ title: t('error.unknown'), message: res.data.error || t('apikey.list.enableShareFailed') })
+      open({ title: t('error.unknown'), message: (res.data as any).error || t('apikey.list.enableShareFailed') })
       return
     }
     // Update local data with shareCode from backend
     key.shared = 1
-    key.shareCode = res.data.shareCode || key.shareCode
+    key.shareCode = (res.data as any).shareCode || key.shareCode
     shareKey(key)
     // Refresh list to update status
     loadKeys()
   } catch (e: any) {
     open({ title: t('error.unknown'), message: e.message })
+  } finally {
+    shareToggling.value = null
   }
-}
-
-/**
- * Confirm revoke share
- */
-function confirmRevoke(key: ApiKey) {
-  open({
-    title: t('apikey.list.revokeConfirm'),
-    message: t('apikey.list.revokeMsg', { name: key.keyName }),
-    type: 'confirm',
-    confirmClass: 'btn-warning',
-    confirmText: t('apikey.list.confirmRevoke'),
-    onConfirm: () => revokeShare(key)
-  })
 }
 
 /**
@@ -356,10 +375,11 @@ function confirmRevoke(key: ApiKey) {
  */
 async function revokeShare(key: ApiKey) {
   if (!key.id) return
+  shareToggling.value = key.id
   try {
     const res = await shareApi.toggleShare(key.id, false)
     if (!res.data.success) {
-      open({ title: t('error.unknown'), message: res.data.error || t('apikey.list.revokeFailed') })
+      open({ title: t('error.unknown'), message: (res.data as any).error || t('apikey.list.revokeFailed') })
       return
     }
     key.shared = 0
@@ -367,6 +387,8 @@ async function revokeShare(key: ApiKey) {
     loadKeys()
   } catch (e: any) {
     open({ title: t('error.unknown'), message: e.message })
+  } finally {
+    shareToggling.value = null
   }
 }
 
@@ -387,12 +409,8 @@ function confirmDelete(key: ApiKey) {
 async function loadKeys() {
   loading.value = true
   try {
-    const [keysRes, statsRes] = await Promise.all([
-      apikeyApi.list(),
-      apikeyApi.usageStats()
-    ])
-    apiKeys.value = keysRes.data
-    usageStats.value = statsRes.data
+    const res = await apikeyApi.list()
+    apiKeys.value = res.data
   } catch (e: any) {
     open({ title: t('error.loadFailed'), message: e.message })
   } finally {
@@ -441,12 +459,24 @@ onActivated(() => {
 }
 .usage-toggle .active { color: var(--accent-blue); }
 .usage-toggle .inactive { color: var(--text-muted); }
-.share-badge {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 11px; padding: 2px 8px; border-radius: 4px;
+
+/* 分享列：链接图标按钮（复制分享链接） */
+.btn-icon-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--accent-blue);
+  cursor: pointer;
+  transition: all 0.15s;
 }
-.share-badge.on { background: color-mix(in srgb, var(--accent-green) 15%, transparent); color: var(--accent-green); }
-.share-badge.off { background: color-mix(in srgb, var(--accent-yellow) 15%, transparent); color: var(--accent-yellow); }
+.btn-icon-link:hover {
+  background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  border-color: var(--accent-blue);
+}
 
 /* Mobile card list */
 .mobile-card-list {

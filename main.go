@@ -79,7 +79,7 @@ func main() {
 
 	// --- Circuit breaker + background tasks (Java services + schedule package) ---
 	circuitBreaker := server.WireRelayRuntime(relayCore, st, cfgSvc, metricsRegistry)
-	stopTasks := server.StartBackgroundTasks(relayCore, st, cfgSvc, circuitBreaker, dashCache)
+	stopTasks := server.StartBackgroundTasks(relayCore, st, cfgSvc, circuitBreaker)
 
 	// Background maintenance: expire idle sessions.
 	go func() {

@@ -9,11 +9,18 @@ export interface ApiKey {
   shared?: number
   lastUsedAt?: string
   createdAt?: string
+  /** 全量统计（列表接口内嵌，与渠道列表一致） */
+  requestCount?: number
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
 }
 
 /** API Key 单周期用量统计 */
 export interface ApiKeyPeriodStats {
   requestCount: number
+  promptTokens?: number
+  completionTokens?: number
   totalTokens: number
 }
 
@@ -22,6 +29,24 @@ export interface ApiKeyUsageStats {
   day?: ApiKeyPeriodStats
   week?: ApiKeyPeriodStats
   month?: ApiKeyPeriodStats
+}
+
+/** API Key 详情页：单模型用量统计 */
+export interface ApiKeyModelUsageStat extends ApiKeyPeriodStats {
+  modelName: string
+  avgResponseTimeRecent30?: number
+  avgOutputSpeedRecent30?: number
+  today?: ApiKeyPeriodStats
+  week?: ApiKeyPeriodStats
+  month?: ApiKeyPeriodStats
+}
+
+/** API Key 详情页返回结构 */
+export interface ApiKeyUsageStatsDetail {
+  key: { id: number; keyName: string }
+  modelStats: ApiKeyModelUsageStat[]
+  keyAvgResponseTimeRecent30?: number
+  keyAvgOutputSpeedRecent30?: number
 }
 
 export const apikeyApi = {
@@ -43,5 +68,9 @@ export const apikeyApi = {
   /** 获取所有 API Key 的日/周/月用量统计 */
   usageStats() {
     return http.get<Record<number, ApiKeyUsageStats>>('/api-keys/usage-stats')
+  },
+  /** 获取单个 API Key 的详细用量统计（按模型细分） */
+  usageStatsDetail(id: number) {
+    return http.get<ApiKeyUsageStatsDetail>(`/api-keys/${id}/usage-stats`)
   }
 }

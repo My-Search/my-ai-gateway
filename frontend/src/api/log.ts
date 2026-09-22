@@ -96,17 +96,18 @@ export const logApi = {
  * - days: 当月所有日期（yyyy-MM-dd），固定长度（28/29/30/31），便于前端稳定渲染 X 轴
  * - models: 当月出现过的模型（入口模型或渠道模型，随 modelType），按总 token 用量降序
  *   （前端按顺序分配固定色板，保证 TopN 模型颜色稳定）
- * - values: model -> 长度为 days.length 的数组，柱高口径，两种 modelType 下均为该日 token 用量
- * - tokenValues / requestValues: 同形状的并列维度，供 tooltip 同时展示 tokens 与次数
+ * - tokenValues: model -> 长度为 days.length 的数组，柱高口径，两种 modelType 下均为该日 token 用量
+ * - requestValues: 同形状的并列维度，供 tooltip 同时展示 tokens 与次数
  * - maxValue: 当月「每日堆叠总量」的最大值（即最高柱的值），前端以它为 Y 轴顶端，使最高柱恰好占满图表高度
  * - totalValue: 当月所有单元格总和
+ *
+ * 注：历史上还有一个与 tokenValues 完全相同的 `values` 字段，因纯属重复已从接口移除。
  */
 export interface LogUsageChart {
   year: number
   month: number
   days: string[]
   models: string[]
-  values: Record<string, number[]>
   tokenValues: Record<string, number[]>
   requestValues: Record<string, number[]>
   maxValue: number

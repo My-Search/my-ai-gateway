@@ -2,6 +2,8 @@ package logsvc
 
 import (
 	"context"
+	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/my-search/my-ai-gateway/internal/jtime"
@@ -24,6 +26,7 @@ const (
 	saveLevelInfo  requestDataSaveLevel = iota // always persist
 	saveLevelWarn                              // persist only on retry or final failure
 	saveLevelError                             // persist only on final failure
+	saveLevelNone                              // never persist
 )
 
 // LogWriter writes request_log rows and broadcasts them via LogSseService.
@@ -31,7 +34,11 @@ type LogWriter struct {
 	store      *store.Store
 	sseService *LogSseService
 	configSvc  ConfigReader // optional — may be nil (defaults to "info")
-	pending    map[string]*PendingRequestData
+
+	// mu guards pending. The LogWriter is a single instance shared by every
+	// concurrent request goroutine, so the map must never be touched unlocked.
+	mu      sync.Mutex
+	pending map[string]*PendingRequestData
 }
 
 // ConfigReader is the minimal interface LogWriter needs from ConfigService.
@@ -58,7 +65,9 @@ func NewLogWriter(st *store.Store, sse *LogSseService, cfg ConfigReader) *LogWri
 // api_key_name is left NULL (the gateway key id is stored instead), matching
 // Java's logStartWithReasoningEffort(traceId, null, gatewayApiKeyId, ...).
 func (w *LogWriter) WriteStart(ctx context.Context, traceID, modelName string, gwKeyID int64, headers, body, reasoningEffort string) {
+	w.mu.Lock()
 	w.pending[traceID] = &PendingRequestData{Headers: headers, Body: body}
+	w.mu.Unlock()
 
 	var gwID *int64
 	if gwKeyID > 0 {
@@ -192,6 +201,10 @@ func (w *LogWriter) WriteFail(ctx context.Context, traceID, modelName string, gw
 
 // insertAndPublish writes a log row to the DB and broadcasts via SSE.
 func (w *LogWriter) insertAndPublish(ctx context.Context, log *models.RequestLog) {
+	// Detach from the request context: a client disconnect cancels it, and the
+	// terminal log row must still be written rather than silently dropped.
+	ctx = context.WithoutCancel(ctx)
+
 	// Use the same format as logSimple for consistent SQLite query comparisons.
 	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000000")
 	var gwID any
@@ -234,6 +247,7 @@ func (w *LogWriter) insertAndPublish(ctx context.Context, log *models.RequestLog
 		models.DerefStr(log.ReasoningEffort, ""), now)
 
 	if err != nil {
+		slog.Warn("写入请求日志失败", "traceId", log.TraceID, "phase", log.Phase, "error", err)
 		return
 	}
 
@@ -252,19 +266,28 @@ func (w *LogWriter) markRetryIfNeeded(traceID, phase string) {
 	if phase != "retry" {
 		return
 	}
+	w.mu.Lock()
 	if data, ok := w.pending[traceID]; ok {
 		data.HasRetry = true
 	}
+	w.mu.Unlock()
 }
 
 // flushPendingRequestData persists raw request headers/body to the start record
 // based on the configured save level, mirroring Java's saveRequestDataIfNeeded.
 func (w *LogWriter) flushPendingRequestData(ctx context.Context, traceID, finalPhase string) {
+	// Detach from the request context so a client disconnect (which cancels ctx
+	// and is common for streams) cannot make the persist silently vanish.
+	ctx = context.WithoutCancel(ctx)
+
+	w.mu.Lock()
 	pending, ok := w.pending[traceID]
 	if !ok {
+		w.mu.Unlock()
 		return
 	}
 	delete(w.pending, traceID)
+	w.mu.Unlock()
 
 	level := saveLevelInfo
 	if w.configSvc != nil {
@@ -274,6 +297,8 @@ func (w *LogWriter) flushPendingRequestData(ctx context.Context, traceID, finalP
 	failed := finalPhase == "fail"
 	shouldKeep := false
 	switch level {
+	case saveLevelNone:
+		shouldKeep = false
 	case saveLevelError:
 		shouldKeep = failed
 	case saveLevelWarn:
@@ -310,11 +335,15 @@ func (w *LogWriter) flushPendingRequestData(ctx context.Context, traceID, finalP
 		q += s
 	}
 	q += " WHERE trace_id = ? AND phase = 'start'"
-	_, _ = w.store.Exec(ctx, q, args...)
+	if _, err := w.store.Exec(ctx, q, args...); err != nil {
+		slog.Warn("保存原始请求数据失败", "traceId", traceID, "saveLevel", level, "error", err)
+	}
 }
 
 func parseSaveLevel(v string) requestDataSaveLevel {
 	switch v {
+	case "none":
+		return saveLevelNone
 	case "error":
 		return saveLevelError
 	case "warn":

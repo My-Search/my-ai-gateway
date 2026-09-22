@@ -70,8 +70,8 @@ func registerConfigRoutes(g *gin.RouterGroup, d Deps) {
 					}
 				}
 			case "request_data_save_level":
-				if v != "info" && v != "warn" && v != "error" {
-					httpx.OK(c, failureEnvelope("原始请求数据保存级别无效，必须为 info / warn / error"))
+				if v != "info" && v != "warn" && v != "error" && v != "none" {
+					httpx.OK(c, failureEnvelope("原始请求数据保存级别无效，必须为 info / warn / error / none"))
 					return
 				}
 			case "timeout_min_seconds":

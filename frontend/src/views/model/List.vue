@@ -128,14 +128,6 @@
             </div>
           </div>
 
-          <!-- Sparkline -->
-          <div class="card-sparkline" v-if="card.trend && card.trend.length >= 2">
-            <svg :viewBox="'0 0 100 24'" class="sparkline-svg" preserveAspectRatio="none">
-              <path :d="sparklinePaths(card.trend, 100, 24).area" fill="var(--sparkline-area)" stroke="none" />
-              <path :d="sparklinePaths(card.trend, 100, 24).line" fill="none" stroke="var(--sparkline-line)" stroke-width="0.8" vector-effect="non-scaling-stroke" />
-            </svg>
-          </div>
-
           <!-- Card Actions -->
           <div class="card-actions">
             <router-link
@@ -200,7 +192,6 @@ import { ref, computed, onMounted, onUnmounted, onActivated } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel, type ModelStatsItem } from '@/api/model'
-import { sparklinePaths } from '@/utils/sparkline'
 import { formatSeconds } from '@/utils/format'
 import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
@@ -212,7 +203,6 @@ import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 interface ModelCardData {
   model: CustomModel
   stats?: ModelStatsItem
-  trend: number[]
 }
 
 /* ══════════════════════════════════════
@@ -369,7 +359,6 @@ async function loadData() {
     ])
     const models = modelsRes.data
     const statsList = statsRes.data.stats ?? []
-    const trends = statsRes.data.trends ?? {}
 
     // Build stats lookup by modelName
     const statsByModel = new Map<string, ModelStatsItem>()
@@ -379,8 +368,7 @@ async function loadData() {
 
     cards.value = models.map(m => ({
       model: m,
-      stats: statsByModel.get(m.modelName),
-      trend: trends[m.modelName] ?? []
+      stats: statsByModel.get(m.modelName)
     }))
   } catch (e: any) {
     open({ title: t('error.loadFailed'), message: e.message })
@@ -749,24 +737,6 @@ onUnmounted(() => {
 .rate-ok { color: var(--accent-yellow); }
 .rate-poor { color: var(--accent-red); }
 
-/* ── Sparkline ── */
-.card-sparkline {
-  height: 32px;
-  margin: 0 -4px;
-}
-
-.sparkline-svg {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-
-/* — Sparkline color tokens — */
-.model-mgr {
-  --sparkline-line: rgba(88, 166, 255, 0.55);
-  --sparkline-area: rgba(88, 166, 255, 0.06);
-}
-
 /* ── Card Actions ── */
 .card-actions {
   display: flex;
@@ -860,20 +830,19 @@ onUnmounted(() => {
 
 .mgr-list .model-card {
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
-  grid-template-rows: auto auto;
-  gap: 8px 16px;
+  grid-template-columns: auto 1fr auto;
+  gap: 0 16px;
   padding: 12px 16px;
 }
 
 .mgr-list .card-top {
   grid-column: 1 / 2;
-  grid-row: 1 / 3;
+  grid-row: 1;
 }
 
 .mgr-list .card-stats {
   grid-column: 2 / 3;
-  grid-row: 1 / 2;
+  grid-row: 1;
   border: none;
   padding: 0;
   gap: 12px;
@@ -890,15 +859,7 @@ onUnmounted(() => {
 
 .mgr-list .card-actions {
   grid-column: 3 / 4;
-  grid-row: 1 / 3;
-}
-
-.mgr-list .card-sparkline {
-  grid-column: 2 / 3;
-  grid-row: 2 / 3;
-  margin: 0;
-  height: 28px;
-  max-width: 200px;
+  grid-row: 1;
 }
 
 /* ══════════════════════════════════════
@@ -943,7 +904,7 @@ onUnmounted(() => {
   /* List view not suitable on mobile, stick to cards */
   .mgr-list .model-card {
     grid-template-columns: auto 1fr auto;
-    grid-template-rows: auto auto auto;
+    grid-template-rows: auto auto;
   }
 
   .mgr-list .card-top {
@@ -962,12 +923,6 @@ onUnmounted(() => {
   .mgr-list .card-actions {
     grid-column: 3 / 4;
     grid-row: 1 / 2;
-  }
-
-  .mgr-list .card-sparkline {
-    grid-column: 1 / 4;
-    grid-row: 3 / 4;
-    max-width: none;
   }
 }
 

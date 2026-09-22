@@ -233,6 +233,7 @@ import { ref, computed, onMounted, onUnmounted, reactive, watch } from 'vue'
 import { logApi, subscribeLogStream, type LogTrace, type RequestLog, type LogSseSubscription, type LogUsageChart } from '@/api/log'
 import { modelApi, type CustomModel } from '@/api/model'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
+import { systemApi } from '@/api/system'
 import Dialog from '@/components/common/Dialog.vue'
 import JsonTreeViewer from '@/components/common/JsonTreeViewer.vue'
 import TabSwitch from '@/components/common/TabSwitch.vue'
@@ -278,6 +279,23 @@ async function fetchEntryModels() {
     const res = await modelApi.list()
     entryModels.value = res.data
   } catch { /* 静默失败，下拉为空不影响使用 */ }
+}
+
+/**
+ * 原始请求数据保存级别（系统配置 request_data_save_level）。
+ * 用于判断一个已完成的 trace 是否应保留「查看原始请求」入口：
+ * 后端只按级别决定是否落库，前端必须用同一规则才能与其保持一致。
+ * 读取失败时按 info 兜底（即从不清除），避免误隐藏已保存的数据。
+ */
+const requestDataSaveLevel = ref<'info' | 'warn' | 'error' | 'none'>('info')
+async function fetchRequestDataSaveLevel() {
+  try {
+    const res = await systemApi.getConfig()
+    const level = res.data?.data?.request_data_save_level
+    if (level === 'info' || level === 'warn' || level === 'error' || level === 'none') {
+      requestDataSaveLevel.value = level
+    }
+  } catch { /* 静默失败，保持 info 兜底（不清除） */ }
 }
 
 /* ========== 使用历史图表 ========== */
@@ -392,11 +410,22 @@ const CHART_COLOR_PALETTE = [
   '#7986cb', // indigo
 ]
 
+/**
+ * 模型 → 色板下标 的查找表。
+ * 原先 modelColor() 每次调用都做 models.indexOf(model)，而它在 chartBars 的
+ * days.map(models.forEach()) 内层被调用，整体退化为 O(天数 × 模型数²)（实测 400 个
+ * 模型时单次重算约 12ms）。预建一次 Map 后查表为 O(1)。
+ */
+const modelColorIndex = computed(() => {
+  const map = new Map<string, number>()
+  usageChartData.value?.models.forEach((m, i) => map.set(m, i))
+  return map
+})
+
 function modelColor(model: string): string {
   if (model === '请求失败') return '#e57373'
-  if (!usageChartData.value) return CHART_COLOR_PALETTE[0]
-  const idx = usageChartData.value.models.indexOf(model)
-  return CHART_COLOR_PALETTE[(idx >= 0 ? idx : 0) % CHART_COLOR_PALETTE.length]
+  const idx = modelColorIndex.value.get(model) ?? 0
+  return CHART_COLOR_PALETTE[idx % CHART_COLOR_PALETTE.length]
 }
 
 /**
@@ -422,7 +451,7 @@ const chartYAxis = computed<{ value: number; y: number }[]>(() => {
 /** 每天的堆叠柱信息（含每个模型段的几何信息）。 */
 const chartBars = computed(() => {
   if (!usageChartData.value) return []
-  const { days, models, values } = usageChartData.value
+  const { days, models, tokenValues } = usageChartData.value
   if (days.length === 0) return []
   const slotWidth = CHART_PLOT_WIDTH / days.length
   const top = chartYAxis.value[4]?.value ?? 0
@@ -433,7 +462,7 @@ const chartBars = computed(() => {
     let stackY = CHART_PLOT_BOTTOM
     let totalValue = 0
     for (const model of models) {
-      const value = values[model]?.[dayIdx] ?? 0
+      const value = tokenValues[model]?.[dayIdx] ?? 0
       if (value === 0) continue
       const h = top > 0 ? (value / top) * CHART_PLOT_HEIGHT : 0
       stackY -= h
@@ -480,6 +509,15 @@ const usageTooltip = reactive({
   totalRequests: 0,
 })
 
+/**
+ * 上一次计算 tooltip 行所依据的数据与列。
+ * 模板同时绑定了 mouseenter 与 mousemove，鼠标在同一根柱上移动会反复触发；
+ * 行内容只取决于 (data, dayIdx)，故同一组合只需算一次。这里记录 data 对象引用
+ * 而不只是日期：15s 静默刷新会替换 usageChartData，此时即使鼠标没动也必须重算，
+ * 否则会一直显示刷新前的旧数值。
+ */
+let tooltipRowsFor: { data: LogUsageChart | null; dayIdx: number } | null = null
+
 function onBarHover(bar: { date: string; segments: { model: string; color: string; value: number }[]; totalValue: number; dayIdx: number }, evt: MouseEvent) {
   const target = evt.currentTarget as Element
   const container = target.closest('.chart-wrapper') as HTMLElement | null
@@ -490,28 +528,43 @@ function onBarHover(bar: { date: string; segments: { model: string; color: strin
   const y = Math.min(evt.clientY - rect.top + 12, rect.height - 140)
   usageTooltip.x = Math.max(0, x)
   usageTooltip.y = Math.max(0, y)
-  usageTooltip.date = bar.date
+
   const data = usageChartData.value
+  if (usageTooltip.visible && tooltipRowsFor && tooltipRowsFor.data === data && tooltipRowsFor.dayIdx === bar.dayIdx) {
+    return // 同一列且数据未变：坐标已更新，行内容无需重算
+  }
+  tooltipRowsFor = { data, dayIdx: bar.dayIdx }
+
+  usageTooltip.date = bar.date
   // 悬浮行覆盖当日所有"有 token 用量或有请求次数"的模型：
   // 柱段只包含 token>0 的模型，而渠道模式下失败 trace 的 token 为 0（无柱段），
   // 其请求次数仍需在 tooltip 中可见，因此这里从全量 models 构建而不是仅遍历柱段。
   const rows: typeof usageTooltip.rows = []
+  let totalTokens = 0
+  let totalRequests = 0
   if (data) {
     for (const model of data.models) {
       const tokens = data.tokenValues[model]?.[bar.dayIdx] ?? 0
       const requests = data.requestValues[model]?.[bar.dayIdx] ?? 0
+      // 合计在单遍中累计，省掉原先两次独立的 reduce 遍历
+      totalTokens += tokens
+      totalRequests += requests
       if (tokens === 0 && requests === 0) continue
+      // 必须复用 modelColor()（而非直接查色板）：它把 '请求失败' 特判为固定红色，
+      // 直接查色板会让 tooltip 色块与柱体颜色不一致。modelColor 现已 O(1)。
       rows.push({ model, color: modelColor(model), tokens, requests })
     }
   }
   usageTooltip.rows = rows
-  usageTooltip.totalTokens = data?.models.reduce((sum, model) => sum + (data.tokenValues[model]?.[bar.dayIdx] ?? 0), 0) ?? 0
-  usageTooltip.totalRequests = data?.models.reduce((sum, model) => sum + (data.requestValues[model]?.[bar.dayIdx] ?? 0), 0) ?? 0
+  usageTooltip.totalTokens = totalTokens
+  usageTooltip.totalRequests = totalRequests
   usageTooltip.visible = rows.length > 0
 }
 
 function hideUsageTooltip() {
   usageTooltip.visible = false
+  // 清空记忆，避免下次进入同一列时被误判为"已算过"而跳过
+  tooltipRowsFor = null
 }
 
 // 分页状态
@@ -732,10 +785,26 @@ function recalcTrace(trace: LogTrace) {
   trace.endTime = last?.createdAt
   trace.modelName = trace.logs.find(l => l.modelName)?.modelName || ''
 
-  // 如果 trace 已完成（有终态），且成功无重试，检查是否需要清除 hasRequestData
-  // 后端 save level=warn/error 会清理成功无重试的请求数据
-  if (!isTraceInProgress(trace) && trace.successCount > 0 && trace.retryCount === 0 && trace.failCount === 0) {
-    trace.hasRequestData = false
+  // 如果 trace 已结束，按当前保存级别判断后端是否保留了原始请求数据。
+  // 规则与后端 flushPendingRequestData 保持一致：
+  //   info  → 始终保留
+  //   warn  → 仅出现过真实重试（retry 阶段）或最终失败才保留
+  //   error → 仅最终失败才保留
+  //   none  → 从不保留
+  // 注意：熔断/400/媒体不支持等 skip 会递增 retryIndex，但不计入 retryCount，
+  // 与后端 markRetryIfNeeded 的口径一致（skip 不算真实重试）。
+  // SSE 推送的 start 行不含原始请求体（后端在终态才落库），因此这里必须在 trace
+  // 结束时按级别把 hasRequestData 校正为 kept，否则实时刷新出的 trace 会一直不显示入口。
+  if (!isTraceInProgress(trace)) {
+    const level = requestDataSaveLevel.value
+    const retried = trace.retryCount > 0
+    const failed = trace.failCount > 0
+    const kept =
+      level === 'info' ? true
+      : level === 'none' ? false
+      : level === 'error' ? failed
+      : (retried || failed)
+    trace.hasRequestData = kept
   }
 
   // 仅更新当前 trace 的分组缓存，避免全量重计算
@@ -954,6 +1023,7 @@ const logFilterSummary = computed(() => {
 onMounted(() => {
   fetchEntryModels()
   fetchChartApiKeys()
+  fetchRequestDataSaveLevel()
   loadUsageChart()
   // 15s 静默自动刷新：只在后台更新数据，不弹加载遮罩（否则每 15s 闪烁一次）
   chartRefreshTimer = setInterval(() => loadUsageChart(true), 15000)

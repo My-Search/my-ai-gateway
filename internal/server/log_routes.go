@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -265,11 +266,39 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 
+		// Cache the whole response: the chart is polled silently every 15s and
+		// re-fetched on every month/filter switch, so without this each poll
+		// re-runs a multi-second aggregation. The key discriminates on every
+		// parameter that changes the result; the TTL (dashCacheTTL) bounds staleness.
+		// NUL separates the filter values so that a value containing the separator
+		// cannot make two different filter combinations hash to the same key.
+		cacheKey := "usage-chart"
+		cacheFrom := fmt.Sprintf("%04d-%02d", year, month)
+		cacheTo := strings.Join([]string{modelType, modelName, gwKeyIDStr, apiKeyName}, "\x00")
+		if cached, ok := d.DashCache.Get(cacheKey, cacheFrom, cacheTo); ok {
+			httpx.OK(c, cached)
+			return
+		}
+
 		// Java TrendChartStatsCollector.collectLogUsageChart:314-320 — half-open
 		// [since, until) covering the requested calendar month.
 		since := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
 		until := since.AddDate(0, 1, 0)
 		daysInMonth := until.AddDate(0, 0, -1).Day()
+
+		// Range bounds are passed as DATE-ONLY strings ("2006-01-02"), NOT as full
+		// timestamps, and compared against the bare created_at column (no datetime()
+		// wrapper). Two reasons, both load-bearing:
+		//
+		//  1. datetime(created_at) is not sargable — it forces a full table scan,
+		//     which is what made this endpoint take seconds at scale.
+		//  2. created_at holds two representations: "…T…" (app writes, jtime.FormatApp)
+		//     and "… …" (SQL DEFAULT CURRENT_TIMESTAMP). A bare bound of
+		//     "2026-09-01T00:00:00" compares greater than the space form on the same
+		//     day and would silently DROP every space-format row from the month. The
+		//     bare date prefix sorts below both forms, so it is inclusive of both.
+		sinceArg := since.Format("2006-01-02")
+		untilArg := until.Format("2006-01-02")
 
 		days := make([]string, daysInMonth)
 		dateIndex := make(map[string]int, daysInMonth)
@@ -309,8 +338,8 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			// whole history: successful traces are attributed to their channel model
 			// name (NULL names are dropped by the collector), failed traces fold into
 			// "请求失败" with zero tokens. The per-trace token value is MAX, not SUM.
-			args := append([]any{jtime.FormatDefault(since), jtime.FormatDefault(until)}, filterArgs...)
-			rows, _ = d.Store.Query(ctx,
+			args := append([]any{sinceArg, untilArg}, filterArgs...)
+			rows, _ = d.Store.QueryReadOnly(ctx,
 				`SELECT date, model_name, COUNT(1) AS request_count,
 				        COALESCE(SUM(total_tokens), 0) AS total_tokens
 				   FROM (
@@ -327,7 +356,7 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 				       FROM request_logs r
 				      WHERE r.trace_id IN (
 				            SELECT DISTINCT trace_id FROM request_logs
-				             WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
+				             WHERE created_at >= ? AND created_at < ?
 				               AND channel_model_name IS NOT NULL AND channel_model_name != ''`+w+`
 				      )
 				      GROUP BY r.trace_id
@@ -338,13 +367,13 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			// Java RequestLogMapper.java:489-507 — entry models by DATE(created_at).
 			// Rows are not filtered by phase: models whose requests all failed still
 			// contribute a (0 token, 0 request) row, exactly like Java.
-			args := append([]any{jtime.FormatDefault(since), jtime.FormatDefault(until)}, filterArgs...)
-			rows, _ = d.Store.Query(ctx,
+			args := append([]any{sinceArg, untilArg}, filterArgs...)
+			rows, _ = d.Store.QueryReadOnly(ctx,
 				`SELECT DATE(created_at) AS date, model_name,
 				        COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) AS total_tokens,
 				        COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) AS request_count
 				   FROM request_logs
-				  WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
+				  WHERE created_at >= ? AND created_at < ?
 				    AND model_name IS NOT NULL AND model_name != ''`+w+`
 				  GROUP BY DATE(created_at), model_name
 				  ORDER BY date ASC, total_tokens DESC`, args...)
@@ -352,8 +381,11 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 
 		// Java TrendChartStatsCollector.collectLogUsageChart:340-362 — accumulate
 		// per-day buckets, keeping first-seen model order for stable tie-breaking.
+		// tokenValues is the single source of truth for bar height (both modelTypes
+		// use the token measure); requestValues is a parallel dimension for the
+		// tooltip. There is deliberately no separate `values` array: it was always
+		// identical to tokenValues and only inflated the response payload.
 		order := make([]string, 0, 8)
-		values := make(map[string][]int64)
 		tokenValues := make(map[string][]int64)
 		requestValues := make(map[string][]int64)
 		modelTotals := make(map[string]int64)
@@ -367,15 +399,11 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			}
 			tokens := r.I64("total_tokens", 0)
 			requests := r.I64("request_count", 0)
-			bucket, seen := values[model]
-			if !seen {
+			if _, seen := tokenValues[model]; !seen {
 				order = append(order, model)
-				bucket = make([]int64, daysInMonth)
-				values[model] = bucket
 				tokenValues[model] = make([]int64, daysInMonth)
 				requestValues[model] = make([]int64, daysInMonth)
 			}
-			bucket[idx] += tokens
 			tokenValues[model][idx] += tokens
 			requestValues[model][idx] += requests
 			modelTotals[model] += tokens
@@ -389,16 +417,14 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 
 		// Java: maxValue is the tallest *stacked* day (sum over models), totalValue is
 		// the grand total (TrendChartStatsCollector.java:373-395).
-		valuesOM := httpx.NewOrderedMap()
 		tokenValuesOM := httpx.NewOrderedMap()
 		requestValuesOM := httpx.NewOrderedMap()
 		dailyTotals := make([]int64, daysInMonth)
 		var totalValue int64
 		for _, model := range order {
-			valuesOM.Set(model, values[model])
 			tokenValuesOM.Set(model, tokenValues[model])
 			requestValuesOM.Set(model, requestValues[model])
-			for i, v := range values[model] {
+			for i, v := range tokenValues[model] {
 				dailyTotals[i] += v
 				totalValue += v
 			}
@@ -410,16 +436,18 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			}
 		}
 
-		httpx.OK(c, httpx.NewOrderedMap().
+		out := httpx.NewOrderedMap().
 			Set("year", year).
 			Set("month", month).
 			Set("days", days).
 			Set("models", order).
-			Set("values", valuesOM).
 			Set("tokenValues", tokenValuesOM).
 			Set("requestValues", requestValuesOM).
 			Set("maxValue", maxValue).
-			Set("totalValue", totalValue))
+			Set("totalValue", totalValue)
+
+		d.DashCache.Set(cacheKey, cacheFrom, cacheTo, out)
+		httpx.OK(c, out)
 	})
 
 	// GET /admin/api/logs/stream (SSE)

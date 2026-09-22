@@ -124,6 +124,12 @@ const router = createRouter({
           meta: { title: 'API密钥' }
         },
         {
+          path: 'apikey/usage/:id',
+          name: 'apikey-usage',
+          component: () => import('@/views/apikey/Models.vue'),
+          meta: { title: '密钥用量' }
+        },
+        {
           path: 'apikey/form',
           name: 'apikey-form',
           component: () => import('@/views/apikey/Form.vue'),

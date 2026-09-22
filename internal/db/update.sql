@@ -439,10 +439,10 @@ INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUE
 -- ========================================
 -- VERSION:v1.26.0
 -- 系统配置：原始请求数据保存级别
--- info=全部保存, warn=仅重试/错误时保存, error=仅失败时保存
+-- info=全部保存, warn=仅重试/错误时保存, error=仅失败时保存, none=从不保存
 -- ========================================
 
-INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('request_data_save_level', 'info', '原始请求数据保存级别：info=全部保存，warn=重试/错误时保存，error=仅失败时保存');
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('request_data_save_level', 'info', '原始请求数据保存级别：info=全部保存，warn=重试/错误时保存，error=仅失败时保存，none=从不保存');
 
 -- ========================================
 -- VERSION:v1.27.0
@@ -561,3 +561,49 @@ CREATE TABLE IF NOT EXISTS log_stats_hourly (
 );
 
 CREATE INDEX IF NOT EXISTS idx_log_stats_hourly_bucket ON log_stats_hourly(hour_bucket);
+
+-- ========================================
+-- VERSION:v1.39.0
+-- 系统配置：原始请求数据保存级别新增 none（从不保存原始请求头/请求体）
+-- v1.26.0 的种子行使用 INSERT OR IGNORE，已迁移的库不会重跑，故此处显式刷新描述文案
+-- ========================================
+
+UPDATE admin_config SET description = '原始请求数据保存级别：info=全部保存，warn=重试/错误时保存，error=仅失败时保存，none=从不保存' WHERE config_key = 'request_data_save_level';
+
+-- ========================================
+-- VERSION:v1.40.0
+-- 性能优化：「使用历史」图表聚合查询改造 + 清理无用的 log_stats_hourly 预聚合表
+--
+-- 背景：该图表原先的谓词写作 datetime(created_at) >= datetime(?)，函数包裹列导致
+--   SQLite 无法使用 created_at 索引，每次请求都退化为全表扫描（实测 600 万行下单月
+--   视图约 6.6 秒），而前端每 15 秒静默轮询一次、翻月/切筛选又各触发一次。
+--   查询已改为裸列范围比较（sargable），并新增下面的部分覆盖索引消除回表。
+--
+-- 索引设计：列顺序 created_at -> model_name -> phase -> total_tokens -> trace_id 使范围
+--   扫描 + GROUP BY DATE(created_at), model_name + 聚合所需的列全部落在索引内，
+--   产生 COVERING INDEX 计划，彻底消除回表（这是数据量大时的主要开销来源）。
+--
+--   部分索引条件必须是查询 WHERE 能"蕴含"的谓词，否则 SQLite 不会使用该索引。
+--   这里刻意选 model_name IS NOT NULL AND model_name != ''（查询本身就有这一条），
+--   而 NOT 选 phase='success' —— 虽然聚合只看 success 行，但 phase 仅出现在 CASE
+--   内部而不在 WHERE 中，带 phase 条件的部分索引对本查询完全不可用；若把
+--   phase='success' 提到 WHERE 里又会改变结果语义（只失败过的模型当前会产出一行
+--   0 token / 0 请求，属刻意保留的 Java 对齐行为，不能被过滤掉）。
+--
+-- 注意：索引仅服务于入口模型查询。渠道模型模式通过 trace 子查询聚合，
+--   仅靠谓词改造即可获得约 2 倍提升，额外加索引会显著加重写入放大，故不添加。
+--
+-- 清理：log_stats_hourly 由 v1.38.0 引入，曾计划供 Dashboard 小时级统计使用，
+--   但代码库中从无任何查询读取它（仅后台任务每小时写入），属于无效预聚合，
+--   在此移除该表与对应后台任务，省掉每小时一次的全范围聚合扫描。
+-- ========================================
+
+DROP TABLE IF EXISTS log_stats_hourly;
+
+CREATE INDEX IF NOT EXISTS idx_usage_entry
+    ON request_logs(created_at, model_name, phase, total_tokens, trace_id)
+    WHERE model_name IS NOT NULL AND model_name != '';
+
+-- 刷新查询规划器统计信息。缺省情况下从未执行过 ANALYZE，sqlite_stat1 不存在，
+-- 规划器只能按经验猜测索引代价，在数据量增长后容易误选索引或退化为全表扫描。
+ANALYZE;
