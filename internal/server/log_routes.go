@@ -234,6 +234,10 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			httpx.OK(c, httpx.NewOrderedMap().Set("success", false).Set("error", err.Error()))
 			return
 		}
+		// The cleanup changed the data behind every cached snapshot; invalidate
+		// so the usage chart / dashboard stop serving pre-cleanup numbers for up
+		// to a full TTL instead of only the 15s front-end poll interval.
+		d.DashCache.Invalidate()
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("message", "已清理 30 天前的日志"))
 	})
 

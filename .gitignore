@@ -9,6 +9,8 @@ target/
 ### Go ###
 /mag-gateway
 /mag-gateway.exe
+# 带日期后缀的旧二进制备份（曾被误提交，24MB）
+/mag-gateway.exe.*
 *.test
 *.out
 /dist/
@@ -52,6 +54,8 @@ tmpcookie.txt
 ### Test artifacts ###
 test-spacing-*.png
 frontend/test-*.html
+# GUI 手工测试截图（曾被误提交入库）
+/gui-test-screenshots/
 
 ### Dev scratch outputs ###
 /original_controller.java

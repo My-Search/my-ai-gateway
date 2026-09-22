@@ -20,8 +20,8 @@ type TimeoutError struct {
 	// Stage identifies what phase timed out: "first_byte", "stream_idle",
 	// "upstream" (e.g. context deadline triggered by non-stream attemptCtx),
 	// or "deadline" (global 600s candidate-loop ceiling).
-	Stage    string
-	Wrapped  error
+	Stage   string
+	Wrapped error
 }
 
 func (e *TimeoutError) Error() string {
@@ -49,7 +49,7 @@ func isTimeoutError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-// Go's http.Client / net/http may produce opaque timeout strings when
+	// Go's http.Client / net/http may produce opaque timeout strings when
 	// the underlying dial or TLS handshake times out.  We check the
 	// standard net.Error timeout interface for good measure.
 	var netErr interface{ Timeout() bool }
@@ -59,8 +59,12 @@ func isTimeoutError(err error) bool {
 
 	// Fallback for known timeout message patterns from wrap errors that
 	// were created with errors.New(...) and lack structured wrapping.
+	// "timed out" is Go's os.ErrDeadlineExceeded-style wording
+	// (e.g. "read timed out"), which does not contain the substring
+	// "timeout" and would otherwise fall through raw.
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "timed out") ||
 		strings.Contains(msg, "did not observe") ||
 		strings.Contains(msg, "stream idle timeout") ||
 		strings.Contains(msg, "empty response") ||

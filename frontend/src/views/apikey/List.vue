@@ -447,19 +447,6 @@ onActivated(() => {
   background: #d97706;
 }
 
-/* Share status badge */
-.usage-toggle {
-  cursor: pointer;
-  user-select: none;
-  font-weight: 400;
-  font-size: 11px;
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
-}
-.usage-toggle .active { color: var(--accent-blue); }
-.usage-toggle .inactive { color: var(--text-muted); }
-
 /* 分享列：链接图标按钮（复制分享链接） */
 .btn-icon-link {
   display: inline-flex;

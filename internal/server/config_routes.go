@@ -647,7 +647,7 @@ func dashSparklines(ctx context.Context, d Deps, dr dashRange) map[string][]floa
 	// Bucket index is derived from the offset from `since` in whole epoch
 	// seconds, so no timezone conversions or floating-point day arithmetic are
 	// needed and the scan uses the created_at index range.
-rows, _ := d.Store.QueryReadOnly(ctx, `
+	rows, _ := d.Store.QueryReadOnly(ctx, `
 			SELECT CAST((CAST(STRFTIME('%s', created_at) AS INTEGER) - ?) / ? AS INTEGER) AS bucket,
 			        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
 			        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,

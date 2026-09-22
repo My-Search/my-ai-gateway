@@ -24,13 +24,6 @@ export interface ApiKeyPeriodStats {
   totalTokens: number
 }
 
-/** API Key 多周期用量统计 */
-export interface ApiKeyUsageStats {
-  day?: ApiKeyPeriodStats
-  week?: ApiKeyPeriodStats
-  month?: ApiKeyPeriodStats
-}
-
 /** API Key 详情页：单模型用量统计 */
 export interface ApiKeyModelUsageStat extends ApiKeyPeriodStats {
   modelName: string
@@ -64,10 +57,6 @@ export const apikeyApi = {
   },
   delete(id: number) {
     return http.delete<{ success: boolean }>(`/api-keys/${id}`)
-  },
-  /** 获取所有 API Key 的日/周/月用量统计 */
-  usageStats() {
-    return http.get<Record<number, ApiKeyUsageStats>>('/api-keys/usage-stats')
   },
   /** 获取单个 API Key 的详细用量统计（按模型细分） */
   usageStatsDetail(id: number) {

@@ -35,8 +35,8 @@ func WireRelayRuntime(core *relay.RelayCore, st *store.Store, cfgSvc *service.Co
 	gate := &circuit.Gate{Store: st, StateCache: stateCache}
 
 	trigger := &circuit.Trigger{
-		Store:     st,
-		ConfigMgr: configMgr,
+		Store:      st,
+		ConfigMgr:  configMgr,
 		StateCache: stateCache,
 		APIKeyMoveFn: func(ctx context.Context, channelID, apiKeyID int64) {
 			moveAPIKeyToEnd(ctx, st, channelID, apiKeyID)

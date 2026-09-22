@@ -70,6 +70,10 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		}
 
 		// 1) requests: distinct start traces per model
+		// 边界口径：jtime.FormatDefault(since) 是 T 分隔的 UTC 瞬时下界（上海窗口
+		// 起点转 UTC），对当前写入路径的 T 格式行精确。不能改成 DATE-ONLY：窗口锚定
+		// 上海零点（16:00Z），截成日期会把边界日前一天 00:00Z~16:00Z（上海昨日时段）
+		// 计入今天。详见 getAPIKeyPeriodStats 的边界口径注释。
 		reqCount := make(map[string]int64)
 		reqRows, _ := d.Store.Query(ctx,
 			`SELECT model_name, COUNT(DISTINCT trace_id) as cnt
@@ -493,7 +497,7 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		out := httpx.NewOrderedMap().Set("success", true).Set("model", updated)
 		if cycleBrokenModel != nil {
 			out.Set("cycleBrokenModel", map[string]any{
-				"id":    cycleBrokenModel.ID,
+				"id":        cycleBrokenModel.ID,
 				"modelName": cycleBrokenModel.ModelName,
 			})
 		}
@@ -733,10 +737,18 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		existing, err := d.Store.QueryOne(ctx, "SELECT id FROM circuit_breaker_configs WHERE model_id = ?", id)
 		if err == nil && existing != nil {
 			sets := make(map[string]any)
-			if v := body.RetryCount; v != nil { sets["retry_count"] = *v }
-			if v := body.CircuitBreakDuration; v != nil { sets["circuit_break_duration"] = *v }
-			if v := body.CircuitBreakScope; v != nil { sets["circuit_break_scope"] = *v }
-			if v := body.Enabled; v != nil { sets["enabled"] = *v }
+			if v := body.RetryCount; v != nil {
+				sets["retry_count"] = *v
+			}
+			if v := body.CircuitBreakDuration; v != nil {
+				sets["circuit_break_duration"] = *v
+			}
+			if v := body.CircuitBreakScope; v != nil {
+				sets["circuit_break_scope"] = *v
+			}
+			if v := body.Enabled; v != nil {
+				sets["enabled"] = *v
+			}
 			sets["updated_at"] = now
 			q, args := store.BuildUpdate("circuit_breaker_configs", sets, "model_id = ?", id)
 			_, _ = d.Store.Exec(ctx, q, args...)
@@ -757,7 +769,9 @@ func modelsCamelToSnake(s string) string {
 	var b strings.Builder
 	for i, ch := range s {
 		if ch >= 'A' && ch <= 'Z' {
-			if i > 0 { b.WriteByte('_') }
+			if i > 0 {
+				b.WriteByte('_')
+			}
 			b.WriteByte(byte(ch + 32))
 		} else {
 			b.WriteRune(ch)

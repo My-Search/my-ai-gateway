@@ -2,14 +2,15 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/my-search/my-ai-gateway/internal/jtime"
 	"github.com/my-search/my-ai-gateway/internal/httpx"
+	"github.com/my-search/my-ai-gateway/internal/jtime"
 	"github.com/my-search/my-ai-gateway/internal/store"
 )
 
@@ -64,10 +65,7 @@ func registerAPIKeyRoutes(g *gin.RouterGroup, d Deps) {
 			}
 			out = append(out, item)
 		}
-		if out == nil {
-			out = make([]akItem, 0)
-		}
-		httpx.JSON(c, http.StatusOK, out)
+		httpx.OK(c, out)
 	})
 
 	// GET /admin/api/api-keys/{id}
@@ -283,6 +281,9 @@ func getAPIKeySummaryStats(ctx context.Context, st *store.Store) map[int64]chann
 		 WHERE phase='success' AND gateway_api_key_id IS NOT NULL
 		 GROUP BY gateway_api_key_id`)
 	if err != nil {
+		// 统计查询失败时列表仍返回密钥本身（用量列显示 0），仅记录日志便于区分
+		// "没有用量" 与 "查询失败"，不改变接口行为。
+		slog.Warn("查询 API 密钥用量汇总失败", "error", err)
 		return nil
 	}
 	out := make(map[int64]channelUsage, len(rows))
@@ -299,9 +300,9 @@ func getAPIKeySummaryStats(ctx context.Context, st *store.Store) map[int64]chann
 
 // apiKeyUsageResult bundles per-model stats with key-level averages.
 type apiKeyUsageResult struct {
-	ModelStats                  []modelUsageStat
-	KeyAvgResponseTimeRecent30  int64
-	KeyAvgOutputSpeedRecent30   float64
+	ModelStats                 []modelUsageStat
+	KeyAvgResponseTimeRecent30 int64
+	KeyAvgOutputSpeedRecent30  float64
 }
 
 // getAPIKeyUsageStats mirrors getChannelModelUsageStats but scoped to a
@@ -316,7 +317,7 @@ func getAPIKeyUsageStats(ctx context.Context, st *store.Store, keyID int64) apiK
 	const where = `phase='success' AND gateway_api_key_id = ? AND channel_model_name IS NOT NULL AND channel_model_name != ''`
 
 	// All-time stats per model
-	allRows, _ := st.Query(ctx,
+	allRows, err := st.Query(ctx,
 		`SELECT channel_model_name,
 		         COUNT(*) request_count,
 		         COALESCE(SUM(prompt_tokens),0) pt,
@@ -325,35 +326,47 @@ func getAPIKeyUsageStats(ctx context.Context, st *store.Store, keyID int64) apiK
 		  FROM request_logs
 		 WHERE `+where+`
 		 GROUP BY channel_model_name ORDER BY request_count DESC`, keyID)
+	if err != nil {
+		slog.Warn("查询密钥按模型用量失败", "keyId", keyID, "error", err)
+	}
 
 	// Recent 30 response times and speeds (per model)
-	recent30, _ := st.Query(ctx,
+	recent30, err := st.Query(ctx,
 		`SELECT channel_model_name, first_byte_ms, completion_tokens, response_time_ms
 		  FROM (SELECT channel_model_name, first_byte_ms, completion_tokens, response_time_ms,
 		               ROW_NUMBER() OVER (PARTITION BY channel_model_name ORDER BY created_at DESC, id DESC) rn
 		          FROM request_logs
 		         WHERE phase IN ('success','fail') AND gateway_api_key_id = ?
 		           AND channel_model_name IS NOT NULL AND channel_model_name != '') WHERE rn <= 30`, keyID)
+	if err != nil {
+		slog.Warn("查询密钥近 30 次明细失败", "keyId", keyID, "error", err)
+	}
 
 	// Key-level: all models combined, recent 30
-	keyRT, _ := st.QueryOne(ctx,
+	keyRT, err := st.QueryOne(ctx,
 		`SELECT AVG(first_byte_ms) avg_first_byte FROM (
 		  SELECT first_byte_ms, ROW_NUMBER() OVER (ORDER BY created_at DESC, id DESC) rn
 		    FROM request_logs
 		   WHERE phase IN ('success','fail') AND gateway_api_key_id = ?
 		     AND channel_model_name IS NOT NULL AND channel_model_name != ''
 		     AND first_byte_ms IS NOT NULL AND first_byte_ms > 0) WHERE rn <= 30`, keyID)
+	if err != nil && err != store.ErrNotFound {
+		slog.Warn("查询密钥级近 30 次平均首字节失败", "keyId", keyID, "error", err)
+	}
 	var keyAvgRT int64
 	if v := keyRT.F64Ptr("avg_first_byte"); v != nil {
 		keyAvgRT = int64(*v + 0.5)
 	}
-	keySpd, _ := st.QueryOne(ctx,
+	keySpd, err := st.QueryOne(ctx,
 		`SELECT AVG(completion_tokens * 1000.0 / response_time_ms) avg_speed FROM (
 		  SELECT completion_tokens, response_time_ms, ROW_NUMBER() OVER (ORDER BY created_at DESC, id DESC) rn
 		    FROM request_logs
 		   WHERE phase = 'success' AND gateway_api_key_id = ?
 		     AND channel_model_name IS NOT NULL AND channel_model_name != ''
 		     AND completion_tokens > 0 AND response_time_ms > 0) WHERE rn <= 30`, keyID)
+	if err != nil && err != store.ErrNotFound {
+		slog.Warn("查询密钥级近 30 次平均生成速度失败", "keyId", keyID, "error", err)
+	}
 	var keyAvgSpd float64
 	if v := keySpd.F64Ptr("avg_speed"); v != nil {
 		keyAvgSpd = float64(int64(*v*10+0.5)) / 10.0
@@ -362,7 +375,10 @@ func getAPIKeyUsageStats(ctx context.Context, st *store.Store, keyID int64) apiK
 	rtAvg := make(map[string]int64)
 	spdAvg := make(map[string]float64)
 	rtSums := make(map[string]struct{ cnt, sum int64 })
-	spdSums := make(map[string]struct{ cnt int; sum float64 })
+	spdSums := make(map[string]struct {
+		cnt int
+		sum float64
+	})
 	for _, r := range recent30 {
 		name := r.Str("channel_model_name")
 		if fbm := r.I64Ptr("first_byte_ms"); fbm != nil && *fbm > 0 {
@@ -414,17 +430,25 @@ func getAPIKeyUsageStats(ctx context.Context, st *store.Store, keyID int64) apiK
 		out = append(out, s)
 	}
 	return apiKeyUsageResult{
-		ModelStats:                  out,
-		KeyAvgResponseTimeRecent30:  keyAvgRT,
-		KeyAvgOutputSpeedRecent30:   keyAvgSpd,
+		ModelStats:                 out,
+		KeyAvgResponseTimeRecent30: keyAvgRT,
+		KeyAvgOutputSpeedRecent30:  keyAvgSpd,
 	}
 }
 
 // getAPIKeyPeriodStats returns today/week/month usage per model for one key.
+//
+// 边界口径：since 是上海时区窗口起点（如今日 00:00 +08:00 = 前一日 16:00Z），
+// FormatDefault 生成 T 分隔的 UTC 瞬时下界，对当前唯一写入路径（logsvc，恒为
+// T 格式）是精确比较。这里不能像 usage-chart 那样改用 DATE-ONLY 裸日期下界：
+// 图表窗口锚定 UTC 自然日零点（日期前缀恰等于瞬时值），而本窗口锚定上海零点
+// （16:00Z），截断成日期会把边界日 00:00Z~16:00Z（即上海昨日 08:00~24:00）的
+// 行错误计入。已知限制：历史 space 格式行（SQL DEFAULT 写入，当前写入路径不再
+// 产生）落在边界日当天时会被 T 下界排除（' ' < 'T'）。
 func getAPIKeyPeriodStats(ctx context.Context, st *store.Store, keyID int64, todayStart, weekStart, monthStart time.Time) map[string]perModelPeriods {
 	result := make(map[string]perModelPeriods)
 	for label, since := range map[string]time.Time{"today": todayStart, "week": weekStart, "month": monthStart} {
-		rows, _ := st.Query(ctx,
+		rows, err := st.Query(ctx,
 			`SELECT channel_model_name,
 			         COUNT(*) rc,
 			         COALESCE(SUM(prompt_tokens),0) pt,
@@ -434,6 +458,11 @@ func getAPIKeyPeriodStats(ctx context.Context, st *store.Store, keyID int64, tod
 			 WHERE phase='success' AND gateway_api_key_id = ? AND channel_model_name IS NOT NULL
 			   AND created_at >= ?
 			 GROUP BY channel_model_name`, keyID, jtime.FormatDefault(since))
+		if err != nil {
+			// 单周期查询失败只影响该周期列（保持为空），其余照常返回。
+			slog.Warn("查询密钥周期用量失败", "keyId", keyID, "period", label, "error", err)
+			continue
+		}
 		for _, r := range rows {
 			name := r.Str("channel_model_name")
 			p := result[name]
@@ -478,9 +507,13 @@ func boolToInt(v bool) int {
 
 func toIntAny(v any) int {
 	switch x := v.(type) {
-	case float64: return int(x)
-	case int: return x
-	case bool: return boolToInt(x)
-	default: return 0
+	case float64:
+		return int(x)
+	case int:
+		return x
+	case bool:
+		return boolToInt(x)
+	default:
+		return 0
 	}
 }

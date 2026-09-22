@@ -62,9 +62,19 @@ func (dc *dashCache) Set(key, from, to string, data any) {
 	}
 	ck := dc.cacheKey(key, from, to)
 	dc.mu.Lock()
+	now := time.Now()
+	// Sweep expired entries while we hold the write lock: a miss never removes
+	// its entry, so without this the map would grow with every distinct
+	// (month, filter) combination forever. Expired entries are already
+	// unreachable (Get treats them as a miss), so this is behavior-neutral.
+	for k, e := range dc.entries {
+		if now.After(e.expiresAt) {
+			delete(dc.entries, k)
+		}
+	}
 	dc.entries[ck] = &dashCacheEntry{
 		data:      data,
-		expiresAt: time.Now().Add(dashCacheTTL),
+		expiresAt: now.Add(dashCacheTTL),
 	}
 	dc.mu.Unlock()
 }
