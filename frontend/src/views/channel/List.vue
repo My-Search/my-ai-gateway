@@ -111,7 +111,20 @@
         <div class="mobile-card-stats">
           <div class="mobile-card-stat">
             <span class="mobile-card-stat-label">{{ t('channel.list.modelCount') }}</span>
-            <span class="mobile-card-stat-value">{{ formatNumber(ch.modelCount ?? 0) }}</span>
+            <div class="mobile-model-count-row">
+              <span class="mobile-card-stat-value">{{ formatNumber(ch.modelCount ?? 0) }}</span>
+              <button
+                type="button"
+                class="btn btn-sm btn-secondary model-refresh-btn"
+                :title="t('channel.list.refreshModels')"
+                :aria-label="t('channel.list.refreshModels')"
+                :disabled="reloadLoading != null"
+                @click="reloadModels(ch.id!)"
+              >
+                <LoadingSpinner v-if="reloadLoading === ch.id" :size="14" />
+                <SvgIcon v-else name="refresh" :size="14" />
+              </button>
+            </div>
           </div>
           <div class="mobile-card-stat">
             <span class="mobile-card-stat-label">{{ t('channel.list.createdAt') }}</span>
@@ -120,10 +133,8 @@
         </div>
         <div class="mobile-card-divider"></div>
         <div class="mobile-card-actions">
-          <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-primary"><SvgIcon name="list" :size="14" /> {{ t('channel.list.view') }}</router-link>
+          <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="detail" :size="14" /> {{ t('channel.list.view') }}</router-link>
           <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> {{ t('channel.list.quickTest') }}</button>
-          <router-link :to="`/admin/channel/reload/${ch.id}`" class="btn btn-sm btn-secondary"
-            @click.prevent="reloadModels(ch.id!)"><SvgIcon name="refresh" :size="14" /> {{ t('channel.list.refresh') }}</router-link>
           <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('common.edit') }}</router-link>
           <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)"><SvgIcon name="trash" :size="14" /> {{ t('common.delete') }}</button>
         </div>
@@ -587,6 +598,14 @@ onActivated(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
+}
+
+/* 模型数与刷新图标横排，与 PC 端模型数列一致 */
+.mobile-model-count-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .mobile-card-actions {

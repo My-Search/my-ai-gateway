@@ -148,7 +148,6 @@ export default {
   'channel.list.actions': 'Actions',
   'channel.list.view': 'Details',
   'channel.list.refreshModels': 'Refresh Models',
-  'channel.list.refresh': 'Refresh',
   'channel.list.empty': 'No channels yet. Click "Add Channel" to start.',
   'channel.list.quickTest': 'Quick Test',
   'channel.list.testModel': 'Channel Model',

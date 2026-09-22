@@ -148,7 +148,6 @@ export default {
   'channel.list.actions': '操作',
   'channel.list.view': '详情',
   'channel.list.refreshModels': '刷新模型',
-  'channel.list.refresh': '刷新',
   'channel.list.empty': '暂无渠道数据，点击右上角「添加渠道」开始',
   'channel.list.quickTest': '模型测试',
   'channel.list.testModel': '渠道模型',

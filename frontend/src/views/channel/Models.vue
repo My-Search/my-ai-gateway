@@ -196,7 +196,7 @@ function getModelStat(modelName: string): ModelUsageStat | undefined {
 }
 
 type Period = 'all' | 'today' | 'week' | 'month'
-const period = ref<Period>('all')
+const period = ref<Period>('today')
 
 const EMPTY = { requestCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 }
 
