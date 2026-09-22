@@ -683,8 +683,7 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		if body.ReasoningEffort != nil {
 			d.Store.Exec(ctx, "UPDATE model_channel_rels SET reasoning_effort=? WHERE id=?", strings.TrimSpace(*body.ReasoningEffort), relID)
 		} else {
-			// MyBatis-Plus skips null, so clearing reasoning_effort does NOT work.
-			// Replicate this bug: do nothing on null input.
+			d.Store.Exec(ctx, "UPDATE model_channel_rels SET reasoning_effort=NULL WHERE id=?", relID)
 		}
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
 	})

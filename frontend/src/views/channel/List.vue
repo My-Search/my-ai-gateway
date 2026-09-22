@@ -25,8 +25,7 @@
             <th>{{ t('channel.list.endpoint') }}</th>
             <th>{{ t('channel.list.status') }}</th>
             <th>{{ t('channel.list.modelCount') }}</th>
-            <th>{{ t('channel.list.requestCount') }}</th>
-            <th>{{ t('channel.list.tokenUsage') }}</th>
+            <th>{{ t('channel.list.successRate') }}</th>
             <th>{{ t('channel.list.createdAt') }}</th>
             <th>{{ t('channel.list.actions') }}</th>
           </tr>
@@ -50,26 +49,16 @@
               <LoadingSpinner v-if="toggleLoading === ch.id" size="14" />
             </td>
             <td>
-              <div style="display:flex;align-items:center;justify-content:space-between;white-space:nowrap;gap:8px;">
-                <span style="font-weight:600;">{{ formatNumber(ch.modelCount ?? 0) }}</span>
-                <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary">{{ t('channel.list.view') }}</router-link>
+              <span style="font-weight:600;white-space:nowrap;">{{ formatNumber(ch.modelCount ?? 0) }}</span>
+            </td>
+            <td style="font-variant-numeric:tabular-nums;">
+              <div style="display:flex;align-items:center;gap:3px;">
+                <span v-if="ch.successRate != null" :style="{color: ch.successRate >= 90 ? 'var(--accent-green)' : ch.successRate >= 70 ? 'var(--accent-yellow)' : 'var(--accent-red)', fontWeight: 600}">
+                  {{ ch.successRate.toFixed(1) }}%
+                </span>
+                <span v-else style="color:var(--text-muted);">-</span>
+                <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary" style="margin-left:auto;">{{ t('channel.list.view') }}</router-link>
               </div>
-            </td>
-            <td style="text-align:right;font-variant-numeric:tabular-nums;">
-              <span style="font-weight:600;">{{ formatNumber(ch.requestCount) }}</span>
-            </td>
-            <td style="font-size:12px;font-variant-numeric:tabular-nums;">
-              <template v-if="ch.totalTokens && ch.totalTokens > 0">
-                <div style="display:flex;flex-direction:column;gap:2px;">
-                  <span :title="t('channel.models.inputTokens') + ': ' + formatNumber(ch.promptTokens) + ' | ' + t('channel.models.outputTokens') + ': ' + formatNumber(ch.completionTokens)">
-                    {{ formatTokens(ch.totalTokens) }}
-                  </span>
-                  <span style="color:var(--text-muted);font-size:11px;">
-                    {{ t('channel.models.inputTokens') }} {{ formatTokens(ch.promptTokens) }} / {{ t('channel.models.outputTokens') }} {{ formatTokens(ch.completionTokens) }}
-                  </span>
-                </div>
-              </template>
-              <span v-else style="color:var(--text-muted);">-</span>
             </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(ch.createdAt) }}</td>
             <td>
@@ -83,7 +72,7 @@
             </td>
           </tr>
           <tr v-if="!channels.length">
-            <td colspan="9" style="text-align:center;color:var(--text-muted);padding:40px;">
+            <td colspan="8" style="text-align:center;color:var(--text-muted);padding:40px;">
               {{ t('channel.list.empty') }}
             </td>
           </tr>
@@ -123,12 +112,9 @@
             <span class="mobile-card-stat-value">{{ formatNumber(ch.modelCount ?? 0) }}</span>
           </div>
           <div class="mobile-card-stat">
-            <span class="mobile-card-stat-label">{{ t('channel.list.requestCount') }}</span>
-            <span class="mobile-card-stat-value">{{ formatNumber(ch.requestCount) }}</span>
-          </div>
-          <div class="mobile-card-stat">
-            <span class="mobile-card-stat-label">{{ t('channel.list.tokenUsage') }}</span>
-            <span class="mobile-card-stat-value">{{ formatTokens(ch.totalTokens) }}</span>
+            <span class="mobile-card-stat-label">{{ t('channel.list.successRate') }}</span>
+            <span class="mobile-card-stat-value" v-if="ch.successRate != null" :style="{color: ch.successRate >= 90 ? 'var(--accent-green)' : ch.successRate >= 70 ? 'var(--accent-yellow)' : 'var(--accent-red)'}">{{ ch.successRate.toFixed(1) }}%</span>
+            <span class="mobile-card-stat-value" v-else style="color:var(--text-muted);">-</span>
           </div>
           <div class="mobile-card-stat">
             <span class="mobile-card-stat-label">{{ t('channel.list.createdAt') }}</span>
@@ -239,7 +225,7 @@ import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { channelApi, type Channel, type ChannelModel, type ChannelApiKey } from '@/api/channel'
 import { formatLocalDateTimeFull } from '@/utils/date'
-import { formatNumber, formatTokens } from '@/utils/format'
+import { formatNumber } from '@/utils/format'
 import Dialog from '@/components/common/Dialog.vue'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
 import MultiModalRuleDialog from '@/components/channel/MultiModalRuleDialog.vue'

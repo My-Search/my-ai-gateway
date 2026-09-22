@@ -48,21 +48,18 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 		usageStats := getChannelSummaryStats(ctx, d.Store)
 
 		type chItem struct {
-			ID                   int64  `json:"id"`
-			Name                 string `json:"name"`
-			ChannelType          string `json:"channelType"`
-			BaseURL              string `json:"baseUrl"`
-			Enabled              *int   `json:"enabled"`
-			SortOrder            *int   `json:"sortOrder"`
-			CreatedAt            jtime.APITime `json:"createdAt"`
-			UpdatedAt            jtime.APITime `json:"updatedAt"`
-			ModelRefreshEnabled  *int   `json:"modelRefreshEnabled"`
-			CustomHeaders        *string `json:"customHeaders"`
-			ModelCount           int    `json:"modelCount"`
-			RequestCount         int64  `json:"requestCount"`
-			PromptTokens         int64  `json:"promptTokens"`
-			CompletionTokens     int64  `json:"completionTokens"`
-			TotalTokens          int64  `json:"totalTokens"`
+			ID                  int64         `json:"id"`
+			Name                string        `json:"name"`
+			ChannelType         string        `json:"channelType"`
+			BaseURL             string        `json:"baseUrl"`
+			Enabled             *int          `json:"enabled"`
+			SortOrder           *int          `json:"sortOrder"`
+			CreatedAt           jtime.APITime `json:"createdAt"`
+			UpdatedAt           jtime.APITime `json:"updatedAt"`
+			ModelRefreshEnabled *int          `json:"modelRefreshEnabled"`
+			CustomHeaders       *string       `json:"customHeaders"`
+			ModelCount          int           `json:"modelCount"`
+			SuccessRate         *float64      `json:"successRate"`
 		}
 
 		out := make([]chItem, 0, len(rows))
@@ -71,23 +68,23 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 			id := ch.ID
 			us, has := usageStats[ch.Name]
 			item := chItem{
-				ID:                   id,
-				Name:                 ch.Name,
-				ChannelType:          ch.ChannelType,
-				BaseURL:              ch.BaseURL,
-				Enabled:              ch.Enabled,
-				SortOrder:            ch.SortOrder,
-				CreatedAt:            ch.CreatedAt,
-				UpdatedAt:            ch.UpdatedAt,
-				ModelRefreshEnabled:  ch.ModelRefreshEnabled,
-				CustomHeaders:        ch.CustomHeaders,
-				ModelCount:           modelCounts[id],
+				ID:                  id,
+				Name:                ch.Name,
+				ChannelType:         ch.ChannelType,
+				BaseURL:             ch.BaseURL,
+				Enabled:             ch.Enabled,
+				SortOrder:           ch.SortOrder,
+				CreatedAt:           ch.CreatedAt,
+				UpdatedAt:           ch.UpdatedAt,
+				ModelRefreshEnabled: ch.ModelRefreshEnabled,
+				CustomHeaders:       ch.CustomHeaders,
+				ModelCount:          modelCounts[id],
 			}
 			if has {
-				item.RequestCount = us.RequestCount
-				item.PromptTokens = us.PromptTokens
-				item.CompletionTokens = us.CompletionTokens
-				item.TotalTokens = us.TotalTokens
+				if us.TotalAttempts > 0 {
+					v := float64(int64(float64(us.SuccessCount)/float64(us.TotalAttempts)*1000+0.5)) / 10.0
+					item.SuccessRate = &v
+				}
 			}
 			out = append(out, item)
 		}
@@ -120,33 +117,33 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 
 		akRows, _ := d.Store.Query(ctx, "SELECT * FROM channel_api_keys WHERE channel_id = ? ORDER BY sort_order", id)
 		type akItem struct {
-			ID        int64       `json:"id"`
-			ChannelID int64       `json:"channelId"`
-			KeyName   string      `json:"keyName"`
-			APIKey    string      `json:"apiKey"`
-			Enabled   *int        `json:"enabled"`
-			SortOrder *int        `json:"sortOrder"`
+			ID        int64         `json:"id"`
+			ChannelID int64         `json:"channelId"`
+			KeyName   string        `json:"keyName"`
+			APIKey    string        `json:"apiKey"`
+			Enabled   *int          `json:"enabled"`
+			SortOrder *int          `json:"sortOrder"`
 			CreatedAt jtime.APITime `json:"createdAt"`
 			UpdatedAt jtime.APITime `json:"updatedAt"`
 		}
-apiKeyItems := make([]akItem, 0, len(akRows))
-			for _, r := range akRows {
-				apiKeyItems = append(apiKeyItems, akItem{
-					ID:        r.I64("id", 0),
-					ChannelID: r.I64("channel_id", 0),
-					KeyName:   r.Str("key_name"),
-					APIKey:    r.Str("api_key"),
-					Enabled:   r.IntPtr("enabled"),
-					SortOrder: r.IntPtr("sort_order"),
-					CreatedAt: r.TimePtr("created_at"),
-					UpdatedAt: r.TimePtr("updated_at"),
-				})
-			}
-	
-			httpx.OK(c, httpx.NewOrderedMap().
-				Set("channel", channel).
-				Set("channelModels", models).
-				Set("apiKeys", apiKeyItems))
+		apiKeyItems := make([]akItem, 0, len(akRows))
+		for _, r := range akRows {
+			apiKeyItems = append(apiKeyItems, akItem{
+				ID:        r.I64("id", 0),
+				ChannelID: r.I64("channel_id", 0),
+				KeyName:   r.Str("key_name"),
+				APIKey:    r.Str("api_key"),
+				Enabled:   r.IntPtr("enabled"),
+				SortOrder: r.IntPtr("sort_order"),
+				CreatedAt: r.TimePtr("created_at"),
+				UpdatedAt: r.TimePtr("updated_at"),
+			})
+		}
+
+		httpx.OK(c, httpx.NewOrderedMap().
+			Set("channel", channel).
+			Set("channelModels", models).
+			Set("apiKeys", apiKeyItems))
 	})
 
 	// POST /admin/api/channels
@@ -388,9 +385,9 @@ apiKeyItems := make([]akItem, 0, len(akRows))
 			return
 		}
 		var body struct {
-			Message   string  `json:"message"`
-			APIKeyID  *int64  `json:"apiKeyId"`
-			ModelName string  `json:"modelName"`
+			Message   string `json:"message"`
+			APIKeyID  *int64 `json:"apiKeyId"`
+			ModelName string `json:"modelName"`
 		}
 		_ = c.ShouldBindJSON(&body)
 		if body.Message == "" {
@@ -488,15 +485,15 @@ apiKeyItems := make([]akItem, 0, len(akRows))
 	// DELETE /admin/api/channels/{id}/models/{modelId}
 	g.DELETE("/channels/:id/models/:modelId", func(c *gin.Context) {
 		ctx := c.Request.Context()
-modelID, ok := pathID(c, "modelId")
-			if !ok {
-				httpx.OK(c, failureEnvelope("参数错误"))
-				return
-			}
-			d.Store.Exec(ctx, "DELETE FROM model_channel_rels WHERE channel_model_id = ?", modelID)
-			d.Store.Exec(ctx, "DELETE FROM channel_models WHERE id = ?", modelID)
-			httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
-		})
+		modelID, ok := pathID(c, "modelId")
+		if !ok {
+			httpx.OK(c, failureEnvelope("参数错误"))
+			return
+		}
+		d.Store.Exec(ctx, "DELETE FROM model_channel_rels WHERE channel_model_id = ?", modelID)
+		d.Store.Exec(ctx, "DELETE FROM channel_models WHERE id = ?", modelID)
+		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
+	})
 
 	// DELETE /admin/api/channels/{channelId}/models
 	g.DELETE("/channels/:id/models", func(c *gin.Context) {
@@ -525,21 +522,26 @@ modelID, ok := pathID(c, "modelId")
 // ---------------------------------------------------------------------------
 
 type channelUsage struct {
-	RequestCount     int64
+	TotalAttempts    int64
+	SuccessCount     int64
 	PromptTokens     int64
 	CompletionTokens int64
 	TotalTokens      int64
 }
 
+// getChannelSummaryStats 聚合每个渠道的终态日志行。成功率分母 = success+retry+skip
+// 全部终态：retry 是带渠道名的可重试失败（超时/5xx 等），skip 是熔断/媒体不支持/400
+// 等跳过；fail 行按设计不带渠道名，不参与统计。token 仅累计 success 行。
 func getChannelSummaryStats(ctx context.Context, st *store.Store) map[string]channelUsage {
 	rows, err := st.Query(ctx,
 		`SELECT channel_name,
-		         COUNT(*) request_count,
-		         COALESCE(SUM(prompt_tokens),0) prompt_tokens,
-		         COALESCE(SUM(completion_tokens),0) completion_tokens,
-		         COALESCE(SUM(total_tokens),0) total_tokens
+		         COUNT(*) total_attempts,
+		         COALESCE(SUM(CASE WHEN phase='success' THEN 1 ELSE 0 END),0) success_count,
+		         COALESCE(SUM(CASE WHEN phase='success' THEN prompt_tokens ELSE 0 END),0) prompt_tokens,
+		         COALESCE(SUM(CASE WHEN phase='success' THEN completion_tokens ELSE 0 END),0) completion_tokens,
+		         COALESCE(SUM(CASE WHEN phase='success' THEN total_tokens ELSE 0 END),0) total_tokens
 		  FROM request_logs
-		 WHERE phase='success' AND channel_name IS NOT NULL AND channel_name != ''
+		 WHERE phase IN ('success','retry','skip') AND channel_name IS NOT NULL AND channel_name != ''
 		 GROUP BY channel_name`)
 	if err != nil {
 		return nil
@@ -547,7 +549,8 @@ func getChannelSummaryStats(ctx context.Context, st *store.Store) map[string]cha
 	out := make(map[string]channelUsage, len(rows))
 	for _, r := range rows {
 		out[r.Str("channel_name")] = channelUsage{
-			RequestCount:     r.I64("request_count", 0),
+			TotalAttempts:    r.I64("total_attempts", 0),
+			SuccessCount:     r.I64("success_count", 0),
 			PromptTokens:     r.I64("prompt_tokens", 0),
 			CompletionTokens: r.I64("completion_tokens", 0),
 			TotalTokens:      r.I64("total_tokens", 0),
@@ -557,13 +560,13 @@ func getChannelSummaryStats(ctx context.Context, st *store.Store) map[string]cha
 }
 
 type modelUsageStat struct {
-	ModelName               string `json:"modelName"`
-	RequestCount            int64  `json:"requestCount"`
-	PromptTokens            int64  `json:"promptTokens"`
-	CompletionTokens        int64  `json:"completionTokens"`
-	TotalTokens             int64  `json:"totalTokens"`
-	AvgResponseTimeRecent30 int64  `json:"avgResponseTimeRecent30"`
-	AvgOutputSpeedRecent30  float64 `json:"avgOutputSpeedRecent30"`
+	ModelName               string      `json:"modelName"`
+	RequestCount            int64       `json:"requestCount"`
+	PromptTokens            int64       `json:"promptTokens"`
+	CompletionTokens        int64       `json:"completionTokens"`
+	TotalTokens             int64       `json:"totalTokens"`
+	AvgResponseTimeRecent30 int64       `json:"avgResponseTimeRecent30"`
+	AvgOutputSpeedRecent30  float64     `json:"avgOutputSpeedRecent30"`
 	Today                   usagePeriod `json:"today"`
 	Week                    usagePeriod `json:"week"`
 	Month                   usagePeriod `json:"month"`
@@ -638,7 +641,10 @@ func getChannelModelUsageStats(ctx context.Context, st *store.Store, chName stri
 	rtAvg := make(map[string]int64)
 	spdAvg := make(map[string]float64)
 	rtSums := make(map[string]struct{ cnt, sum int64 })
-	spdSums := make(map[string]struct{ cnt int; sum float64 })
+	spdSums := make(map[string]struct {
+		cnt int
+		sum float64
+	})
 	for _, r := range recent30 {
 		name := r.Str("channel_model_name")
 		if fbm := r.I64Ptr("first_byte_ms"); fbm != nil && *fbm > 0 {
@@ -1178,7 +1184,6 @@ func countTokens(s string) (cjk, other int) {
 	}
 	return
 }
-
 
 func joinInts(ids []string) string {
 	return strings.Join(ids, ",")

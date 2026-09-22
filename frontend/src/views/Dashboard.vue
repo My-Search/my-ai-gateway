@@ -922,7 +922,7 @@ onUnmounted(() => {
 .rank-table tbody tr:hover { background: var(--bg-hover); }
 
 .col-idx { width: 34px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.col-num { width: 84px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.col-num { width: 84px; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: left; }
 .col-rate { width: 150px; }
 
 .btn-icon {

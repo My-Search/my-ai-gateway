@@ -15,11 +15,8 @@ export interface Channel {
   updatedAt?: string
   /** 启用模型数（列表接口返回） */
   modelCount?: number
-  // 用量统计字段（列表接口返回）
-  requestCount?: number
-  promptTokens?: number
-  completionTokens?: number
-  totalTokens?: number
+  /** 成功率（列表接口返回） */
+  successRate?: number
 }
 
 export interface ChannelModel {

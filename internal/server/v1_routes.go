@@ -152,36 +152,9 @@ func registerV1Routes(g *gin.RouterGroup, d Deps) {
 		c.Writer.Write([]byte(result.Body))
 	})
 
-	// GET /v1/models
+	// GET /v1/models — 获取模型列表，无需 API Key 认证
 	g.GET("/models", func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			authHeader = c.GetHeader("x-api-key")
-			if authHeader == "" {
-				c.JSON(401, relay.ErrorMapOpenAI(
-					"Authorization header is required. Expected: Authorization: Bearer sk-myai-xxx",
-					"authentication_error", 401))
-				return
-			}
-		}
-
-		// Validate the API key before returning models
-		keyValue := strings.TrimSpace(authHeader)
-		if strings.HasPrefix(keyValue, "Bearer ") {
-			keyValue = strings.TrimSpace(keyValue[7:])
-		} else {
-			keyValue = strings.TrimSpace(keyValue)
-		}
-
 		ctx := c.Request.Context()
-		_, err := d.Store.QueryOne(ctx, "SELECT id FROM api_keys WHERE key_value = ? AND enabled = 1", keyValue)
-		if err != nil {
-			c.JSON(401, relay.ErrorMapOpenAI(
-				"Invalid or disabled API key",
-				"authentication_error", 401))
-			return
-		}
-
 		rows, _ := d.Store.Query(ctx,
 			"SELECT m.id, m.model_name, m.description, m.created_at FROM models m WHERE m.enabled=1 AND m.hidden=0 ORDER BY m.created_at ASC")
 		type v1Model struct {

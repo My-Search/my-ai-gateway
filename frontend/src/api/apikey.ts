@@ -58,6 +58,10 @@ export const apikeyApi = {
   delete(id: number) {
     return http.delete<{ success: boolean }>(`/api-keys/${id}`)
   },
+  /** 获取所有 API Key 的日/周/月用量统计 */
+  usageStats() {
+    return http.get<Record<string, Record<string, ApiKeyPeriodStats>>>('/api-keys/usage-stats')
+  },
   /** 获取单个 API Key 的详细用量统计（按模型细分） */
   usageStatsDetail(id: number) {
     return http.get<ApiKeyUsageStatsDetail>(`/api-keys/${id}/usage-stats`)
