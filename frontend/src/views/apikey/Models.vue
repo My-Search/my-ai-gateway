@@ -183,9 +183,13 @@ function getDisplayStat(stat: ApiKeyModelUsageStat | undefined) {
   }
 }
 
-/** Models sorted by request count descending for the selected period */
+/** Models sorted by request count descending for the selected period (ties broken by name for a stable rank) */
 const sortedModels = computed(() =>
-  [...modelStats.value].sort((a, b) => getDisplayStat(b).requestCount - getDisplayStat(a).requestCount)
+  [...modelStats.value].sort(
+    (a, b) =>
+      getDisplayStat(b).requestCount - getDisplayStat(a).requestCount ||
+      a.modelName.localeCompare(b.modelName)
+  )
 )
 
 const totalRequestCount = computed(() =>

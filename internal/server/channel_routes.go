@@ -44,9 +44,6 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 			}
 		}
 
-		// Channel summary stats
-		usageStats := getChannelSummaryStats(ctx, d.Store)
-
 		type chItem struct {
 			ID                  int64         `json:"id"`
 			Name                string        `json:"name"`
@@ -59,14 +56,12 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 			ModelRefreshEnabled *int          `json:"modelRefreshEnabled"`
 			CustomHeaders       *string       `json:"customHeaders"`
 			ModelCount          int           `json:"modelCount"`
-			SuccessRate         *float64      `json:"successRate"`
 		}
 
 		out := make([]chItem, 0, len(rows))
 		for _, r := range rows {
 			ch := store.RowToChannel(r)
 			id := ch.ID
-			us, has := usageStats[ch.Name]
 			item := chItem{
 				ID:                  id,
 				Name:                ch.Name,
@@ -79,12 +74,6 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 				ModelRefreshEnabled: ch.ModelRefreshEnabled,
 				CustomHeaders:       ch.CustomHeaders,
 				ModelCount:          modelCounts[id],
-			}
-			if has {
-				if us.TotalAttempts > 0 {
-					v := float64(int64(float64(us.SuccessCount)/float64(us.TotalAttempts)*1000+0.5)) / 10.0
-					item.SuccessRate = &v
-				}
 			}
 			out = append(out, item)
 		}
@@ -284,9 +273,25 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 		cmRows, _ := d.Store.Query(ctx, "SELECT * FROM channel_models WHERE channel_id = ? AND enabled = 1", id)
+		// 关联状态：被 model_channel_rels 中至少一条记录引用即为已关联（与入口模型建立过关联关系）
+		linkedSet := make(map[int64]bool, len(cmRows))
+		if len(cmRows) > 0 {
+			cmIDs := make([]string, 0, len(cmRows))
+			for _, r := range cmRows {
+				cmIDs = append(cmIDs, strconv.FormatInt(r.I64("id", 0), 10))
+			}
+			relRows, _ := d.Store.Query(ctx,
+				"SELECT DISTINCT channel_model_id FROM model_channel_rels WHERE channel_model_id IN ("+joinInts(cmIDs)+")")
+			for _, rr := range relRows {
+				linkedSet[rr.I64("channel_model_id", 0)] = true
+			}
+		}
 		outModels := make([]models.ChannelModel, 0, len(cmRows))
 		for _, r := range cmRows {
-			outModels = append(outModels, store.RowToChannelModel(r))
+			m := store.RowToChannelModel(r)
+			linked := linkedSet[m.ID]
+			m.Linked = &linked
+			outModels = append(outModels, m)
 		}
 		httpx.OK(c, httpx.NewOrderedMap().
 			Set("channel", map[string]any{"id": chRow.I64("id", 0), "name": chRow.Str("name"), "channelType": chRow.Str("channel_type")}).
@@ -520,44 +525,6 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 // ---------------------------------------------------------------------------
 // Helper types and functions
 // ---------------------------------------------------------------------------
-
-type channelUsage struct {
-	TotalAttempts    int64
-	SuccessCount     int64
-	PromptTokens     int64
-	CompletionTokens int64
-	TotalTokens      int64
-}
-
-// getChannelSummaryStats 聚合每个渠道的终态日志行。成功率分母 = success+retry+skip
-// 全部终态：retry 是带渠道名的可重试失败（超时/5xx 等），skip 是熔断/媒体不支持/400
-// 等跳过；fail 行按设计不带渠道名，不参与统计。token 仅累计 success 行。
-func getChannelSummaryStats(ctx context.Context, st *store.Store) map[string]channelUsage {
-	rows, err := st.Query(ctx,
-		`SELECT channel_name,
-		         COUNT(*) total_attempts,
-		         COALESCE(SUM(CASE WHEN phase='success' THEN 1 ELSE 0 END),0) success_count,
-		         COALESCE(SUM(CASE WHEN phase='success' THEN prompt_tokens ELSE 0 END),0) prompt_tokens,
-		         COALESCE(SUM(CASE WHEN phase='success' THEN completion_tokens ELSE 0 END),0) completion_tokens,
-		         COALESCE(SUM(CASE WHEN phase='success' THEN total_tokens ELSE 0 END),0) total_tokens
-		  FROM request_logs
-		 WHERE phase IN ('success','retry','skip') AND channel_name IS NOT NULL AND channel_name != ''
-		 GROUP BY channel_name`)
-	if err != nil {
-		return nil
-	}
-	out := make(map[string]channelUsage, len(rows))
-	for _, r := range rows {
-		out[r.Str("channel_name")] = channelUsage{
-			TotalAttempts:    r.I64("total_attempts", 0),
-			SuccessCount:     r.I64("success_count", 0),
-			PromptTokens:     r.I64("prompt_tokens", 0),
-			CompletionTokens: r.I64("completion_tokens", 0),
-			TotalTokens:      r.I64("total_tokens", 0),
-		}
-	}
-	return out
-}
 
 type modelUsageStat struct {
 	ModelName               string      `json:"modelName"`

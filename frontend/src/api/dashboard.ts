@@ -53,6 +53,15 @@ export interface ChannelModelRankItem extends ModelRankItem {
   channelName: string
 }
 
+/** 密钥排行（按网关 API Key 聚合，字段口径与渠道排行一致） */
+export interface KeyRankItem {
+  name: string
+  requests: number
+  success: number
+  totalTokens: number
+  avgTime: number
+}
+
 /** 卡片迷你趋势线（每项 32 个采样点，跟随所选时间段） */
 export interface DashboardSparklines {
   requests: number[]
@@ -69,6 +78,7 @@ export interface DashboardStats {
   channelRank: ChannelRankItem[]
   modelRank: ModelRankItem[]
   channelModelRank: ChannelModelRankItem[]
+  keyRank: KeyRankItem[]
 }
 
 export interface TodayTrendData {

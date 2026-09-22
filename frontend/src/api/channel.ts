@@ -15,8 +15,6 @@ export interface Channel {
   updatedAt?: string
   /** 启用模型数（列表接口返回） */
   modelCount?: number
-  /** 成功率（列表接口返回） */
-  successRate?: number
 }
 
 export interface ChannelModel {
@@ -24,6 +22,10 @@ export interface ChannelModel {
   channelId: number
   modelName: string
   displayName: string
+  /** 输入类型（text/image，逗号分隔），GET /channels/:id/models 返回 */
+  input?: string
+  /** 关联状态：是否被至少一个入口模型关联（GET /channels/:id/models 返回） */
+  linked?: boolean
 }
 
 export interface ChannelApiKey {

@@ -23,16 +23,6 @@
             <th>{{ t('apikey.list.status') }}</th>
             <th>{{ t('apikey.list.share') }}</th>
             <th>{{ t('apikey.list.lastUsed') }}</th>
-            <th style="min-width:140px;">
-              <div style="display:flex;align-items:center;gap:4px;white-space:nowrap;">
-                <select v-model="period" class="period-select">
-                  <option value="day">{{ t('apikey.list.today') }}</option>
-                  <option value="week">{{ t('apikey.list.week') }}</option>
-                  <option value="month">{{ t('apikey.list.month') }}</option>
-                </select>
-                <span class="period-label">{{ t('apikey.list.requests') }} / {{ t('apikey.list.tokenUsage') }}</span>
-              </div>
-            </th>
             <th>{{ t('apikey.list.createdAt') }}</th>
             <th>{{ t('apikey.list.actions') }}</th>
           </tr>
@@ -75,32 +65,17 @@
               </div>
             </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ key.lastUsedAt ? formatLocalDateTimeFull(key.lastUsedAt) : t('apikey.list.neverUsed') }}</td>
-            <td style="font-size:12px;font-variant-numeric:tabular-nums;">
-              <div style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
-                <span style="font-weight:600;white-space:nowrap;">{{ formatNumber(getKeyStats(key).requestCount) }}{{ t('apikey.list.times') }}</span>
-                <span v-if="getKeyStats(key).totalTokens > 0" class="sep" style="color:var(--text-muted);">|</span>
-                <template v-if="getKeyStats(key).totalTokens > 0">
-                  <span :title="t('apikey.list.inputTokens') + ': ' + formatNumber(getKeyStats(key).promptTokens) + ' | ' + t('apikey.list.outputTokens') + ': ' + formatNumber(getKeyStats(key).completionTokens)" style="white-space:nowrap;">
-                    {{ formatTokens(getKeyStats(key).totalTokens) }}
-                  </span>
-                  <span style="color:var(--text-muted);font-size:11px;white-space:nowrap;">
-                    {{ t('apikey.list.showTokens') }} {{ formatTokens(getKeyStats(key).promptTokens) }}/{{ formatTokens(getKeyStats(key).completionTokens) }}
-                  </span>
-                </template>
-                <span v-else style="color:var(--text-muted);">-</span>
-                <router-link :to="`/admin/apikey/usage/${key.id}`" class="btn btn-sm btn-secondary" style="margin-left:auto;">{{ t('apikey.list.view') }}</router-link>
-              </div>
-            </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(key.createdAt) }}</td>
             <td>
               <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <router-link :to="`/admin/apikey/usage/${key.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="detail" :size="14" /> {{ t('apikey.list.view') }}</router-link>
                 <button class="btn btn-sm btn-secondary" @click="openForm(key)"><SvgIcon name="edit" :size="14" /> {{ t('apikey.list.edit') }}</button>
                 <button class="btn btn-sm btn-danger" @click="confirmDelete(key)"><SvgIcon name="trash" :size="14" /> {{ t('apikey.list.delete') }}</button>
               </div>
             </td>
           </tr>
           <tr v-if="!apiKeys.length">
-            <td colspan="8" style="text-align:center;color:var(--text-muted);padding:40px;">
+            <td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;">
               {{ t('apikey.list.empty') }}
             </td>
           </tr>
@@ -129,22 +104,6 @@
         <div class="mobile-card-row">
           <span class="mobile-card-label">{{ t('apikey.list.lastUsed') }}</span>
           <span class="mobile-card-value">{{ key.lastUsedAt ? formatLocalDateTimeFull(key.lastUsedAt) : t('apikey.list.neverUsed') }}</span>
-        </div>
-        <div class="mobile-card-row">
-          <span class="mobile-card-label">{{ t('apikey.list.requests') }} / {{ t('apikey.list.tokenUsage') }}</span>
-          <span class="mobile-card-value" style="font-size:12px;">
-            <span style="font-weight:600;">{{ formatNumber(getKeyStats(key).requestCount) }}{{ t('apikey.list.times') }}</span>
-            <template v-if="getKeyStats(key).totalTokens > 0">
-              <span class="sep" style="color:var(--text-muted);margin:0 4px;">|</span>
-              <span :title="t('apikey.list.inputTokens') + ': ' + formatNumber(getKeyStats(key).promptTokens) + ' | ' + t('apikey.list.outputTokens') + ': ' + formatNumber(getKeyStats(key).completionTokens)">
-                {{ formatTokens(getKeyStats(key).totalTokens) }}
-              </span>
-              <span style="color:var(--text-muted);font-size:11px;margin-left:2px;">
-                {{ t('apikey.list.showTokens') }}{{ formatTokens(getKeyStats(key).promptTokens) }}/{{ formatTokens(getKeyStats(key).completionTokens) }}
-              </span>
-            </template>
-            <span v-else style="color:var(--text-muted);">-</span>
-          </span>
         </div>
         <div class="mobile-card-row">
           <span class="mobile-card-label">{{ t('apikey.list.createdAt') }}</span>
@@ -229,9 +188,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onActivated, watch } from 'vue'
+import { ref, onMounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
-import { apikeyApi, type ApiKey, type ApiKeyPeriodStats } from '@/api/apikey'
+import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { shareApi } from '@/api/share'
 import Dialog from '@/components/common/Dialog.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
@@ -241,7 +200,6 @@ import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import { formatLocalDateTimeFull } from '@/utils/date'
-import { formatNumber, formatTokens } from '@/utils/format'
 
 const { t } = useI18n()
 const { visible, title, message, type, confirmClass, confirmText, onConfirm, open } = useDialog()
@@ -251,38 +209,8 @@ const router = useRouter()
 
 const apiKeys = ref<ApiKey[]>([])
 const loading = ref(true)
-const period = ref('day')
-const usageStats = ref<Record<string, Record<string, ApiKeyPeriodStats>>>({})
 /** 切换分享状态：按钮防重复点击用的 id */
 const shareToggling = ref<number | null>(null)
-
-/** 根据当前选中周期获取某个密钥的统计数据 */
-function getKeyStats(key: ApiKey) {
-  if (period.value === 'day') {
-    return {
-      requestCount: key.requestCount ?? 0,
-      promptTokens: key.promptTokens ?? 0,
-      completionTokens: key.completionTokens ?? 0,
-      totalTokens: key.totalTokens ?? 0,
-    }
-  }
-  const id = String(key.id)
-  const p = usageStats.value[period.value]?.[id]
-  if (p) {
-    return {
-      requestCount: p.requestCount,
-      promptTokens: p.promptTokens ?? 0,
-      completionTokens: p.completionTokens ?? 0,
-      totalTokens: p.totalTokens,
-    }
-  }
-  return { requestCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 }
-}
-
-/** 切换周期时重新加载列表 */
-watch(period, () => {
-  loadKeys()
-})
 
 /* ---------- Form Dialog state ---------- */
 const formDialogVisible = ref(false)
@@ -454,12 +382,8 @@ function confirmDelete(key: ApiKey) {
 async function loadKeys() {
   loading.value = true
   try {
-    const [listRes, statsRes] = await Promise.all([
-      apikeyApi.list(),
-      apikeyApi.usageStats()
-    ])
+    const listRes = await apikeyApi.list()
     apiKeys.value = listRes.data
-    usageStats.value = statsRes.data
   } catch (e: any) {
     open({ title: t('error.loadFailed'), message: e.message })
   } finally {
@@ -577,42 +501,6 @@ onActivated(() => {
   color: var(--text-muted);
   padding: 40px 16px;
   font-size: 14px;
-}
-
-/* Period select + label in table header — match global table th styling */
-.period-select {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  background: transparent;
-  border: none;
-  outline: none;
-  padding: 0;
-  padding-right: 12px;
-  cursor: pointer;
-  appearance: none;
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='6'%3E%3Cpath d='M0 0l4 6 4-6z' fill='%23aaa'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right center;
-}
-.period-select option {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-}
-[data-theme="dark"] .period-select {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='6'%3E%3Cpath d='M0 0l4 6 4-6z' fill='%23777'/%3E%3C/svg%3E");
-  color-scheme: dark;
-}
-.period-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
 }
 
 @media (max-width: 768px) {

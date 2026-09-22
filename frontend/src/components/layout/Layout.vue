@@ -47,9 +47,9 @@
 
       <!-- Content area -->
       <div class="content-area">
-        <!-- 仅缓存主菜单页面（切换流畅、保留状态）；表单/详情等参数页不缓存，保证切换 id 重新加载 -->
+        <!-- 仅缓存主菜单页面（切换流畅、保留状态）；参数页靠 :key 按路径强制重挂载，切换 id 时重新加载 -->
         <keep-alive :include="cachedViews">
-          <router-view />
+          <router-view :key="$route.path" />
         </keep-alive>
       </div>
     </div>

@@ -65,6 +65,8 @@ type ChannelModel struct {
 	ChannelName    *string `json:"channelName"`
 	ChannelType    *string `json:"channelType"`
 	APIKeyName     *string `json:"apiKeyName"`
+	// 关联状态：是否被至少一个入口模型关联（仅渠道模型列表接口计算返回，其余接口省略）
+	Linked         *bool   `json:"linked,omitempty"`
 }
 
 // Model mirrors models.

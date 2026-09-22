@@ -77,7 +77,10 @@
               </span>
               <span v-else class="text-muted">text</span>
             </td>
-            <td style="white-space:nowrap;"><span class="badge badge-success">{{ t('channel.models.linked') }}</span></td>
+            <td style="white-space:nowrap;">
+              <span v-if="m.linked" class="badge badge-success">{{ t('channel.models.linked') }}</span>
+              <span v-else class="badge badge-warning">{{ t('channel.models.unlinked') }}</span>
+            </td>
             <td style="text-align:right;font-variant-numeric:tabular-nums;">
               <span style="font-weight:600;">{{ formatNumber(getDisplayStat(getModelStat(m.modelName)).requestCount) }}</span>
             </td>
@@ -115,7 +118,8 @@
         <div v-for="m in sortedModels" :key="m.id" class="mobile-model-card">
           <div class="mobile-card-header">
             <span class="mobile-card-title">{{ m.displayName || m.modelName }}</span>
-            <span class="badge badge-success">{{ t('channel.models.linked') }}</span>
+            <span v-if="m.linked" class="badge badge-success">{{ t('channel.models.linked') }}</span>
+            <span v-else class="badge badge-warning">{{ t('channel.models.unlinked') }}</span>
           </div>
           <div class="mobile-card-model-name">
             {{ t('channel.models.modelName') }}: <code class="model-tag">{{ m.modelName }}</code>
@@ -194,12 +198,14 @@ function getModelStat(modelName: string): ModelUsageStat | undefined {
 type Period = 'all' | 'today' | 'week' | 'month'
 const period = ref<Period>('all')
 
+const EMPTY = { requestCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+
 /** Get display stats for the currently selected period */
 function getDisplayStat(stat: ModelUsageStat | undefined) {
-  if (!stat) return { requestCount: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 }
-  if (period.value === 'today') return stat.today
-  if (period.value === 'week') return stat.week
-  if (period.value === 'month') return stat.month
+  if (!stat) return EMPTY
+  if (period.value === 'today') return stat.today ?? EMPTY
+  if (period.value === 'week') return stat.week ?? EMPTY
+  if (period.value === 'month') return stat.month ?? EMPTY
   return {
     requestCount: stat.requestCount,
     promptTokens: stat.promptTokens,
@@ -208,12 +214,12 @@ function getDisplayStat(stat: ModelUsageStat | undefined) {
   }
 }
 
-/** Models sorted by request count descending for the selected period */
+/** Models sorted by request count descending for the selected period (ties broken by name for a stable rank) */
 const sortedModels = computed(() => {
   return [...models.value].sort((a, b) => {
     const countA = getDisplayStat(getModelStat(a.modelName)).requestCount
     const countB = getDisplayStat(getModelStat(b.modelName)).requestCount
-    return countB - countA
+    return countB - countA || a.modelName.localeCompare(b.modelName)
   })
 })
 

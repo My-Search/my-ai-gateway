@@ -45,12 +45,18 @@ func newDashboardTestStore(t *testing.T) *store.Store {
 	if _, err := db.Exec(`CREATE TABLE request_logs (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		trace_id TEXT, phase TEXT, model_name TEXT, channel_name TEXT,
-		channel_model_name TEXT, created_at TEXT)`); err != nil {
+		channel_model_name TEXT, total_tokens INTEGER DEFAULT 0,
+		first_byte_ms INTEGER, gateway_api_key_id INTEGER, created_at TEXT)`); err != nil {
 		t.Fatal(err)
 	}
 	// The dashboard queries pin this index with INDEXED BY, so it must exist.
 	if _, err := db.Exec(
 		`CREATE INDEX idx_request_logs_created_at_phase_trace ON request_logs(created_at, phase, trace_id)`); err != nil {
+		t.Fatal(err)
+	}
+	// The key ranking joins api_keys for the display name.
+	if _, err := db.Exec(
+		`CREATE TABLE api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, key_name TEXT NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
 	return store.New(db, nil)
@@ -64,6 +70,33 @@ func insertLog(t *testing.T, st *store.Store, traceID, phase string, at time.Tim
 		`INSERT INTO request_logs (trace_id, phase, model_name, channel_name, channel_model_name, created_at)
 		 VALUES (?,?,?,?,?,?)`,
 		traceID, phase, "m1", "c1", "cm1", at.UTC().Format("2006-01-02T15:04:05.000000000")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// insertKeyLog writes a request_logs row attributed to a gateway API key, with
+// the first-byte / token columns the key ranking aggregates. firstByteMs is
+// written verbatim (0 rows are excluded from avg_time by the >0 predicate).
+func insertKeyLog(t *testing.T, st *store.Store, traceID, phase string, at time.Time,
+	keyID, firstByteMs, tokens int64) {
+	t.Helper()
+	if _, err := st.Exec(context.Background(),
+		`INSERT INTO request_logs
+		   (trace_id, phase, model_name, channel_name, channel_model_name,
+		    gateway_api_key_id, first_byte_ms, total_tokens, created_at)
+		 VALUES (?,?,?,?,?,?,?,?,?)`,
+		traceID, phase, "m1", "c1", "cm1", keyID, firstByteMs, tokens,
+		at.UTC().Format("2006-01-02T15:04:05.000000000")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// insertAPIKey creates an api_keys row with an explicit id so a test can point
+// logs at it (and at ids that intentionally have no row).
+func insertAPIKey(t *testing.T, st *store.Store, id int64, name string) {
+	t.Helper()
+	if _, err := st.Exec(context.Background(),
+		"INSERT INTO api_keys (id, key_name) VALUES (?, ?)", id, name); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -505,5 +538,60 @@ func TestDashboardStatsEmptyStoreReportsWindow(t *testing.T) {
 	}
 	if body.Totals.Requests != 0 {
 		t.Errorf("totals.requests = %d, want 0", body.Totals.Requests)
+	}
+}
+
+// The dashboard must ship a per-gateway-key ranking. request_logs only carries
+// gateway_api_key_id (api_key_name holds the *channel* key name), so the
+// handler has to join api_keys for the display name — and a key deleted after
+// its traffic must still appear under a placeholder rather than silently
+// dropping its requests from the window.
+func TestDashboardStatsKeyRankJoinsKeyNames(t *testing.T) {
+	st := newDashboardTestStore(t)
+	insertAPIKey(t, st, 1, "alpha-key")
+
+	// alpha-key: two started traces, one succeeded (avg first byte 100ms).
+	insertKeyLog(t, st, "k1", "start", shanghai(2026, 9, 1, 9, 35, 0), 1, 0, 0)
+	insertKeyLog(t, st, "k1", "success", shanghai(2026, 9, 1, 9, 35, 5), 1, 100, 50)
+	insertKeyLog(t, st, "k2", "start", shanghai(2026, 9, 1, 10, 0, 0), 1, 0, 0)
+	// Key 99 no longer exists in api_keys: still ranked, under a placeholder.
+	insertKeyLog(t, st, "k3", "start", shanghai(2026, 9, 1, 11, 0, 0), 99, 0, 0)
+	insertKeyLog(t, st, "k3", "success", shanghai(2026, 9, 1, 11, 0, 1), 99, 300, 20)
+	// Rows without a gateway key must not surface in the ranking.
+	insertLog(t, st, "k4", "start", shanghai(2026, 9, 1, 11, 30, 0))
+
+	router := gin.New()
+	registerDashboardRoutes(router.Group("/admin/api"), Deps{Store: st})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest("GET",
+		"/admin/api/dashboard/stats?range=custom&from=2026-09-01T09:30:00&to=2026-09-01T12:00:00", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		KeyRank []struct {
+			Name        string `json:"name"`
+			Requests    int64  `json:"requests"`
+			Success     int64  `json:"success"`
+			TotalTokens int64  `json:"totalTokens"`
+			AvgTime     int64  `json:"avgTime"`
+		} `json:"keyRank"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.KeyRank) != 2 {
+		t.Fatalf("keyRank = %+v, want 2 rows (ranked by requests desc)", body.KeyRank)
+	}
+	alpha := body.KeyRank[0]
+	if alpha.Name != "alpha-key" || alpha.Requests != 2 || alpha.Success != 1 {
+		t.Errorf("keyRank[0] = %+v, want alpha-key with 2 requests / 1 success", alpha)
+	}
+	if alpha.TotalTokens != 50 || alpha.AvgTime != 100 {
+		t.Errorf("keyRank[0] tokens/avg = %d/%d, want 50/100", alpha.TotalTokens, alpha.AvgTime)
+	}
+	deleted := body.KeyRank[1]
+	if deleted.Name != "已删除密钥 #99" || deleted.Requests != 1 || deleted.Success != 1 {
+		t.Errorf("keyRank[1] = %+v, want 已删除密钥 #99 with 1 request / 1 success", deleted)
 	}
 }

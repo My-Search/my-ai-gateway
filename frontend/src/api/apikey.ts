@@ -9,11 +9,6 @@ export interface ApiKey {
   shared?: number
   lastUsedAt?: string
   createdAt?: string
-  /** 全量统计（列表接口内嵌，与渠道列表一致） */
-  requestCount?: number
-  promptTokens?: number
-  completionTokens?: number
-  totalTokens?: number
 }
 
 /** API Key 单周期用量统计 */
@@ -57,10 +52,6 @@ export const apikeyApi = {
   },
   delete(id: number) {
     return http.delete<{ success: boolean }>(`/api-keys/${id}`)
-  },
-  /** 获取所有 API Key 的日/周/月用量统计 */
-  usageStats() {
-    return http.get<Record<string, Record<string, ApiKeyPeriodStats>>>('/api-keys/usage-stats')
   },
   /** 获取单个 API Key 的详细用量统计（按模型细分） */
   usageStatsDetail(id: number) {

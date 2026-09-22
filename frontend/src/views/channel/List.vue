@@ -25,7 +25,6 @@
             <th>{{ t('channel.list.endpoint') }}</th>
             <th>{{ t('channel.list.status') }}</th>
             <th>{{ t('channel.list.modelCount') }}</th>
-            <th>{{ t('channel.list.successRate') }}</th>
             <th>{{ t('channel.list.createdAt') }}</th>
             <th>{{ t('channel.list.actions') }}</th>
           </tr>
@@ -51,18 +50,10 @@
             <td>
               <span style="font-weight:600;white-space:nowrap;">{{ formatNumber(ch.modelCount ?? 0) }}</span>
             </td>
-            <td style="font-variant-numeric:tabular-nums;">
-              <div style="display:flex;align-items:center;gap:3px;">
-                <span v-if="ch.successRate != null" :style="{color: ch.successRate >= 90 ? 'var(--accent-green)' : ch.successRate >= 70 ? 'var(--accent-yellow)' : 'var(--accent-red)', fontWeight: 600}">
-                  {{ ch.successRate.toFixed(1) }}%
-                </span>
-                <span v-else style="color:var(--text-muted);">-</span>
-                <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary" style="margin-left:auto;">{{ t('channel.list.view') }}</router-link>
-              </div>
-            </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(ch.createdAt) }}</td>
             <td>
               <div style="display:flex;gap:6px;flex-wrap:nowrap;">
+                <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="detail" :size="14" /> {{ t('channel.list.view') }}</router-link>
                 <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> {{ t('channel.list.quickTest') }}</button>
                 <router-link :to="`/admin/channel/reload/${ch.id}`" class="btn btn-sm btn-secondary"
                   @click.prevent="reloadModels(ch.id!)"><SvgIcon name="refresh" :size="14" /> {{ t('channel.list.refreshModels') }}</router-link>
@@ -72,7 +63,7 @@
             </td>
           </tr>
           <tr v-if="!channels.length">
-            <td colspan="8" style="text-align:center;color:var(--text-muted);padding:40px;">
+            <td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;">
               {{ t('channel.list.empty') }}
             </td>
           </tr>
@@ -110,11 +101,6 @@
           <div class="mobile-card-stat">
             <span class="mobile-card-stat-label">{{ t('channel.list.modelCount') }}</span>
             <span class="mobile-card-stat-value">{{ formatNumber(ch.modelCount ?? 0) }}</span>
-          </div>
-          <div class="mobile-card-stat">
-            <span class="mobile-card-stat-label">{{ t('channel.list.successRate') }}</span>
-            <span class="mobile-card-stat-value" v-if="ch.successRate != null" :style="{color: ch.successRate >= 90 ? 'var(--accent-green)' : ch.successRate >= 70 ? 'var(--accent-yellow)' : 'var(--accent-red)'}">{{ ch.successRate.toFixed(1) }}%</span>
-            <span class="mobile-card-stat-value" v-else style="color:var(--text-muted);">-</span>
           </div>
           <div class="mobile-card-stat">
             <span class="mobile-card-stat-label">{{ t('channel.list.createdAt') }}</span>

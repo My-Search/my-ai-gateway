@@ -273,6 +273,48 @@
         </table>
         </div>
       </div>
+
+      <!-- 密钥排行（与渠道/模型排行同网格、等宽占半行，按网关 API Key 聚合） -->
+      <div class="card rank-card">
+        <div class="card-header">
+          <div class="card-title"><SvgIcon name="key" :size="18" /> {{ t('dashboard.keyRank') }}</div>
+          <router-link to="/admin/apikey/list" class="view-all-link">{{ t('dashboard.viewAll') }}</router-link>
+        </div>
+        <div v-if="loading" class="rank-state"><LoadingSpinner :text="t('common.loading')" /></div>
+        <div v-else-if="!stats.keyRank?.length" class="rank-state">{{ t('dashboard.noRankData') }}</div>
+        <div v-else class="table-scroll">
+          <table class="rank-table">
+            <thead>
+              <tr>
+                <th class="col-idx">#</th>
+                <th>{{ t('dashboard.rankKeyName') }}</th>
+                <th class="col-num">{{ t('dashboard.rankRequests') }}</th>
+                <th class="col-rate">{{ t('dashboard.rankSuccessRate') }}</th>
+                <th class="col-num">{{ t('dashboard.rankAvgTime') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(k, idx) in stats.keyRank" :key="k.name">
+                <td class="col-idx">{{ idx + 1 }}</td>
+                <td>
+                  <div class="rank-name-cell">
+                    <span class="rank-avatar" :style="{ background: iconGradient(k.name) }">{{ (k.name || '?').charAt(0).toUpperCase() }}</span>
+                    <span class="rank-name-text">{{ k.name }}</span>
+                  </div>
+                </td>
+                <td class="col-num">{{ formatNumber(k.requests) }}</td>
+                <td class="col-rate">
+                  <div class="rate-cell">
+                    <span class="rate-text">{{ successRateOf(k) }}%</span>
+                    <span class="rate-bar"><span class="rate-bar-fill" :style="{ width: successRateOf(k) + '%' }"></span></span>
+                  </div>
+                </td>
+                <td class="col-num">{{ k.avgTime > 0 ? formatSeconds(k.avgTime) : '-' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 </template>

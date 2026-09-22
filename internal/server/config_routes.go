@@ -234,6 +234,25 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 			    AND channel_model_name IS NOT NULL AND channel_model_name != ''
 			  GROUP BY channel_name, channel_model_name ORDER BY requests DESC LIMIT 10`,
 			jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
+		// Top-10 gateway API key ranking. request_logs only carries
+		// gateway_api_key_id (api_key_name holds the *channel* key name), so the
+		// display name is joined from api_keys; a key deleted after its traffic
+		// still ranks under a "已删除密钥 #id" placeholder instead of vanishing
+		// from a window it served. The range scan stays inside the subquery so
+		// INDEXED BY keeps pinning idx_request_logs_created_at_phase_trace.
+		keyRows, _ := d.Store.QueryReadOnly(ctx,
+			`SELECT COALESCE(NULLIF(k.key_name, ''), '已删除密钥 #' || r.gateway_api_key_id) AS name,
+			        COUNT(DISTINCT CASE WHEN r.phase='start' THEN r.trace_id END) AS requests,
+			        COUNT(DISTINCT CASE WHEN r.phase='success' THEN r.trace_id END) AS success,
+			        AVG(CASE WHEN r.first_byte_ms>0 THEN r.first_byte_ms END) AS avg_time,
+			        COALESCE(SUM(CASE WHEN r.phase='success' THEN COALESCE(r.total_tokens,0) ELSE 0 END),0) AS total_tokens
+			   FROM (SELECT trace_id, phase, first_byte_ms, total_tokens, gateway_api_key_id
+			           FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
+			          WHERE created_at >= ? AND created_at < ? AND phase IN ('start','success')
+			            AND gateway_api_key_id IS NOT NULL) r
+			   LEFT JOIN api_keys k ON k.id = r.gateway_api_key_id
+			  GROUP BY r.gateway_api_key_id ORDER BY requests DESC LIMIT 10`,
+			jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
 
 		out := httpx.NewOrderedMap().
 			Set("range", dr.meta()).
@@ -242,7 +261,8 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 			Set("sparklines", dashSparklines(ctx, d, dr)).
 			Set("channelRank", channelRankList(chRows)).
 			Set("modelRank", modelRankList(mdlRows)).
-			Set("channelModelRank", channelModelRankList(cmRows))
+			Set("channelModelRank", channelModelRankList(cmRows)).
+			Set("keyRank", channelRankList(keyRows))
 
 		// 写入缓存
 		d.DashCache.Set(cacheKey, cacheFrom, cacheTo, out)

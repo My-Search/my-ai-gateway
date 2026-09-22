@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -24,29 +23,22 @@ func registerAPIKeyRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 
-		// Key summary stats (today only), same shape as the channel list
-		usageStats := getAPIKeySummaryStats(ctx, d.Store)
-
 		type akItem struct {
-			ID               int64         `json:"id"`
-			KeyName          string        `json:"keyName"`
-			KeyValue         string        `json:"keyValue"`
-			Enabled          *int          `json:"enabled"`
-			ShareCode        *string       `json:"shareCode"`
-			Shared           *int          `json:"shared"`
-			LastUsedAt       jtime.APITime `json:"lastUsedAt"`
-			CreatedAt        jtime.APITime `json:"createdAt"`
-			UpdatedAt        jtime.APITime `json:"updatedAt"`
-			RequestCount     int64         `json:"requestCount"`
-			PromptTokens     int64         `json:"promptTokens"`
-			CompletionTokens int64         `json:"completionTokens"`
-			TotalTokens      int64         `json:"totalTokens"`
+			ID         int64         `json:"id"`
+			KeyName    string        `json:"keyName"`
+			KeyValue   string        `json:"keyValue"`
+			Enabled    *int          `json:"enabled"`
+			ShareCode  *string       `json:"shareCode"`
+			Shared     *int          `json:"shared"`
+			LastUsedAt jtime.APITime `json:"lastUsedAt"`
+			CreatedAt  jtime.APITime `json:"createdAt"`
+			UpdatedAt  jtime.APITime `json:"updatedAt"`
 		}
 
 		out := make([]akItem, 0, len(rows))
 		for _, r := range rows {
 			k := store.RowToAPIKey(r)
-			item := akItem{
+			out = append(out, akItem{
 				ID:         k.ID,
 				KeyName:    k.KeyName,
 				KeyValue:   k.KeyValue,
@@ -56,15 +48,7 @@ func registerAPIKeyRoutes(g *gin.RouterGroup, d Deps) {
 				LastUsedAt: k.LastUsedAt,
 				CreatedAt:  k.CreatedAt,
 				UpdatedAt:  k.UpdatedAt,
-			}
-			if us, ok := usageStats[k.ID]; ok {
-				// 汇总查询只统计 phase='success' 的行，成功数即请求次数
-				item.RequestCount = us.SuccessCount
-				item.PromptTokens = us.PromptTokens
-				item.CompletionTokens = us.CompletionTokens
-				item.TotalTokens = us.TotalTokens
-			}
-			out = append(out, item)
+			})
 		}
 		httpx.OK(c, out)
 	})
@@ -228,86 +212,6 @@ func registerAPIKeyRoutes(g *gin.RouterGroup, d Deps) {
 			Set("keyAvgResponseTimeRecent30", usage.KeyAvgResponseTimeRecent30).
 			Set("keyAvgOutputSpeedRecent30", usage.KeyAvgOutputSpeedRecent30))
 	})
-
-	// GET /admin/api/api-keys/usage-stats
-	g.GET("/api-keys/usage-stats", func(c *gin.Context) {
-		ctx := c.Request.Context()
-		now := time.Now().UTC().In(jtime.Shanghai)
-		todayStart := jtime.ShanghaiStart(now)
-		weekStart := jtime.ShanghaiWeekStart(now)
-		monthStart := jtime.ShanghaiMonthStart(now)
-
-		out := make(map[string]any)
-		periods := []struct {
-			name  string
-			since time.Time
-		}{
-			{"day", todayStart},
-			{"week", weekStart},
-			{"month", monthStart},
-		}
-		for _, p := range periods {
-			rows, err := d.Store.Query(ctx,
-				`SELECT gateway_api_key_id, COUNT(*) request_count,
-					         COALESCE(SUM(prompt_tokens),0) prompt_tokens,
-					         COALESCE(SUM(completion_tokens),0) completion_tokens,
-					         COALESCE(SUM(total_tokens),0) total_tokens
-					   FROM request_logs
-					  WHERE phase='success' AND created_at >= ? AND gateway_api_key_id IS NOT NULL
-					  GROUP BY gateway_api_key_id`, jtime.FormatDefault(p.since))
-			if err != nil {
-				continue
-			}
-			periodMap := make(map[string]any)
-			for _, r := range rows {
-				id := strconv.FormatInt(r.I64("gateway_api_key_id", 0), 10)
-				periodMap[id] = map[string]any{
-					"requestCount":     r.I64("request_count", 0),
-					"promptTokens":     r.I64("prompt_tokens", 0),
-					"completionTokens": r.I64("completion_tokens", 0),
-					"totalTokens":      r.I64("total_tokens", 0),
-				}
-			}
-			out[p.name] = periodMap
-		}
-		httpx.OK(c, out)
-	})
-}
-
-// getAPIKeySummaryStats returns today's usage stats per gateway API key,
-// grouped from request_logs (same shape as getChannelSummaryStats).
-func getAPIKeySummaryStats(ctx context.Context, st *store.Store) map[int64]channelUsage {
-	// Only count today's stats for the API key list.
-	now := time.Now().UTC().In(jtime.Shanghai)
-	todayStart := jtime.ShanghaiStart(now)
-
-	rows, err := st.Query(ctx,
-		`SELECT gateway_api_key_id,
-		         COUNT(*) request_count,
-		         COALESCE(SUM(prompt_tokens),0) prompt_tokens,
-		         COALESCE(SUM(completion_tokens),0) completion_tokens,
-		         COALESCE(SUM(total_tokens),0) total_tokens
-		  FROM request_logs
-		 WHERE phase='success' AND gateway_api_key_id IS NOT NULL AND created_at >= ?
-		 GROUP BY gateway_api_key_id`, jtime.FormatDefault(todayStart))
-	if err != nil {
-		// 统计查询失败时列表仍返回密钥本身（用量列显示 0），仅记录日志便于区分
-		// "没有用量" 与 "查询失败"，不改变接口行为。
-		slog.Warn("查询 API 密钥用量汇总失败", "error", err)
-		return nil
-	}
-	out := make(map[int64]channelUsage, len(rows))
-	for _, r := range rows {
-		out[r.I64("gateway_api_key_id", 0)] = channelUsage{
-			// 查询已限定 phase='success'，尝试数与成功数相同
-			TotalAttempts:    r.I64("request_count", 0),
-			SuccessCount:     r.I64("request_count", 0),
-			PromptTokens:     r.I64("prompt_tokens", 0),
-			CompletionTokens: r.I64("completion_tokens", 0),
-			TotalTokens:      r.I64("total_tokens", 0),
-		}
-	}
-	return out
 }
 
 // apiKeyUsageResult bundles per-model stats with key-level averages.
