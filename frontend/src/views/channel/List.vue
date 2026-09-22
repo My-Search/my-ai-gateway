@@ -48,15 +48,26 @@
               <LoadingSpinner v-if="toggleLoading === ch.id" size="14" />
             </td>
             <td>
-              <span style="font-weight:600;white-space:nowrap;">{{ formatNumber(ch.modelCount ?? 0) }}</span>
+              <div class="model-count-cell">
+                <span class="model-count-num">{{ formatNumber(ch.modelCount ?? 0) }}</span>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-secondary model-refresh-btn"
+                  :title="t('channel.list.refreshModels')"
+                  :aria-label="t('channel.list.refreshModels')"
+                  :disabled="reloadLoading != null"
+                  @click="reloadModels(ch.id!)"
+                >
+                  <LoadingSpinner v-if="reloadLoading === ch.id" :size="14" />
+                  <SvgIcon v-else name="refresh" :size="14" />
+                </button>
+              </div>
             </td>
             <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(ch.createdAt) }}</td>
             <td>
               <div style="display:flex;gap:6px;flex-wrap:nowrap;">
                 <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="detail" :size="14" /> {{ t('channel.list.view') }}</router-link>
                 <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> {{ t('channel.list.quickTest') }}</button>
-                <router-link :to="`/admin/channel/reload/${ch.id}`" class="btn btn-sm btn-secondary"
-                  @click.prevent="reloadModels(ch.id!)"><SvgIcon name="refresh" :size="14" /> {{ t('channel.list.refreshModels') }}</router-link>
                 <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('common.edit') }}</router-link>
                 <button class="btn btn-sm btn-danger" @click="confirmDelete(ch)"><SvgIcon name="trash" :size="14" /> {{ t('common.delete') }}</button>
               </div>
@@ -235,6 +246,7 @@ const selectedModelId = ref(0)
 const selectedApiKeyId = ref<number | undefined>(undefined)
 const showMultiModalRule = ref(false)
 const toggleLoading = ref<number | null>(null)
+const reloadLoading = ref<number | null>(null)
 const modelSelectOptions = computed(() =>
   testModels.value.map(m => ({ value: m.id, label: m.displayName || m.modelName }))
 )
@@ -257,15 +269,15 @@ function formatSpeed(speed?: number): string {
   return speed.toFixed(1)
 }
 
-async function loadChannels() {
-  loading.value = true
+async function loadChannels(silent = false) {
+  if (!silent) loading.value = true
   try {
     const res = await channelApi.list()
     channels.value = res.data
   } catch (e: any) {
     open({ title: t('error.loadFailed'), message: t('error.loadFailed') + ': ' + e.message })
   } finally {
-    loading.value = false
+    if (!silent) loading.value = false
   }
 }
 
@@ -324,20 +336,54 @@ async function sendTestRequest() {
 }
 
 function reloadModels(id: number) {
-  open({
-    title: t('channel.list.reloadConfirm'),
-    message: t('channel.list.reloadMsg'),
-    type: 'confirm',
-    confirmClass: 'btn-danger',
-    onConfirm: async () => {
-      try {
-        const res = await channelApi.reloadModels(id)
-        open({ message: res.data.success ? t('channel.list.reloadSuccess') : t('error.loadFailed') + ': ' + res.data.error })
-      } catch (e: any) {
-        open({ title: t('error.unknown'), message: e.message })
-      }
+  if (reloadLoading.value != null) return
+  reloadLoading.value = id
+  runReload(id)
+}
+
+/* 点击即执行：刷新只替换 API 来源模型，手工模型保留、入口关联按名恢复，无需二次确认 */
+async function runReload(id: number) {
+  try {
+    const res = await channelApi.reloadModels(id)
+    if (!res.data.success) {
+      open({ title: t('error.loadFailed'), message: t('error.loadFailed') + ': ' + res.data.error })
+      return
     }
-  })
+    // 静默刷新列表，同步最新的模型数
+    await loadChannels(true)
+    open({ title: t('channel.list.reloadSuccess'), message: buildReloadResult(res.data) })
+  } catch (e: any) {
+    open({ title: t('error.unknown'), message: e.message })
+  } finally {
+    reloadLoading.value = null
+  }
+}
+
+/* 刷新结果文案：无改变 / 有改动（含新增、移除数量，附模型名便于核对） */
+function buildReloadResult(data: {
+  changed?: boolean
+  addedCount?: number
+  removedCount?: number
+  added?: string[]
+  removed?: string[]
+}): string {
+  const added = data.added ?? []
+  const removed = data.removed ?? []
+  if (!data.changed) return t('channel.list.reloadNoChange')
+  const lines = [t('channel.list.reloadChanged', {
+    added: data.addedCount ?? added.length,
+    removed: data.removedCount ?? removed.length
+  })]
+  if (added.length) lines.push(t('channel.list.reloadAddedNames', { names: truncateNames(added) }))
+  if (removed.length) lines.push(t('channel.list.reloadRemovedNames', { names: truncateNames(removed) }))
+  return lines.join('\n')
+}
+
+/* 模型名过多时截断，避免弹框过长 */
+function truncateNames(names: string[]): string {
+  const max = 5
+  if (names.length <= max) return names.join(', ')
+  return names.slice(0, max).join(', ') + t('channel.list.reloadMoreNames', { n: names.length - max })
 }
 
 function confirmDelete(ch: Channel) {
@@ -388,7 +434,7 @@ defineOptions({ name: 'ChannelList' })
 // onMounted 负责首次加载（保证页面一定有数据，不依赖 keep-alive 是否命中）；
 // onActivated 仅在 keep-alive 缓存恢复（菜单切回）时刷新数据，首次跳过避免重复加载
 let activatedCount = 0
-onMounted(loadChannels)
+onMounted(() => loadChannels())
 onActivated(() => {
   if (activatedCount++ > 0) loadChannels()
 })
@@ -593,5 +639,42 @@ onActivated(() => {
   align-items: center;
   justify-content: center;
   padding: 60px 0;
+}
+
+/* 模型数单元格：数字靠左、刷新图标按钮靠右 */
+.model-count-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.model-count-num {
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* 刷新按钮弱化为 ghost 图标：无边框、透明底、灰色图标，悬停才显现底色 */
+.model-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
+  line-height: 1;
+  flex-shrink: 0;
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+.model-refresh-btn:hover {
+  background: var(--bg-hover);
+  border-color: transparent;
+  color: var(--text-primary);
+  box-shadow: none;
+  transform: none;
+}
+.model-refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
 }
 </style>

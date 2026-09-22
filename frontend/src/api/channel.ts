@@ -79,7 +79,18 @@ export const channelApi = {
     return http.get<{ channel: Channel; models: ChannelModel[] }>(`/channels/${id}/models`)
   },
   reloadModels(id: number) {
-    return http.post<{ success: boolean; data: ChannelModel[]; count: number }>(`/channels/${id}/reload-models`)
+    return http.post<{
+      success: boolean
+      error?: string
+      data: ChannelModel[]
+      count: number
+      /** 刷新前后模型集合是否有差异 */
+      changed?: boolean
+      addedCount?: number
+      removedCount?: number
+      added?: string[]
+      removed?: string[]
+    }>(`/channels/${id}/reload-models`)
   },
   fetchModels(baseUrl: string, apiKey: string, channelType: string) {
     return http.get<{ success: boolean; data: ChannelModel[]; count: number }>('/channels/fetch-models', {

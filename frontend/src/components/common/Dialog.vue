@@ -164,6 +164,8 @@ function onCancel() {
   font-size: 14px;
   line-height: 1.6;
   color: var(--text-secondary);
+  /* 保留消息中的换行（如刷新结果的多行明细），无换行时与普通文本一致 */
+  white-space: pre-line;
 }
 
 .dialog-footer {

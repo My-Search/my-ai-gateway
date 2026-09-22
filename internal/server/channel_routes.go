@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -328,12 +329,26 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 			httpx.OK(c, failureEnvelope("渠道不存在"))
 			return
 		}
+		before := getChannelModelNameSet(ctx, d.Store, id)
 		models, err := reloadChannelModels(ctx, d.Store, id)
 		if err != nil {
 			httpx.OK(c, failureEnvelope(err.Error()))
 			return
 		}
-		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("data", models).Set("count", len(models)))
+		after := make(map[string]bool, len(models))
+		for _, m := range models {
+			after[m.ModelName] = true
+		}
+		added, removed := diffModelNames(before, after)
+		httpx.OK(c, httpx.NewOrderedMap().
+			Set("success", true).
+			Set("data", models).
+			Set("count", len(models)).
+			Set("changed", len(added) > 0 || len(removed) > 0).
+			Set("addedCount", len(added)).
+			Set("removedCount", len(removed)).
+			Set("added", added).
+			Set("removed", removed))
 	})
 
 	// GET /admin/api/channels/fetch-models?baseUrl=...&apiKey=...&channelType=...
@@ -980,6 +995,26 @@ func symDiff(a, b map[string]bool) []string {
 		}
 	}
 	return diff
+}
+
+// diffModelNames returns names present only in after (added) and only in
+// before (removed); both slices are non-nil and sorted for stable output.
+func diffModelNames(before, after map[string]bool) (added, removed []string) {
+	added = []string{}
+	removed = []string{}
+	for k := range after {
+		if !before[k] {
+			added = append(added, k)
+		}
+	}
+	for k := range before {
+		if !after[k] {
+			removed = append(removed, k)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	return added, removed
 }
 
 func quickTestProvider(channel models.Channel, channelModel models.ChannelModel, apiKey, provider, message string) (content string, ttfb int64, usageOutputTokens int64, err error) {
