@@ -101,6 +101,17 @@
 
         <div v-if="testError" class="mmr-test-error">{{ testError }}</div>
 
+        <!-- Real-model match results: what actually gets applied on save -->
+        <div v-if="tested && !testError" class="mmr-real-test">
+          <div class="mmr-real-test-title">
+            {{ t('multimodal.realModels', { matched: matchedModels.length, total: totalModels }) }}
+          </div>
+          <div v-if="matchedModels.length" class="mmr-real-test-tags">
+            <code v-for="m in matchedModels" :key="m" class="mmr-real-test-tag">{{ m }}</code>
+          </div>
+          <div v-else class="mmr-real-test-empty">{{ t('multimodal.noRealMatch') }}</div>
+        </div>
+
         <div class="mmr-form-actions">
           <button class="btn btn-sm btn-secondary" @click="cancelForm">{{ t('common.cancel') }}</button>
           <button class="btn btn-sm btn-secondary" @click="runTest" :disabled="!form.pattern.trim() || testData.length === 0 || testRunning">
@@ -162,6 +173,9 @@ const testData = ref<string[]>([])
 const testResults = ref<RuleTestResult[]>([])
 const testRunning = ref(false)
 const testError = ref('')
+const tested = ref(false)
+const matchedModels = ref<string[]>([])
+const totalModels = ref(0)
 
 // Dialog state
 const dialogVisible = ref(false)
@@ -205,6 +219,7 @@ function openAddRule() {
   testData.value = []
   testResults.value = []
   testError.value = ''
+  resetRealModels()
   showForm.value = true
 }
 
@@ -216,6 +231,7 @@ function openEditRule(rule: MultiModalRule) {
   testData.value = []
   testResults.value = []
   testError.value = ''
+  resetRealModels()
   showForm.value = true
 }
 
@@ -261,10 +277,14 @@ async function runTest() {
   if (!form.value.pattern.trim() || testData.value.length === 0) return
   testRunning.value = true
   testError.value = ''
+  tested.value = false
   try {
     const res = await multimodalApi.test(form.value.pattern, testData.value)
     if (res.data.success && res.data.data) {
       testResults.value = res.data.data
+      matchedModels.value = res.data.matchedModels ?? []
+      totalModels.value = res.data.totalModels ?? 0
+      tested.value = true
     } else {
       testError.value = res.data.error || t('common.fail')
     }
@@ -312,6 +332,12 @@ function confirmDelete(rule: MultiModalRule) {
   })
 }
 
+function resetRealModels() {
+  tested.value = false
+  matchedModels.value = []
+  totalModels.value = 0
+}
+
 function resetForm() {
   showForm.value = false
   editingRule.value = null
@@ -321,6 +347,7 @@ function resetForm() {
   testData.value = []
   testResults.value = []
   testError.value = ''
+  resetRealModels()
 }
 
 function showDialog(title: string, message: string, callback?: () => void) {
@@ -443,6 +470,25 @@ function onDialogConfirm() {
   font-size: 12px; color: var(--accent-red);
   background: rgba(248,81,73,0.1); padding: 6px 10px; border-radius: 4px; margin-top: 4px;
 }
+.mmr-real-test {
+  margin-top: 8px; padding: 8px 10px;
+  background: var(--bg-secondary); border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+.mmr-real-test-title {
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
+}
+.mmr-real-test-tags {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-top: 6px; max-height: 96px; overflow-y: auto;
+}
+.mmr-real-test-tag {
+  font-family: var(--font-mono, monospace); font-size: 12px;
+  padding: 2px 6px; border-radius: 4px;
+  background: rgba(46,160,67,0.1); border: 1px solid rgba(46,160,67,0.35);
+  color: #2ea043;
+}
+.mmr-real-test-empty { font-size: 12px; color: var(--accent-red); margin-top: 6px; }
 .mmr-form-actions {
   display: flex; gap: 6px; justify-content: flex-end; margin-top: 12px;
 }

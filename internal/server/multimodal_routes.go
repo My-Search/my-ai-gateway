@@ -7,8 +7,8 @@ import (
 	"github.com/dlclark/regexp2"
 	"github.com/gin-gonic/gin"
 	"github.com/my-search/my-ai-gateway/internal/channelload"
-	"github.com/my-search/my-ai-gateway/internal/jtime"
 	"github.com/my-search/my-ai-gateway/internal/httpx"
+	"github.com/my-search/my-ai-gateway/internal/jtime"
 	"github.com/my-search/my-ai-gateway/internal/models"
 	"github.com/my-search/my-ai-gateway/internal/store"
 )
@@ -107,6 +107,7 @@ func registerMultiModalRoutes(g *gin.RouterGroup, d Deps) {
 
 	// POST /admin/api/multimodal-rules/test
 	g.POST("/multimodal-rules/test", func(c *gin.Context) {
+		ctx := c.Request.Context()
 		var body struct {
 			Pattern  string   `json:"pattern"`
 			TestData []string `json:"testData"`
@@ -123,8 +124,8 @@ func registerMultiModalRoutes(g *gin.RouterGroup, d Deps) {
 			httpx.OK(c, failureEnvelope("请添加测试数据"))
 			return
 		}
-		re, err := regexp2.Compile(body.Pattern, 0)
-		if err != nil {
+		// Syntax check mirrors rule save validation (regexp2, flags 0).
+		if _, err := regexp2.Compile(body.Pattern, 0); err != nil {
 			httpx.OK(c, failureEnvelope("正则表达式语法错误: "+err.Error()))
 			return
 		}
@@ -134,10 +135,27 @@ func registerMultiModalRoutes(g *gin.RouterGroup, d Deps) {
 		}
 		results := make([]resultItem, 0, len(body.TestData))
 		for _, d := range body.TestData {
-			m, _ := re.MatchString(d)
+			// Match via channelload.MatchPattern (same engine/options as
+			// ComputeInput) so the test result equals the applied result.
+			m, _ := channelload.MatchPattern(body.Pattern, d)
 			results = append(results, resultItem{Data: d, Matched: m})
 		}
-		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("data", results))
+		// Also match against every real channel model: the pattern is applied
+		// to channel_models.model_name, so testing against hand-typed IDs alone
+		// can claim a match that never takes effect (e.g. "^hy" vs "workbuddy/hy4-preview").
+		matchedModels := make([]string, 0)
+		modelRows, _ := d.Store.Query(ctx, "SELECT DISTINCT model_name FROM channel_models WHERE model_name != '' ORDER BY model_name")
+		for _, row := range modelRows {
+			name := row.Str("model_name")
+			if m, _ := channelload.MatchPattern(body.Pattern, name); m {
+				matchedModels = append(matchedModels, name)
+			}
+		}
+		httpx.OK(c, httpx.NewOrderedMap().
+			Set("success", true).
+			Set("data", results).
+			Set("matchedModels", matchedModels).
+			Set("totalModels", len(modelRows)))
 	})
 
 	// GET /admin/api/models/{modelId}/prompt-injections
@@ -219,9 +237,13 @@ func registerMultiModalRoutes(g *gin.RouterGroup, d Deps) {
 			}
 		}
 		en := 1
-		if body.Enabled != nil { en = *body.Enabled }
+		if body.Enabled != nil {
+			en = *body.Enabled
+		}
 		pr := 0
-		if body.Priority != nil { pr = *body.Priority }
+		if body.Priority != nil {
+			pr = *body.Priority
+		}
 		now := jtime.FormatApp(time.Now().UTC())
 		id, err := d.Store.Insert(ctx,
 			"INSERT INTO prompt_injections (model_id, name, inject_role, inject_position, content, enabled, priority, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -262,12 +284,24 @@ func registerMultiModalRoutes(g *gin.RouterGroup, d Deps) {
 		now := jtime.FormatApp(time.Now().UTC())
 		sets := make(map[string]any)
 		sets["updated_at"] = now
-		if body.InjectRole != "" { sets["inject_role"] = body.InjectRole }
-		if body.InjectPosition != "" { sets["inject_position"] = body.InjectPosition }
-		if body.Content != "" { sets["content"] = body.Content }
-		if body.Name != "" { sets["name"] = body.Name }
-		if body.Enabled != nil { sets["enabled"] = *body.Enabled }
-		if body.Priority != nil { sets["priority"] = *body.Priority }
+		if body.InjectRole != "" {
+			sets["inject_role"] = body.InjectRole
+		}
+		if body.InjectPosition != "" {
+			sets["inject_position"] = body.InjectPosition
+		}
+		if body.Content != "" {
+			sets["content"] = body.Content
+		}
+		if body.Name != "" {
+			sets["name"] = body.Name
+		}
+		if body.Enabled != nil {
+			sets["enabled"] = *body.Enabled
+		}
+		if body.Priority != nil {
+			sets["priority"] = *body.Priority
+		}
 		if len(sets) > 1 {
 			q, args := store.BuildUpdate("prompt_injections", sets, "id = ?", id)
 			_, _ = d.Store.Exec(ctx, q, args...)

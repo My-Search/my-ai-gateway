@@ -685,6 +685,8 @@ export default {
   'multimodal.testResult': '测试结果',
   'multimodal.matched': '匹配',
   'multimodal.notMatched': '不匹配',
+  'multimodal.realModels': '真实模型匹配：{matched} / {total}',
+  'multimodal.noRealMatch': '未匹配到任何真实渠道模型，该规则保存后也不会生效',
   'multimodal.noRules': '暂无规则，点击上方按钮添加',
   'multimodal.deleteConfirm': '确认删除此规则？',
   'multimodal.patternRequired': '请输入正则表达式',

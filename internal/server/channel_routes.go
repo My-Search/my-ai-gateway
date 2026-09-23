@@ -385,9 +385,10 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 			body.DisplayName = body.ModelName
 		}
 		now := jtime.FormatApp(time.Now().UTC())
+		input := channelload.ComputeInput(ctx, d.Store, body.ModelName)
 		id, err := d.Store.Insert(ctx,
-			"INSERT INTO channel_models (channel_id, model_name, display_name, enabled, source, input, created_at) VALUES (?, ?, ?, 1, 'manual', 'text', ?)",
-			chID, body.ModelName, body.DisplayName, now)
+			"INSERT INTO channel_models (channel_id, model_name, display_name, enabled, source, input, created_at) VALUES (?, ?, ?, 1, 'manual', ?, ?)",
+			chID, body.ModelName, body.DisplayName, input, now)
 		if err != nil {
 			httpx.OK(c, failureEnvelope(err.Error()))
 			return
@@ -967,8 +968,9 @@ func updateWithModels(ctx context.Context, st *store.Store, chID int64, modelsJS
 			dn = item.ModelName
 		}
 		if _, exists := existingMap[item.ModelName]; !exists {
-			st.Insert(ctx, "INSERT INTO channel_models (channel_id, model_name, display_name, enabled, source, input, created_at) VALUES (?, ?, ?, 1, 'manual', 'text', ?)",
-				chID, item.ModelName, dn, now)
+			input := channelload.ComputeInput(ctx, st, item.ModelName)
+			st.Insert(ctx, "INSERT INTO channel_models (channel_id, model_name, display_name, enabled, source, input, created_at) VALUES (?, ?, ?, 1, 'manual', ?, ?)",
+				chID, item.ModelName, dn, input, now)
 		}
 	}
 }

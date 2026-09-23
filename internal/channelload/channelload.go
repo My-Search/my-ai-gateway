@@ -12,11 +12,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/dlclark/regexp2"
 	"github.com/my-search/my-ai-gateway/internal/jtime"
 	"github.com/my-search/my-ai-gateway/internal/store"
 )
@@ -66,19 +66,39 @@ func InvalidateRuleCache() {
 	ruleCacheMu.Unlock()
 }
 
+// MatchPattern evaluates pattern against s with the same engine and options
+// (regexp2, flags 0) that the rule save/test endpoints use, so a rule that
+// passes the test is applied exactly as tested.
+func MatchPattern(pattern, s string) (bool, error) {
+	re, err := regexp2.Compile(pattern, 0)
+	if err != nil {
+		return false, err
+	}
+	return re.MatchString(s)
+}
+
 // ComputeInput mirrors MultiModalRuleService.computeInput.
 func ComputeInput(ctx context.Context, st *store.Store, modelName string) string {
 	var types []string
 	seen := map[string]bool{}
 	for _, rule := range loadRules(ctx, st) {
-		re, err := regexp.Compile(rule.Pattern)
+		ok, err := MatchPattern(rule.Pattern, modelName)
 		if err != nil {
-			slog.Warn("多模态规则正则无效", "pattern", rule.Pattern)
+			slog.Warn("多模态规则正则无效", "pattern", rule.Pattern, "error", err)
 			continue
 		}
-		if re.MatchString(modelName) && !seen[rule.AppendType] {
-			seen[rule.AppendType] = true
-			types = append(types, rule.AppendType)
+		if !ok {
+			continue
+		}
+		// append_type may hold several comma-separated types; dedupe per type
+		// so overlapping rules cannot inject duplicates like "text,image,image".
+		for _, t := range strings.Split(rule.AppendType, ",") {
+			t = strings.TrimSpace(t)
+			if t == "" || seen[t] {
+				continue
+			}
+			seen[t] = true
+			types = append(types, t)
 		}
 	}
 	if len(types) == 0 {

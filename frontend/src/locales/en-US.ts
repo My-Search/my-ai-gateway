@@ -685,6 +685,8 @@ export default {
   'multimodal.testResult': 'Test Results',
   'multimodal.matched': 'Match',
   'multimodal.notMatched': 'No Match',
+  'multimodal.realModels': 'Real models matched: {matched} / {total}',
+  'multimodal.noRealMatch': 'No real channel models matched — saving this rule will have no effect.',
   'multimodal.noRules': 'No rules yet. Click the button above to add.',
   'multimodal.deleteConfirm': 'Confirm delete this rule?',
   'multimodal.patternRequired': 'Please enter a regex pattern',
