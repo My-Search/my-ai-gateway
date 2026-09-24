@@ -144,13 +144,6 @@
             >
               <SvgIcon name="zap" :size="14" />
             </router-link>
-            <router-link
-              :to="`/admin/model/advanced/${card.model.id}`"
-              class="action-btn"
-              :title="t('model.list.advanced')"
-            >
-              <SvgIcon name="settings" :size="14" />
-            </router-link>
             <div class="action-spacer"></div>
             <div class="dropdown-wrapper" @click.stop>
               <button class="action-btn" @click="toggleDropdown(card.model.id!)" :title="t('model.list.actions')">

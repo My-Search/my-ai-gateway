@@ -328,6 +328,7 @@ export default {
   'model.form.updateSuccess': '模型更新成功',
   'model.form.createSuccess': '模型创建成功',
   'model.form.saveFailed': '保存失败',
+  'model.form.advancedSettings': '高级配置',
 
   /* ========== Model Rels ========== */
   'model.rels.title': '模型关联 - {name}',
@@ -422,7 +423,6 @@ export default {
   'model.advanced.forceOverrideReasoningEffortHint': '启用后，忽略客户端请求中携带的 reasoning_effort 参数，强制使用关联关系中配置的默认思考强度。',
   'model.advanced.saveSuccess': '高级配置保存成功',
   'model.advanced.saveFailed': '保存失败',
-  'model.list.advanced': '高级配置',
 
   /* ========== Prompt Injections ========== */
   'promptInjection.title': 'Prompt 注入配置 - {name}',

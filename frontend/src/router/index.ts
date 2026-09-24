@@ -108,8 +108,7 @@ const router = createRouter({
         {
           path: 'model/advanced/:id',
           name: 'model-advanced',
-          component: () => import('@/views/model/Advanced.vue'),
-          meta: { title: '高级配置' }
+          redirect: to => `/admin/model/form/${to.params.id}`
         },
         {
           path: 'model/prompt-injections/:id',

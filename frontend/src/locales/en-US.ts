@@ -328,6 +328,7 @@ export default {
   'model.form.updateSuccess': 'Model updated',
   'model.form.createSuccess': 'Model created',
   'model.form.saveFailed': 'Save failed',
+  'model.form.advancedSettings': 'Advanced Settings',
 
   /* ========== Model Rels ========== */
   'model.rels.title': 'Model Links - {name}',
@@ -422,7 +423,6 @@ export default {
   'model.advanced.forceOverrideReasoningEffortHint': 'When enabled, ignores the reasoning_effort parameter from client requests and forces the use of the default thinking intensity configured in the channel association.',
   'model.advanced.saveSuccess': 'Advanced config saved',
   'model.advanced.saveFailed': 'Save failed',
-  'model.list.advanced': 'Advanced',
 
   /* ========== Prompt Injections ========== */
   'promptInjection.title': 'Prompt Injection - {name}',
