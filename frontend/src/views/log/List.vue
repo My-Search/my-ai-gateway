@@ -134,7 +134,12 @@
     </div>
     <div v-if="loading" style="text-align:center;padding:40px;color:var(--text-muted);">{{ t('common.loading') }}</div>
 
-    <template v-for="trace in traces" :key="trace.traceId">
+    <template v-for="trace in traces" :key="trace.traceId" v-memo="[
+      localeStore.locale,
+      trace.startTime, trace.endTime, trace.modelName,
+      trace.retryCount, trace.successCount, trace.failCount, trace.totalTimeMs,
+      trace.hasRequestData, trace.logs.length, expandedTraces.has(trace.traceId),
+    ]">
       <div class="log-trace" @click="toggleTrace(trace.traceId)">
         <div class="trace-header">
           <span class="trace-id" :title="trace.traceId">{{ shortenId(trace.traceId) }}</span>
@@ -146,26 +151,26 @@
             <span v-else-if="trace.successCount > 0" class="badge badge-success">{{ t('log.list.success') }}</span>
             <span v-if="trace.retryCount > 0" class="badge badge-warning">{{ t('log.list.retry', { count: trace.retryCount }) }}</span>
           </span>
-          <span class="trace-time">{{ formatDateTime(trace.startTime) }}</span>
+          <span class="trace-time">{{ trace.displayTime }}</span>
           <span class="trace-duration" v-if="trace.totalTimeMs > 0">{{ trace.totalTimeMs }}ms</span>
-          <button v-if="hasRequestData(trace.traceId)" class="btn btn-sm btn-ghost trace-view-btn" @click.stop="openRequestView(trace.traceId)">
+          <button v-if="trace.hasRequestData" class="btn btn-sm btn-ghost trace-view-btn" @click.stop="openRequestView(trace.traceId)">
             <SvgIcon name="code" :size="12" /> {{ t('log.list.viewRequest') }}
           </button>
           <span class="trace-toggle">{{ expandedTraces.has(trace.traceId) ? '▲' : '▼' }}</span>
         </div>
       </div>
       <div v-if="expandedTraces.has(trace.traceId)" class="trace-detail">
-        <div v-for="(group, gIdx) in groupedTraceLogs.get(trace.traceId) || []" :key="group.key + '-' + gIdx" class="log-entry" :class="{ 'log-entry-clickable': group.logs.some(l => l.message) }" :style="{ paddingLeft: `calc(var(--indent-base, 12px) + ${gIdx} * var(--indent-step, 16px))` }" @click.stop="openLogDetail(group)">
+        <div v-for="(group, gIdx) in groupedTraceLogs.get(trace.traceId) || []" :key="group.key + '-' + gIdx" class="log-entry" :class="{ 'log-entry-clickable': group.hasMessage }" :style="{ paddingLeft: `calc(var(--indent-base, 12px) + ${gIdx} * var(--indent-step, 16px))` }" @click.stop="openLogDetail(group)">
           <PhaseBadge :phase="group.logs[0].phase" :count="group.logs.length > 1 ? group.logs.length : undefined" />
           <span class="log-info">
             <template v-if="group.logs[0].channelName">{{ group.logs[0].channelName }}/</template>
             <template v-if="group.logs[0].apiKeyName">{{ group.logs[0].apiKeyName }}/</template>
             <template v-if="group.logs[0].channelModelName">{{ group.logs[0].channelModelName }}</template>
             <template v-else-if="group.logs[0].modelName">{{ group.logs[0].modelName }}</template><span v-if="group.logs[0].reasoningEffort" class="reasoning-effort">({{ group.logs[0].reasoningEffort }})</span>{{ ' ' }}
-            {{ groupDurationText(group) }}
+            {{ group.durationText }}
             <span v-if="group.logs[0].message" class="log-message" :class="{ 'log-message-error': group.logs[0].phase === 'fail' }"> — {{ group.logs[0].message }}</span>
           </span>
-          <span class="log-time">{{ formatTime(group.logs[group.logs.length - 1].createdAt) }}</span>
+          <span class="log-time">{{ group.timeText }}</span>
         </div>
       </div>
     </template>
@@ -229,7 +234,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, reactive, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive, shallowRef, triggerRef, watch } from 'vue'
 import { logApi, subscribeLogStream, type LogTrace, type RequestLog, type LogSseSubscription, type LogUsageChart } from '@/api/log'
 import { modelApi, type CustomModel } from '@/api/model'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
@@ -240,11 +245,16 @@ import TabSwitch from '@/components/common/TabSwitch.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
+import { useLocaleStore } from '@/stores/locale'
 import { formatLocalDateTime, formatLocalFullTime } from '@/utils/date'
 
 const { t } = useI18n()
+// 语言参与列表行 v-memo 的依赖：切换语言时强制已缓存的行重新渲染（t() 结果变了）
+const localeStore = useLocaleStore()
 
-const traces = ref<LogTrace[]>([])
+// 使用 shallowRef 避免对海量日志对象做深层响应式追踪（同 ChatPlayground 的模式）：
+// 列表内容原地变更后需手动 triggerRef，整体赋值（loadLogs）自动触发。
+const traces = shallowRef<LogTrace[]>([])
 const expandedTraces = ref(new Set<string>())
 const loading = ref(false)
 const loadingMore = ref(false)
@@ -265,6 +275,19 @@ function flushSseBuffer() {
   for (const log of batch) {
     upsertTraceFromSse(log)
   }
+  // 整批只排一次序、只触发一次渲染（原先在 recalcTrace 内每更新一个 trace
+  // 就对全量数组 sort 一次，一批 M 个 trace 就是 M 次 O(n log n)）
+  sortTracesByTime()
+  triggerRef(traces)
+}
+
+/** 按最新时间倒序排 traces（原地排序，调用方负责触发渲染） */
+function sortTracesByTime() {
+  traces.value.sort((a, b) => {
+    const ta = a.endTime || a.startTime || ''
+    const tb = b.endTime || b.startTime || ''
+    return tb.localeCompare(ta)
+  })
 }
 
 function scheduleSseFlush() {
@@ -586,12 +609,6 @@ const requestBodyText = ref('')
 const requestDataExpired = ref(false)
 const requestDataLoading = ref(false)
 
-/** 判断 trace 是否包含原始请求数据（由后端根据 save level 决定，request data 通过 API 按需加载） */
-function hasRequestData(traceId: string): boolean {
-  const trace = traces.value.find(t => t.traceId === traceId)
-  return trace?.hasRequestData ?? false
-}
-
 /** 打开原始请求查看对话框（通过 API 按需加载原始请求数据） */
 async function openRequestView(traceId: string) {
   const trace = traces.value.find(t => t.traceId === traceId)
@@ -657,7 +674,7 @@ function downloadRequestBody() {
 }
 
 /** 打开日志详情弹框，完整展示日志消息内容 */
-function openLogDetail(group: { key: string; logs: RequestLog[] }) {
+function openLogDetail(group: LogGroup) {
   if (!group.logs.some(l => l.message)) return
   const first = group.logs[0]
   const parts: string[] = []
@@ -733,15 +750,41 @@ function isTraceInProgress(trace: LogTrace): boolean {
   return !trace.logs.some(l => l.phase === 'success' || l.phase === 'fail')
 }
 
-/** 将 SSE 推送的单条日志合并到 traces 列表中 */
+/** SSE 推送日志的分组缓存条目（展示字段在构建时一次性预计算，模板只插值） */
+interface LogGroup {
+  key: string
+  logs: RequestLog[]
+  durationText: string
+  timeText: string
+  hasMessage: boolean
+}
+
+/** 将日志插入已按 createdAt 排序的数组：绝大多数 SSE 日志按序到达，走末尾追加快路径 */
+function insertLogSorted(logs: RequestLog[], log: RequestLog) {
+  const last = logs[logs.length - 1]
+  if (!last || last.createdAt <= log.createdAt) {
+    logs.push(log)
+    return
+  }
+  // 乱序到达时才做二分插入，避免每次 push 都整体 sort
+  let lo = 0
+  let hi = logs.length
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1
+    if (logs[mid].createdAt <= log.createdAt) lo = mid + 1
+    else hi = mid
+  }
+  logs.splice(lo, 0, log)
+}
+
+/** 将 SSE 推送的单条日志合并到 traces 列表中（原地修改，由 flushSseBuffer 统一触发渲染） */
 function upsertTraceFromSse(log: RequestLog) {
   let trace = traces.value.find(t => t.traceId === log.traceId)
   if (trace) {
     // 防止已存在（SSE 重连后可能重复收到）
     if (trace.logs.some(l => l.id === log.id)) return
     const wasInProgress = isTraceInProgress(trace)
-    trace.logs.push(log)
-    trace.logs.sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''))
+    insertLogSorted(trace.logs, log)
     recalcTrace(trace)
     if (wasInProgress && !isTraceInProgress(trace)) {
       // 由进行中刚完成 → 自动折叠
@@ -809,13 +852,14 @@ function recalcTrace(trace: LogTrace) {
 
   // 仅更新当前 trace 的分组缓存，避免全量重计算
   updateTraceGroups(trace)
+  trace.displayTime = formatLocalDateTime(trace.startTime)
+  // 全量排序与渲染触发已移至 flushSseBuffer：一批 SSE 只排一次、只渲染一次
+}
 
-  // 按最新时间排序
-  traces.value.sort((a, b) => {
-    const ta = a.endTime || a.startTime || ''
-    const tb = b.endTime || b.startTime || ''
-    return tb.localeCompare(ta)
-  })
+/** 列表接口返回的 trace：补全前端预计算字段（分组缓存 + 展示时间） */
+function hydrateTrace(trace: LogTrace) {
+  updateTraceGroups(trace)
+  trace.displayTime = formatLocalDateTime(trace.startTime)
 }
 
 /* ========== 工具函数 ========== */
@@ -829,17 +873,26 @@ function getModelKey(log: RequestLog): string {
   return log.modelName || '-'
 }
 
-/** 将 trace 的 logs 按连续相同 phase+model 分组，用于合并显示重试 */
-function groupLogs(logs: RequestLog[]) {
-  const groups: { key: string; logs: RequestLog[] }[] = []
+/**
+ * 将 trace 的 logs 按连续相同 phase+model 分组，用于合并显示重试。
+ * 展示文本（耗时、时间、是否可点详情）在这里一次性预计算挂到 group 上，
+ * 避免模板每行每次渲染都重复 filter/map/日期格式化。
+ */
+function groupLogs(logs: RequestLog[]): LogGroup[] {
+  const groups: LogGroup[] = []
   for (const log of logs) {
     const key = `${log.phase}::${getModelKey(log)}`
     const last = groups[groups.length - 1]
     if (last && last.key === key) {
       last.logs.push(log)
     } else {
-      groups.push({ key, logs: [log] })
+      groups.push({ key, logs: [log], durationText: '', timeText: '', hasMessage: false })
     }
+  }
+  for (const g of groups) {
+    g.durationText = computeDurationText(g.logs)
+    g.timeText = formatLocalFullTime(g.logs[g.logs.length - 1].createdAt)
+    g.hasMessage = g.logs.some(l => l.message)
   }
   return groups
 }
@@ -851,39 +904,28 @@ function groupLogs(logs: RequestLog[]) {
  * 用 " / " 拼接以体现"每次真实模型请求的用时"。
  * 无耗时数据时返回空字符串（模板中可直接 {{ }} 插值，无需额外 v-if 判断）。
  */
-function groupDurationText(group: { logs: RequestLog[] }): string {
-  const durations = group.logs
+function computeDurationText(logs: RequestLog[]): string {
+  const durations = logs
     .filter(l => l.responseTimeMs != null && l.responseTimeMs > 0)
     .map(l => l.responseTimeMs as number)
   if (durations.length === 0) return ''
   return ' · ' + durations.map(d => d + 'ms').join(' / ')
 }
 
-/** 每个 trace 的分组结果缓存，仅更新变更的 trace，避免全量重计算 */
-const groupedTraceLogs = reactive(new Map<string, { key: string; logs: RequestLog[] }[]>())
+/**
+ * 每个 trace 的分组结果缓存，仅更新变更的 trace，避免全量重计算。
+ * 普通 Map（非响应式）：分组只随 traces 一起变化，渲染由 traces 的 triggerRef /
+ * 展开态 ref 触发，模板读取它不产生依赖追踪，省掉每字段 Proxy 开销。
+ */
+const groupedTraceLogs = new Map<string, LogGroup[]>()
 
 function updateTraceGroups(trace: LogTrace) {
   groupedTraceLogs.set(trace.traceId, groupLogs(trace.logs))
 }
 
-function rebuildAllTraceGroups() {
-  groupedTraceLogs.clear()
-  for (const trace of traces.value) {
-    groupedTraceLogs.set(trace.traceId, groupLogs(trace.logs))
-  }
-}
-
 function shortenId(id: string) {
   if (!id) return '-'
   return id.length > 16 ? id.substring(0, 8) + '...' : id
-}
-
-function formatDateTime(dateStr?: string) {
-  return formatLocalDateTime(dateStr)
-}
-
-function formatTime(dateStr: string) {
-  return formatLocalFullTime(dateStr)
 }
 
 function toggleTrace(id: string) {
@@ -893,6 +935,10 @@ function toggleTrace(id: string) {
     expandedTraces.value.add(id)
   }
 }
+
+// 语言切换时列表行的 t() 文案必须更新：行块的 v-memo 依赖含 localeStore.locale，
+// 这里显式 triggerRef 确保渲染作用域感知变化，跳过 memo 的行也会随语言切换重渲染。
+watch(() => localeStore.locale, () => triggerRef(traces))
 
 /**
  * 从图表状态派生日志列表的过滤条件。
@@ -925,14 +971,13 @@ async function loadLogs() {
     total.value = res.data.total
     hasMore.value = res.data.hasMore
     offset.value = res.data.data.length
-    // 初始加载时，进行中的 trace 默认展开
+    // 初始加载时，进行中的 trace 默认展开；并预计算分组与展示文本
     for (const t of traces.value) {
       if (isTraceInProgress(t)) {
         expandedTraces.value.add(t.traceId)
       }
+      hydrateTrace(t)
     }
-    // 重建全部分组缓存
-    rebuildAllTraceGroups()
   } catch (e: any) {
     open({ title: t('error.loadFailed'), message: e.message })
   } finally {
@@ -950,11 +995,12 @@ async function loadMoreLogs() {
     // 避免重复添加（SSE 可能已提前插入相同 trace）
     const existingIds = new Set(traces.value.map(t => t.traceId))
     const uniqueNewTraces = newTraces.filter(t => !existingIds.has(t.traceId))
+    // shallowRef 原地 push 不会自动触发渲染，需手动 triggerRef
     traces.value.push(...uniqueNewTraces)
-    // 为新加载的 trace 建立分组缓存
     for (const t of uniqueNewTraces) {
-      updateTraceGroups(t)
+      hydrateTrace(t)
     }
+    triggerRef(traces)
     hasMore.value = res.data.hasMore
     // offset 按 backend 返回总数递增（与后端分页语义对齐）
     offset.value += newTraces.length
@@ -963,24 +1009,6 @@ async function loadMoreLogs() {
   } finally {
     loadingMore.value = false
   }
-}
-
-function cleanLogs() {
-  open({
-    title: t('common.confirm'),
-    message: t('log.list.cleanConfirm'),
-    type: 'confirm',
-    confirmClass: 'btn-danger',
-    onConfirm: async () => {
-      try {
-        const res = await logApi.clean()
-        open({ message: res.data.message || t('log.list.cleanSuccess') })
-        await loadLogs()
-      } catch (e: any) {
-        open({ title: t('common.fail'), message: e.message })
-      }
-    }
-  })
 }
 
 /**
@@ -1025,8 +1053,9 @@ onMounted(() => {
   fetchChartApiKeys()
   fetchRequestDataSaveLevel()
   loadUsageChart()
-  // 15s 静默自动刷新：只在后台更新数据，不弹加载遮罩（否则每 15s 闪烁一次）
-  chartRefreshTimer = setInterval(() => loadUsageChart(true), 15000)
+  // 15s 静默自动刷新：只在后台更新数据，不弹加载遮罩（否则每 15s 闪烁一次）；
+  // 页面不可见时跳过（与 Dashboard 一致），回到前台后下个周期自然恢复
+  chartRefreshTimer = setInterval(() => { if (!document.hidden) loadUsageChart(true) }, 15000)
   loadLogs()
   startSse()
 
@@ -1036,13 +1065,14 @@ onMounted(() => {
       loadMoreLogs()
     }
   }, { threshold: 0.1 })
+})
 
-  // 等待 DOM 更新后绑定观察器
-  setTimeout(() => {
-    if (loadMoreTrigger.value) {
-      observer?.observe(loadMoreTrigger.value)
-    }
-  }, 100)
+// 哨兵元素位于 v-if="hasMore" 内，加载下一页/切筛选导致其销毁重建时，
+// 必须重新 observe 新节点，否则无限滚动静默失效（原先只在 mount 后 setTimeout 绑定一次）
+watch(loadMoreTrigger, (el, oldEl) => {
+  if (!observer) return
+  if (oldEl) observer.unobserve(oldEl)
+  if (el) observer.observe(el)
 })
 
 onUnmounted(() => {
@@ -1057,6 +1087,9 @@ onUnmounted(() => {
 .log-trace {
   cursor: pointer; border-bottom: 1px solid var(--border-color);
   transition: background 0.15s;
+  /* 长列表滚动优化：屏外行跳过布局/绘制；auto 记住最近一次实际高度，滚动条不跳动 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 39px;
 }
 .log-trace:hover { background: var(--bg-hover); }
 .trace-header {
@@ -1083,6 +1116,8 @@ onUnmounted(() => {
   margin-left: 20px;
   --indent-base: 12px;
   --indent-step: 16px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
 .log-entry {
   padding: 8px 12px;

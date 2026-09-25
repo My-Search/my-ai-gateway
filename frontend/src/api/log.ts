@@ -30,6 +30,8 @@ export interface LogTrace {
   startTime?: string
   endTime?: string
   hasRequestData?: boolean
+  /** 前端预计算的本地时间展示文本（列表渲染时避免每行重复格式化） */
+  displayTime?: string
 }
 
 export interface LogFilters {
