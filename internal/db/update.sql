@@ -607,3 +607,50 @@ CREATE INDEX IF NOT EXISTS idx_usage_entry
 -- 刷新查询规划器统计信息。缺省情况下从未执行过 ANALYZE，sqlite_stat1 不存在，
 -- 规划器只能按经验猜测索引代价，在数据量增长后容易误选索引或退化为全表扫描。
 ANALYZE;
+
+-- ========================================
+-- VERSION:v1.41.0
+-- 模型配置规则（多模态规则 + 上下文规则的合并）+ 渠道模型上下文长度
+--
+-- 背景：入口模型路由原先只按多模态规则（channel_models.input）跳过不支持媒体类型的
+--   候选。现新增上下文维度：请求估算 token 超过 候选上下文窗口 + 5K 容差时跳过。
+--
+-- 规则模型：model_config_rules 一条规则 = 正则 + 输入模态 + 上下文大小，
+--   两个字段都可选，留空表示不覆盖该维度。
+--
+-- 数据来源优先级（我们的规则始终优先于三方 API 数据）：
+--   channel_models.input          = 上传模态基线 + 规则追加（去重）
+--   channel_models.context_length = 规则匹配值 > 上传上下文 > NULL（未知，不做过滤）
+--
+-- 模态/上下文基线来自 models.dev 数据文件的本地缓存（model_config_rules 的
+--   “上传”部分），由后台任务定时更新该文件，更新成功后触发一次重新应用。
+--   文件路径在 admin_config 的 models_dev_file 中配置。
+--
+-- 迁移说明：多模态规则被合并进新表，历史规则原样搬过来（context_length 留空）。
+--   旧表与旧 context_rules 表（若曾由开发版建过）一并清理。
+-- ========================================
+
+CREATE TABLE IF NOT EXISTS model_config_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern TEXT NOT NULL,
+    append_type TEXT NOT NULL DEFAULT '',
+    context_length INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT OR IGNORE INTO model_config_rules (pattern, append_type, context_length, created_at, updated_at)
+    SELECT pattern, append_type, 0, created_at, updated_at FROM multimodal_rules;
+
+ALTER TABLE channel_models ADD COLUMN context_length INTEGER;
+
+DROP TABLE IF EXISTS context_rules;
+DROP TABLE IF EXISTS model_context_catalog;
+
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('models_dev_enabled', '1', '是否启用 models.dev 数据文件缓存（1=启用，0=关闭）');
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('models_dev_file', 'data/models.json', 'models.dev 数据文件的本地缓存路径（models.json / api.json），仅读取本地文件');
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('models_dev_source_url', 'https://models.dev/models.json', '用于更新本地缓存文件的下载地址（定时拉取写入 models_dev_file）');
+INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES ('models_dev_refresh_interval_minutes', '30', 'models.dev 数据文件更新间隔（分钟），默认 30 分钟；更新成功后自动重新应用模型配置');
+
+-- 合并后旧的独立多模态规则表不再使用
+DROP TABLE IF EXISTS multimodal_rules;

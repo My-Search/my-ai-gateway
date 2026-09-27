@@ -803,6 +803,7 @@ func resolveModelRels(ctx context.Context, st *store.Store, modelID int64, visit
 		if cm != nil {
 			rel.ChannelModelName = cm.StrPtr("model_name")
 			rel.Input = cm.StrPtr("input")
+			rel.ContextLength = cm.I64Ptr("context_length")
 			ch, _ := st.QueryOne(ctx, "SELECT * FROM channels WHERE id = ?", cm.I64("channel_id", 0))
 			if ch != nil {
 				rel.ChannelName = ch.StrPtr("name")

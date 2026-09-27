@@ -92,7 +92,7 @@ func (r *RouteResolver) BuildCandidates(ctx context.Context, req *InternalReques
 	rels := r.resolveRels(ctx, modelID, make(map[int64]bool))
 	var candidates []RoutingCandidate
 	for _, rel := range rels {
-		cm, _ := r.Store.QueryOne(ctx, "SELECT id, channel_id, channel_api_key_id, model_name, enabled, input FROM channel_models WHERE id = ?", rel.ChannelModelID)
+		cm, _ := r.Store.QueryOne(ctx, "SELECT id, channel_id, channel_api_key_id, model_name, enabled, input, context_length FROM channel_models WHERE id = ?", rel.ChannelModelID)
 		if cm == nil || cm.Int("enabled", 1) != 1 {
 			continue
 		}
@@ -124,6 +124,7 @@ func (r *RouteResolver) BuildCandidates(ctx context.Context, req *InternalReques
 				SortOrder:       rel.SortOrder,
 				ReasoningEffort: rel.ReasoningEffort,
 				Input:           cm.Str("input"),
+				ContextLength:   cm.I64("context_length", 0),
 			})
 		}
 	}

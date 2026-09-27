@@ -107,6 +107,28 @@ func registerConfigRoutes(g *gin.RouterGroup, d Deps) {
 					return
 				}
 				body["channel_model_refresh_interval_minutes"] = strconv.Itoa(n)
+			case "models_dev_enabled":
+				if v != "0" && v != "1" {
+					httpx.OK(c, failureEnvelope("models.dev 缓存开关值无效，必须为 0 或 1"))
+					return
+				}
+			case "models_dev_file":
+				if strings.TrimSpace(v) == "" {
+					httpx.OK(c, failureEnvelope("models.dev 数据文件路径不能为空"))
+					return
+				}
+			case "models_dev_source_url":
+				if strings.TrimSpace(v) == "" {
+					httpx.OK(c, failureEnvelope("models.dev 下载地址不能为空"))
+					return
+				}
+			case "models_dev_refresh_interval_minutes":
+				n, err := strconv.Atoi(v)
+				if err != nil || n < 1 || n > 1440 {
+					httpx.OK(c, failureEnvelope("models.dev 刷新间隔必须在 1-1440 分钟之间"))
+					return
+				}
+				body["models_dev_refresh_interval_minutes"] = strconv.Itoa(n)
 			}
 		}
 

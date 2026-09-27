@@ -377,6 +377,7 @@ func RowToChannelModel(r Row) models.ChannelModel {
 		LastUsedAt:      r.TimePtr("last_used_at"),
 		Source:          r.StrPtr("source"),
 		Input:           r.StrPtr("input"),
+		ContextLength:   r.IntPtr("context_length"),
 		CreatedAt:       r.TimePtr("created_at"),
 	}
 }
@@ -493,13 +494,14 @@ func RowToRequestLog(r Row) models.RequestLog {
 	}
 }
 
-func RowToMultiModalRule(r Row) models.MultiModalRule {
-	return models.MultiModalRule{
-		ID:         r.I64("id", 0),
-		Pattern:    r.Str("pattern"),
-		AppendType: r.Str("append_type"),
-		CreatedAt:  r.TimePtr("created_at"),
-		UpdatedAt:  r.TimePtr("updated_at"),
+func RowToModelConfigRule(r Row) models.ModelConfigRule {
+	return models.ModelConfigRule{
+		ID:            r.I64("id", 0),
+		Pattern:       r.Str("pattern"),
+		AppendType:    r.Str("append_type"),
+		ContextLength: r.I64("context_length", 0),
+		CreatedAt:     r.TimePtr("created_at"),
+		UpdatedAt:     r.TimePtr("updated_at"),
 	}
 }
 

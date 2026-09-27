@@ -146,6 +146,7 @@
             <th>{{ t('model.rels.channel') }}</th>
             <th>{{ t('model.rels.model') }}</th>
             <th>{{ t('model.rels.inputTypes') }}</th>
+            <th>{{ t('model.rels.contextLength') }}</th>
             <th>{{ t('model.rels.responseTime') }}</th>
             <th>{{ t('model.rels.outputSpeed') }}</th>
             <th>{{ t('model.rels.circuitBreaker') }}</th>
@@ -187,6 +188,10 @@
                 <span v-for="type in (rel.input || '').split(',')" :key="type" class="input-tag" :class="'input-tag--' + type">{{ type }}</span>
               </span>
               <span v-else class="text-muted">text</span>
+            </td>
+            <td>
+              <span v-if="rel.contextLength" class="input-tag input-tag--ctx">{{ formatTokens(rel.contextLength) }}</span>
+              <span v-else class="text-muted">-</span>
             </td>
             <td>
               <span v-if="rel.ttftMs != null" class="resp-time">
@@ -314,6 +319,7 @@ import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import { modelApi, type CustomModel, type ModelChannelRel, type RelMode } from '@/api/model'
 import { formatLocalDateTimeFull } from '@/utils/date'
+import { formatTokens } from '@/utils/format'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
 import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
@@ -1175,6 +1181,11 @@ table td {
 .input-tag--image {
   background: rgba(46, 160, 67, 0.12);
   color: #2ea043;
+}
+.input-tag--ctx {
+  background: rgba(198, 120, 221, 0.12);
+  color: var(--accent-purple, #c678dd);
+  text-transform: none;
 }
 .text-muted {
   color: var(--text-muted);

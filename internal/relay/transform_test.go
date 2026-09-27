@@ -202,6 +202,49 @@ func TestMediaSkip(t *testing.T) {
 	}
 }
 
+// TestContextLimitSkip checks the request-size routing filter: unknown windows
+// never skip, and a request only exceeds a known window past the +5K tolerance.
+func TestContextLimitSkip(t *testing.T) {
+	// ~40000 ASCII chars ≈ 10000 tokens, comfortably above the 5K tolerance.
+	big := strings.Repeat("a", 40000)
+	body := `{"model":"m","messages":[{"role":"user","content":"` + big + `"}]}`
+	req, _ := ParseRequest(body, ProtoOpenAI)
+
+	estimated := EstimateRequestTokens(req)
+	if estimated < 9000 || estimated > 11000 {
+		t.Fatalf("estimated = %d, want ~10000", estimated)
+	}
+
+	// Unknown window (0): never skipped.
+	if tooLarge, _ := ExceedsContextLimit(req, 0); tooLarge {
+		t.Errorf("unknown window should not skip")
+	}
+	// Window far below the estimate: skipped.
+	if tooLarge, _ := ExceedsContextLimit(req, 100); !tooLarge {
+		t.Errorf("small window should skip a ~10000-token request")
+	}
+	// Exactly at the boundary: estimate == window + tolerance is not "greater
+	// than", so it must not skip.
+	if tooLarge, _ := ExceedsContextLimit(req, estimated-ContextToleranceTokens); tooLarge {
+		t.Errorf("estimate == window+tolerance must not skip")
+	}
+	if tooLarge, _ := ExceedsContextLimit(req, estimated-ContextToleranceTokens-1); !tooLarge {
+		t.Errorf("estimate > window+tolerance must skip")
+	}
+}
+
+// TestEstimateRequestTokensMedia verifies non-text parts get a flat allowance and
+// max_tokens is included in the context budget.
+func TestEstimateRequestTokensMedia(t *testing.T) {
+	body := `{"model":"m","max_tokens":500,"messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAA"}}]}]}`
+	req, _ := ParseRequest(body, ProtoOpenAI)
+	got := EstimateRequestTokens(req)
+	// text "hi" (0 tokens, <4 chars) + image allowance (1000) + max_tokens (500).
+	if got != mediaPartTokensImage+500 {
+		t.Errorf("EstimateRequestTokens = %d, want %d", got, mediaPartTokensImage+500)
+	}
+}
+
 // TestUsageExtraction checks both protocol field names.
 func TestUsageExtraction(t *testing.T) {
 	pt, ct, tt := extractUsageFromResponse(`{"usage":{"input_tokens":5,"output_tokens":7}}`)

@@ -1,8 +1,9 @@
-// Package channelload implements the provider model fetching and replacement
-// logic of the Java ChannelModelLoader + MultiModalRuleService.
+// Package channelload implements provider model fetching, the model config
+// rules (regex → input modalities / context window) and the local models.dev
+// data-file cache used as the baseline for those values.
 //
 // It is a separate package (rather than living inside server) so the scheduled
-// channel-refresh task and the admin handlers can share one implementation.
+// refresh tasks and the admin handlers can share one implementation.
 package channelload
 
 import (
@@ -28,31 +29,47 @@ type ModelPair struct {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-modal rules (Java MultiModalRuleService)
+// Model config rules: one rule = regex + optional input modalities + optional
+// context window. Rules always win over the models.dev baseline.
 // ---------------------------------------------------------------------------
 
 var (
 	ruleCacheMu  sync.Mutex
-	ruleCache    []ruleRow
+	ruleCache    []RuleRow
 	ruleCacheAt  time.Time
 	ruleCacheTTL = 5 * time.Second
 )
 
-type ruleRow struct {
-	Pattern    string
-	AppendType string
+// RuleRow is the runtime form of a model_config_rules row.
+type RuleRow struct {
+	Pattern       string
+	AppendType    string
+	ContextLength int64
 }
 
-func loadRules(ctx context.Context, st *store.Store) []ruleRow {
+// RuleMatch describes the combined effect of every rule matching one model name.
+type RuleMatch struct {
+	// Types are the modalities appended by matching rules, deduped in rule order.
+	Types []string
+	// ContextLength is the window set by the last matching rule that specified
+	// one; 0 means no rule set a window.
+	ContextLength int64
+}
+
+func loadRules(ctx context.Context, st *store.Store) []RuleRow {
 	ruleCacheMu.Lock()
 	defer ruleCacheMu.Unlock()
 	if time.Since(ruleCacheAt) < ruleCacheTTL && ruleCache != nil {
 		return ruleCache
 	}
-	rows, _ := st.Query(ctx, "SELECT pattern, append_type FROM multimodal_rules ORDER BY created_at ASC")
-	out := make([]ruleRow, 0, len(rows))
+	rows, _ := st.Query(ctx, "SELECT pattern, append_type, context_length FROM model_config_rules ORDER BY created_at ASC, id ASC")
+	out := make([]RuleRow, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, ruleRow{Pattern: row.Str("pattern"), AppendType: row.Str("append_type")})
+		out = append(out, RuleRow{
+			Pattern:       row.Str("pattern"),
+			AppendType:    row.Str("append_type"),
+			ContextLength: row.I64("context_length", 0),
+		})
 	}
 	ruleCache = out
 	ruleCacheAt = time.Now()
@@ -77,53 +94,133 @@ func MatchPattern(pattern, s string) (bool, error) {
 	return re.MatchString(s)
 }
 
-// ComputeInput mirrors MultiModalRuleService.computeInput.
-func ComputeInput(ctx context.Context, st *store.Store, modelName string) string {
-	var types []string
+// MatchRules evaluates every rule against modelName and merges the effects:
+// modality types are unioned in rule order, while a later rule's context window
+// overrides an earlier one so a specific rule can correct a broad default.
+func MatchRules(ctx context.Context, st *store.Store, modelName string) RuleMatch {
+	var out RuleMatch
 	seen := map[string]bool{}
 	for _, rule := range loadRules(ctx, st) {
 		ok, err := MatchPattern(rule.Pattern, modelName)
 		if err != nil {
-			slog.Warn("多模态规则正则无效", "pattern", rule.Pattern, "error", err)
+			slog.Warn("模型配置规则正则无效", "pattern", rule.Pattern, "error", err)
 			continue
 		}
 		if !ok {
 			continue
 		}
-		// append_type may hold several comma-separated types; dedupe per type
-		// so overlapping rules cannot inject duplicates like "text,image,image".
+		// append_type may hold several comma-separated types; dedupe per type so
+		// overlapping rules cannot inject duplicates like "text,image,image".
 		for _, t := range strings.Split(rule.AppendType, ",") {
 			t = strings.TrimSpace(t)
 			if t == "" || seen[t] {
 				continue
 			}
 			seen[t] = true
-			types = append(types, t)
+			out.Types = append(out.Types, t)
+		}
+		if rule.ContextLength > 0 {
+			out.ContextLength = rule.ContextLength
 		}
 	}
-	if len(types) == 0 {
-		return "text"
-	}
-	return "text," + strings.Join(types, ",")
+	return out
 }
 
-// ReapplyAllRules mirrors MultiModalRuleService.reapplyAllRules: recompute the
-// input column for every channel model, updating only changed rows.
+// ComputeInput resolves a channel model's supported input modalities: the
+// models.dev baseline first, then our rules' appended types on top, so our
+// configuration always wins over the upstream metadata.
+func ComputeInput(ctx context.Context, st *store.Store, modelName string) string {
+	types := []string{}
+	seen := map[string]bool{}
+	add := func(t string) {
+		t = strings.TrimSpace(t)
+		if t == "" || seen[t] {
+			return
+		}
+		seen[t] = true
+		types = append(types, t)
+	}
+	// Baseline first (always contains "text").
+	for _, t := range catalogBaseInputTypes(modelName) {
+		add(t)
+	}
+	for _, t := range MatchRules(ctx, st, modelName).Types {
+		add(t)
+	}
+	if !seen["text"] {
+		types = append([]string{"text"}, types...)
+	}
+	return strings.Join(types, ",")
+}
+
+// ResolveModelConfig is the single entry point used everywhere a channel model's
+// input modalities and context window are written: rules take precedence over
+// the models.dev baseline, and an unknown window stays nil so the relay never
+// filters on missing data.
+func ResolveModelConfig(ctx context.Context, st *store.Store, modelName string) (input string, contextLength *int64) {
+	m := MatchRules(ctx, st, modelName)
+	input = ComputeInput(ctx, st, modelName)
+	if m.ContextLength > 0 {
+		v := m.ContextLength
+		return input, &v
+	}
+	if v := catalogContextLength(modelName); v > 0 {
+		return input, &v
+	}
+	return input, nil
+}
+
+// ReapplyAllRules recomputes the input and context_length columns for every
+// channel model, updating only changed rows.
 func ReapplyAllRules(ctx context.Context, st *store.Store) {
-	rows, _ := st.Query(ctx, "SELECT id, model_name, input FROM channel_models")
+	rows, _ := st.Query(ctx, "SELECT id, model_name, input, context_length FROM channel_models")
 	updated := 0
 	for _, row := range rows {
 		modelName := row.Str("model_name")
 		if modelName == "" {
 			continue
 		}
-		newInput := ComputeInput(ctx, st, modelName)
-		if row.Str("input") != newInput {
-			_, _ = st.Exec(ctx, "UPDATE channel_models SET input = ? WHERE id = ?", newInput, row.I64("id", 0))
-			updated++
+		newInput, newCtx := ResolveModelConfig(ctx, st, modelName)
+		if row.Str("input") == newInput && int64PtrEqual(row.I64Ptr("context_length"), newCtx) {
+			continue
 		}
+		_, _ = st.Exec(ctx, "UPDATE channel_models SET input = ?, context_length = ? WHERE id = ?",
+			newInput, newCtx, row.I64("id", 0))
+		updated++
 	}
-	slog.Info("多模态规则重新应用完成", "total", len(rows), "updated", updated)
+	slog.Info("模型配置规则重新应用完成", "total", len(rows), "updated", updated)
+}
+
+func int64PtrEqual(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+// ResolveContextLength returns the effective context window for a model: the
+// matching rule's value first, then the models.dev baseline, else nil (unknown,
+// which the relay never filters on).
+func ResolveContextLength(ctx context.Context, st *store.Store, modelName string) *int64 {
+	if v := MatchRules(ctx, st, modelName).ContextLength; v > 0 {
+		return &v
+	}
+	if v := catalogContextLength(modelName); v > 0 {
+		return &v
+	}
+	return nil
+}
+
+// ContextLengthSource reports where a model's effective context window came
+// from: "rule" (our config rules), "catalog" (models.dev file) or "none".
+func ContextLengthSource(ctx context.Context, st *store.Store, modelName string) string {
+	if MatchRules(ctx, st, modelName).ContextLength > 0 {
+		return "rule"
+	}
+	if catalogContextLength(modelName) > 0 {
+		return "catalog"
+	}
+	return "none"
 }
 
 // ---------------------------------------------------------------------------
@@ -301,6 +398,7 @@ func ReplaceAPIModels(ctx context.Context, st *store.Store, chID int64, newModel
 	type prepared struct {
 		pair    ModelPair
 		input   string
+		context *int64
 		display string
 	}
 	manualRows, _ := st.Query(ctx, "SELECT model_name FROM channel_models WHERE channel_id = ? AND (source IS NULL OR source != 'api')", chID)
@@ -317,8 +415,9 @@ func ReplaceAPIModels(ctx context.Context, st *store.Store, chID int64, newModel
 		if display == "" {
 			display = mp.Name
 		}
+		input, contextLength := ResolveModelConfig(ctx, st, mp.Name)
 		preparedModels = append(preparedModels, prepared{
-			pair: mp, input: ComputeInput(ctx, st, mp.Name), display: display,
+			pair: mp, input: input, context: contextLength, display: display,
 		})
 	}
 
@@ -333,8 +432,8 @@ func ReplaceAPIModels(ctx context.Context, st *store.Store, chID int64, newModel
 		newIDs := map[string]int64{}
 		for _, p := range preparedModels {
 			res, err := tx.ExecContext(ctx,
-				"INSERT INTO channel_models (channel_id, model_name, display_name, enabled, source, input, created_at) VALUES (?, ?, ?, 1, 'api', ?, ?)",
-				chID, p.pair.Name, p.display, p.input, now)
+				"INSERT INTO channel_models (channel_id, model_name, display_name, enabled, source, input, context_length, created_at) VALUES (?, ?, ?, 1, 'api', ?, ?, ?)",
+				chID, p.pair.Name, p.display, p.input, p.context, now)
 			if err != nil {
 				continue
 			}

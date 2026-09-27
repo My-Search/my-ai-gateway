@@ -15,7 +15,7 @@ declare module 'vue' {
     Layout: typeof import('./components/layout/Layout.vue')['default']
     LoadingModal: typeof import('./components/common/LoadingModal.vue')['default']
     LoadingSpinner: typeof import('./components/common/LoadingSpinner.vue')['default']
-    MultiModalRuleDialog: typeof import('./components/channel/MultiModalRuleDialog.vue')['default']
+    ModelConfigRuleDialog: typeof import('./components/channel/ModelConfigRuleDialog.vue')['default']
     PhaseBadge: typeof import('./components/common/PhaseBadge.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

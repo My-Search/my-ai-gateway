@@ -46,6 +46,10 @@ export interface ModelChannelRel {
   sampleCount?: number | null
   /** 该渠道模型最近30次请求的平均生成速度 (tokens/s) */
   outputSpeed?: number | null
+  /** 支持的输入模态（text/image/video/audio，逗号分隔） */
+  input?: string
+  /** 上下文窗口 (tokens)，来自模型配置规则 / models.dev；未知时为 null */
+  contextLength?: number | null
   /** 默认思考强度（reasoning_effort） */
   reasoningEffort?: string | null
   /** 是否处于熔断状态：1=熔断中（模型级或渠道级） */

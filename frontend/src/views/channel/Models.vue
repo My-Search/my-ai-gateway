@@ -60,6 +60,7 @@
             <th>{{ t('channel.models.modelName') }}</th>
             <th>{{ t('channel.models.displayName') }}</th>
             <th>{{ t('channel.models.inputTypes') }}</th>
+            <th>{{ t('channel.models.contextLength') }}</th>
             <th>{{ t('channel.models.status') }}</th>
             <th>{{ t('channel.models.requestCount') }}</th>
             <th>{{ t('channel.models.tokenUsage') }}</th>
@@ -78,8 +79,12 @@
               <span v-else class="text-muted">text</span>
             </td>
             <td style="white-space:nowrap;">
+              <span v-if="m.contextLength" class="input-tag input-tag--ctx">{{ formatTokens(m.contextLength) }}</span>
+              <span v-else style="color:var(--text-muted);">-</span>
+            </td>
+            <td style="white-space:nowrap;">
               <span v-if="m.linked" class="badge badge-success">{{ t('channel.models.linked') }}</span>
-              <span v-else class="badge badge-warning">{{ t('channel.models.unlinked') }}</span>
+              <span v-else class="badge badge-muted">{{ t('channel.models.unlinked') }}</span>
             </td>
             <td style="text-align:right;font-variant-numeric:tabular-nums;">
               <span style="font-weight:600;">{{ formatNumber(getDisplayStat(getModelStat(m.modelName)).requestCount) }}</span>
@@ -119,7 +124,7 @@
           <div class="mobile-card-header">
             <span class="mobile-card-title">{{ m.displayName || m.modelName }}</span>
             <span v-if="m.linked" class="badge badge-success">{{ t('channel.models.linked') }}</span>
-            <span v-else class="badge badge-warning">{{ t('channel.models.unlinked') }}</span>
+            <span v-else class="badge badge-muted">{{ t('channel.models.unlinked') }}</span>
           </div>
           <div class="mobile-card-model-name">
             {{ t('channel.models.modelName') }}: <code class="model-tag">{{ m.modelName }}</code>
@@ -130,6 +135,11 @@
               <span v-for="type in (m.input || '').split(',')" :key="type" class="input-tag" :class="'input-tag--' + type">{{ type }}</span>
             </span>
             <span v-else class="text-muted">text</span>
+          </div>
+          <div class="mobile-card-row" style="margin-bottom:8px;font-size:12px;">
+            <span class="mobile-card-label">{{ t('channel.models.contextLength') }}:</span>
+            <span v-if="m.contextLength" class="input-tag input-tag--ctx">{{ formatTokens(m.contextLength) }}</span>
+            <span v-else class="text-muted">-</span>
           </div>
           <div class="mobile-card-divider"></div>
           <div class="mobile-card-stats">
@@ -414,6 +424,11 @@ onMounted(async () => {
 .input-tag--image {
   background: rgba(46, 160, 67, 0.12);
   color: #2ea043;
+}
+.input-tag--ctx {
+  background: rgba(198, 120, 221, 0.12);
+  color: var(--accent-purple, #c678dd);
+  text-transform: none;
 }
 .text-muted {
   color: var(--text-muted);

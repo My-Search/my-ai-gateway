@@ -3,8 +3,8 @@
     <div class="card-header">
       <div class="card-title"><SvgIcon name="channel" :size="18" /> {{ t('channel.list.title') }}</div>
       <div style="display:flex;gap:6px;align-items:center;">
-        <button class="btn-mm-rule" @click="showMultiModalRule = true">
-          <SvgIcon name="eye" :size="13" /> {{ t('multimodal.title') }}
+        <button class="btn-mm-rule" @click="showModelConfigRule = true">
+          <SvgIcon name="eye" :size="13" /> {{ t('modelConfigRule.title') }}
         </button>
         <router-link to="/admin/channel/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> {{ t('channel.list.add') }}</router-link>
       </div>
@@ -212,7 +212,7 @@
   </div>
 
   <!-- Multi-Modal Rule Dialog -->
-  <MultiModalRuleDialog v-model="showMultiModalRule" />
+  <ModelConfigRuleDialog v-model="showModelConfigRule" />
 
   <!-- Dialog -->
   <Dialog
@@ -236,7 +236,7 @@ import { formatLocalDateTimeFull } from '@/utils/date'
 import { formatNumber } from '@/utils/format'
 import Dialog from '@/components/common/Dialog.vue'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
-import MultiModalRuleDialog from '@/components/channel/MultiModalRuleDialog.vue'
+import ModelConfigRuleDialog from '@/components/channel/ModelConfigRuleDialog.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 
@@ -255,7 +255,7 @@ const testModels = ref<ChannelModel[]>([])
 const testApiKeys = ref<ChannelApiKey[]>([])
 const selectedModelId = ref(0)
 const selectedApiKeyId = ref<number | undefined>(undefined)
-const showMultiModalRule = ref(false)
+const showModelConfigRule = ref(false)
 const toggleLoading = ref<number | null>(null)
 const reloadLoading = ref<number | null>(null)
 const modelSelectOptions = computed(() =>

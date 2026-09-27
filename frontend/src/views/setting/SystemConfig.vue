@@ -186,6 +186,68 @@
         </div>
       </div>
 
+      <!-- models.dev Metadata Sync -->
+      <div class="section">
+        <div class="section-header">
+          <SvgIcon name="refresh" :size="18" />
+          <span>{{ t('systemConfig.modelsDevManagement') }}</span>
+        </div>
+        <div class="section-desc">{{ t('systemConfig.modelsDevManagementDesc') }}</div>
+
+        <div class="config-row">
+          <div class="config-row-label">
+            <div class="config-label">{{ t('systemConfig.modelsDevEnabled') }}</div>
+            <div class="config-hint">{{ t('systemConfig.modelsDevEnabledHint') }}</div>
+          </div>
+          <div class="config-row-control">
+            <button class="toggle-btn" :class="{ active: form.models_dev_enabled === '1' }"
+                    @click="toggleModelsDev">
+              <span class="toggle-track">
+                <span class="toggle-thumb"></span>
+              </span>
+              <span class="toggle-label">{{ form.models_dev_enabled === '1' ? t('common.enabled') : t('common.disabled') }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="config-row">
+          <div class="config-row-label">
+            <div class="config-label">{{ t('systemConfig.modelsDevFile') }}</div>
+            <div class="config-hint">{{ t('systemConfig.modelsDevFileHint') }}</div>
+          </div>
+          <div class="config-row-control">
+            <input type="text" class="form-control" style="width:280px;"
+                   v-model="form.models_dev_file"
+                   :disabled="form.models_dev_enabled !== '1'" />
+          </div>
+        </div>
+
+        <div class="config-row">
+          <div class="config-row-label">
+            <div class="config-label">{{ t('systemConfig.modelsDevSourceUrl') }}</div>
+            <div class="config-hint">{{ t('systemConfig.modelsDevSourceUrlHint') }}</div>
+          </div>
+          <div class="config-row-control">
+            <input type="text" class="form-control" style="width:280px;"
+                   v-model="form.models_dev_source_url"
+                   :disabled="form.models_dev_enabled !== '1'" />
+          </div>
+        </div>
+
+        <div class="config-row">
+          <div class="config-row-label">
+            <div class="config-label">{{ t('systemConfig.modelsDevInterval') }}</div>
+            <div class="config-hint">{{ t('systemConfig.modelsDevIntervalHint') }}</div>
+          </div>
+          <div class="config-row-control">
+            <input type="number" class="form-control" style="width:120px;"
+                   v-model.number="form.models_dev_refresh_interval_minutes"
+                   :min="1" :max="1440"
+                   :disabled="form.models_dev_enabled !== '1'" />
+          </div>
+        </div>
+      </div>
+
       <!-- Save -->
       <div class="section-footer">
         <button class="btn btn-primary" @click="handleSave" :disabled="saving">
@@ -236,7 +298,11 @@ const form = reactive({
   timeout_max_seconds: 60,
   circuit_breaker_probe_interval_minutes: 30,
   circuit_breaker_probe_throttle_seconds: 6,
-  channel_model_refresh_interval_minutes: 30
+  channel_model_refresh_interval_minutes: 30,
+  models_dev_enabled: '1',
+  models_dev_file: 'data/models.json',
+  models_dev_source_url: 'https://models.dev/models.json',
+  models_dev_refresh_interval_minutes: 30
 })
 
 /** 表单是否已被修改但未保存 */
@@ -281,6 +347,11 @@ async function loadConfig() {
       form.circuit_breaker_probe_throttle_seconds = Number.isNaN(probeThrottle) ? 6 : probeThrottle
       const modelRefreshInterval = parseInt(res.data.data.channel_model_refresh_interval_minutes)
       form.channel_model_refresh_interval_minutes = Number.isNaN(modelRefreshInterval) ? 30 : modelRefreshInterval
+      form.models_dev_enabled = res.data.data.models_dev_enabled === '1' ? '1' : '0'
+      form.models_dev_file = res.data.data.models_dev_file || 'data/models.json'
+      form.models_dev_source_url = res.data.data.models_dev_source_url || 'https://models.dev/models.json'
+      const modelsDevInterval = parseInt(res.data.data.models_dev_refresh_interval_minutes)
+      form.models_dev_refresh_interval_minutes = Number.isNaN(modelsDevInterval) ? 30 : modelsDevInterval
       // 加载完成后记录初始快照
       snapshotForm()
     }
@@ -293,6 +364,10 @@ async function loadConfig() {
 
 function toggleCleanup() {
   form.log_cleanup_enabled = form.log_cleanup_enabled === '1' ? '0' : '1'
+}
+
+function toggleModelsDev() {
+  form.models_dev_enabled = form.models_dev_enabled === '1' ? '0' : '1'
 }
 
 async function handleSave() {
@@ -324,6 +399,22 @@ async function handleSave() {
     return
   }
 
+  if (form.models_dev_enabled === '1' && !String(form.models_dev_file || '').trim()) {
+    error.value = t('systemConfig.modelsDevFileInvalid')
+    return
+  }
+
+  if (form.models_dev_enabled === '1' && !String(form.models_dev_source_url || '').trim()) {
+    error.value = t('systemConfig.modelsDevSourceUrlInvalid')
+    return
+  }
+
+  if (form.models_dev_enabled === '1' &&
+      (!form.models_dev_refresh_interval_minutes || form.models_dev_refresh_interval_minutes < 1)) {
+    error.value = t('systemConfig.modelsDevIntervalInvalid')
+    return
+  }
+
   saving.value = true
   error.value = ''
   try {
@@ -340,7 +431,11 @@ async function handleSave() {
       timeout_max_seconds: String(form.timeout_max_seconds),
       circuit_breaker_probe_interval_minutes: String(form.circuit_breaker_probe_interval_minutes),
       circuit_breaker_probe_throttle_seconds: String(form.circuit_breaker_probe_throttle_seconds),
-      channel_model_refresh_interval_minutes: String(form.channel_model_refresh_interval_minutes)
+      channel_model_refresh_interval_minutes: String(form.channel_model_refresh_interval_minutes),
+      models_dev_enabled: form.models_dev_enabled,
+      models_dev_file: String(form.models_dev_file || '').trim(),
+      models_dev_source_url: String(form.models_dev_source_url || '').trim(),
+      models_dev_refresh_interval_minutes: String(form.models_dev_refresh_interval_minutes)
     })
     if (res.data.success) {
       open({ title: t('common.success'), message: t('systemConfig.saveSuccess') })

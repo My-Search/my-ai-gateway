@@ -311,6 +311,14 @@ func StartBackgroundTasks(core *relay.RelayCore, st *store.Store, cfgSvc *servic
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 
+	// Load the models.dev baseline and apply the rules once, before any request
+	// can be served: the relay reads channel_models.input/context_length, which
+	// are derived from that data plus the model config rules.
+	channelload.SetCatalogPath(cfgSvc.GetValue(ctx, service.KeyModelsDevFile, "data/models.json"))
+	channelload.ReloadCatalog()
+	channelload.InvalidateRuleCache()
+	channelload.ReapplyAllRules(ctx, st)
+
 	// CircuitBreakerRecoveryTask worker: consumes probe signals.
 	bundle.Recovery.Start()
 
@@ -376,6 +384,34 @@ func StartBackgroundTasks(core *relay.RelayCore, st *store.Store, cfgSvc *servic
 		}
 	}()
 
+	// ModelsDevRefreshTask: keep the local models.dev data file current by
+	// downloading it on a configurable interval (default 30 minutes). A file that
+	// changed triggers a full model-config reapply, so updated context windows
+	// and modalities take effect immediately. Ticks every 60s and compares the
+	// elapsed interval so a config change applies without a restart.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		var lastRefresh time.Time
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for {
+			if cfgSvc.GetValue(ctx, service.KeyModelsDevEnabled, "1") == "1" {
+				intervalMinutes := cfgSvc.IntValue(ctx, service.KeyModelsDevRefreshIntervalMins, 30)
+				now := time.Now()
+				if lastRefresh.IsZero() || now.Sub(lastRefresh).Minutes() >= float64(intervalMinutes) {
+					lastRefresh = now
+					refreshModelsDevFile(ctx, st, cfgSvc)
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
 	return func() {
 		cancel()
 		bundle.Recovery.Stop()
@@ -405,6 +441,37 @@ func refreshAutoChannels(ctx context.Context, st *store.Store) {
 		success++
 	}
 	slog.Info("渠道模型自动刷新完成", "success", success, "total", len(rows))
+}
+
+// refreshModelsDevFile downloads the upstream models.dev document into the local
+// cache file and, when it changed, reloads it and reapplies the model config.
+// A failed download keeps the existing file so routing never loses baseline data
+// because of a transient network error.
+func refreshModelsDevFile(ctx context.Context, st *store.Store, cfgSvc *service.ConfigService) {
+	path := cfgSvc.GetValue(ctx, service.KeyModelsDevFile, "data/models.json")
+	url := strings.TrimSpace(cfgSvc.GetValue(ctx, service.KeyModelsDevSourceURL, "https://models.dev/models.json"))
+
+	before := channelload.CatalogStatus()
+	usedURL, n, err := channelload.DownloadCatalogWithFallback(url, path)
+	if err != nil {
+		slog.Warn("models.dev 数据文件更新失败，保留现有缓存", "url", url, "error", err)
+		channelload.SetCatalogError(err.Error())
+		return
+	}
+	if usedURL != url {
+		slog.Info("models.dev 主地址不可达，已改用备用地址", "url", url, "fallback", usedURL)
+	}
+	channelload.SetCatalogError("")
+	channelload.SetCatalogPath(path)
+	channelload.ReloadCatalog()
+	after := channelload.CatalogStatus()
+	// Reapply whenever the file actually changed (or the previous state was
+	// empty), so rule results always reflect the loaded baseline.
+	if after.ModTime.After(before.ModTime) || before.Count != after.Count || before.Count == 0 {
+		channelload.InvalidateRuleCache()
+		channelload.ReapplyAllRules(ctx, st)
+	}
+	slog.Info("models.dev 数据文件更新完成", "models", n, "path", path, "url", usedURL)
 }
 
 // runLogCleanup mirrors LogCleanupTask.cleanExpiredData.

@@ -61,6 +61,9 @@ type ChannelModel struct {
 	LastUsedAt     APITime `json:"lastUsedAt"`
 	Source         *string `json:"source"`
 	Input          *string `json:"input"`
+	// ContextLength 是模型上下文窗口（token 数），来自上下文规则 / models.dev 目录；
+	// nil 表示未知（不做上下文过滤）。
+	ContextLength  *int    `json:"contextLength"`
 	CreatedAt      APITime `json:"createdAt"`
 	ChannelName    *string `json:"channelName"`
 	ChannelType    *string `json:"channelType"`
@@ -113,6 +116,9 @@ type ModelChannelRel struct {
 	SampleCount          *int    `json:"sampleCount"`
 	OutputSpeed          *float64 `json:"outputSpeed"`
 	Input                *string `json:"input"`
+	// ContextLength 是渠道模型的上下文窗口（tokens），来自模型配置规则 /
+	// models.dev 数据；未知时为 null，表示不参与上下文过滤。
+	ContextLength       *int64  `json:"contextLength"`
 	CircuitBroken        *int    `json:"circuitBroken"`
 	CircuitBrokenScope   *string `json:"circuitBrokenScope"`
 	CircuitBrokenExpireAt APITime `json:"circuitBrokenExpireAt"`
@@ -207,13 +213,17 @@ type AdminConfig struct {
 	UpdatedAt   APITime `json:"updatedAt"`
 }
 
-// MultiModalRule mirrors multimodal_rules.
-type MultiModalRule struct {
-	ID         int64   `json:"id"`
-	Pattern    string  `json:"pattern"`
-	AppendType string  `json:"appendType"`
-	CreatedAt  APITime `json:"createdAt"`
-	UpdatedAt  APITime `json:"updatedAt"`
+// ModelConfigRule mirrors model_config_rules: one regex rule that assigns a
+// channel model its input modalities and/or context window. Both value fields
+// are optional — an empty append_type or a zero context_length means "do not
+// override this dimension", leaving whatever the models.dev baseline provides.
+type ModelConfigRule struct {
+	ID            int64   `json:"id"`
+	Pattern       string  `json:"pattern"`
+	AppendType    string  `json:"appendType"`
+	ContextLength int64   `json:"contextLength"`
+	CreatedAt     APITime `json:"createdAt"`
+	UpdatedAt     APITime `json:"updatedAt"`
 }
 
 // PromptInjection mirrors prompt_injections.

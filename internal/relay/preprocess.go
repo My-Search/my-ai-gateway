@@ -229,6 +229,91 @@ func UnsupportedMediaTypes(req *InternalRequest, channelModelInput string) []str
 	return unsupported
 }
 
+// ContextToleranceTokens is the slack added to a candidate's context window
+// before a request is rejected: it is skipped only when the estimated request
+// size exceeds window + tolerance. Mirrors channelload.ContextToleranceTokens;
+// duplicated here so the relay package stays free of channelload imports.
+const ContextToleranceTokens = 5000
+
+// Non-text content parts are counted as a flat token allowance: the gateway has
+// no per-provider image/video tokenizer, and a fixed, generous estimate is safer
+// than ignoring media entirely (which would under-count and route an oversized
+// request to a small model).
+const (
+	mediaPartTokensImage = 1000
+	mediaPartTokensOther = 2000
+)
+
+// EstimateRequestTokens approximates the request's context size in tokens using
+// the same coarse heuristic as the usage fallback: CJK runes count as one token
+// each, other characters as one token per four. max_tokens is added when the
+// client set it explicitly, because that output budget must fit the same window.
+func EstimateRequestTokens(req *InternalRequest) int64 {
+	if req == nil {
+		return 0
+	}
+	var tokens int64
+	tokens += estimateTextTokens(req.SystemPrompt)
+	for _, msg := range req.Messages {
+		tokens += estimateTextTokens(msg.Content)
+		for _, part := range msg.ContentParts {
+			t := blockType(part)
+			switch {
+			case strings.HasPrefix(t, "image"):
+				tokens += mediaPartTokensImage
+			case strings.HasPrefix(t, "video"), strings.HasPrefix(t, "audio"):
+				tokens += mediaPartTokensOther
+			default:
+				if s, ok := part["text"].(string); ok {
+					tokens += estimateTextTokens(s)
+				}
+			}
+		}
+	}
+	if req.MaxTokens != nil && *req.MaxTokens > 0 {
+		tokens += int64(*req.MaxTokens)
+	}
+	return tokens
+}
+
+func estimateTextTokens(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	var cjk, other int64
+	for _, r := range s {
+		if isCJK(r) {
+			cjk++
+		} else {
+			other++
+		}
+	}
+	return cjk + other/4
+}
+
+func isCJK(r rune) bool {
+	switch {
+	case r >= 0x3400 && r <= 0x4dbf: // CJK Unified Ideographs Extension A
+		return true
+	case r >= 0x4e00 && r <= 0x9fff: // CJK Unified Ideographs
+		return true
+	case r >= 0xf900 && r <= 0xfaff: // CJK Compatibility Ideographs
+		return true
+	}
+	return false
+}
+
+// ExceedsContextLimit reports whether the request is too large for a candidate
+// whose context window is contextLength. A zero/negative window means unknown,
+// which never skips. The request must exceed window + tolerance to be rejected.
+func ExceedsContextLimit(req *InternalRequest, contextLength int64) (bool, int64) {
+	if contextLength <= 0 {
+		return false, 0
+	}
+	estimated := EstimateRequestTokens(req)
+	return estimated > contextLength+ContextToleranceTokens, estimated
+}
+
 // BuildRequestWithContext mirrors RequestPreprocessor.buildRequestWithContext.
 func BuildRequestWithContext(originalReq *InternalRequest, accumulatedContent string) *InternalRequest {
 	contextReq := &InternalRequest{

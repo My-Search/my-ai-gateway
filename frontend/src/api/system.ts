@@ -11,6 +11,10 @@ export interface SystemConfig {
   circuit_breaker_probe_interval_minutes: string
   circuit_breaker_probe_throttle_seconds: string
   channel_model_refresh_interval_minutes: string
+  models_dev_enabled: string
+  models_dev_file: string
+  models_dev_source_url: string
+  models_dev_refresh_interval_minutes: string
 }
 
 export const systemApi = {

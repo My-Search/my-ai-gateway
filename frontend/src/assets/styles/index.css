@@ -261,6 +261,11 @@ a {
   color: var(--accent-yellow);
 }
 
+.badge-muted {
+  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+  color: var(--text-muted);
+}
+
 /* ── Buttons (Modern) ──
  * Clean hover/active feedback, subtle shadow on primary.
  */

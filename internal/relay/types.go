@@ -114,6 +114,9 @@ type RoutingCandidate struct {
 	// Input is the channel model's supported media types ("text", "text,image", ...),
 	// consumed by the media-type routing skip (RequestPreprocessor.skipIfMediaTypeUnsupported).
 	Input string
+	// ContextLength is the channel model's context window in tokens (from our
+	// context rules / the models.dev catalog). 0 means unknown: no context skip.
+	ContextLength int64
 }
 
 // LatencyTracker provides adaptive timeouts — same logic as Java LatencyTracker.

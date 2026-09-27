@@ -24,6 +24,8 @@ export interface ChannelModel {
   displayName: string
   /** 输入类型（text/image，逗号分隔），GET /channels/:id/models 返回 */
   input?: string
+  /** 上下文窗口（tokens），来自上下文规则 / models.dev；未知时为 null */
+  contextLength?: number | null
   /** 关联状态：是否被至少一个入口模型关联（GET /channels/:id/models 返回） */
   linked?: boolean
 }

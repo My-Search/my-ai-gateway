@@ -24,6 +24,10 @@ const (
 	KeyCircuitProbeIntervalMinutes     = "circuit_breaker_probe_interval_minutes"
 	KeyCircuitProbeThrottleSeconds     = "circuit_breaker_probe_throttle_seconds"
 	KeyChannelModelRefreshIntervalMins = "channel_model_refresh_interval_minutes"
+	KeyModelsDevEnabled                = "models_dev_enabled"
+	KeyModelsDevFile                   = "models_dev_file"
+	KeyModelsDevSourceURL              = "models_dev_source_url"
+	KeyModelsDevRefreshIntervalMins    = "models_dev_refresh_interval_minutes"
 )
 
 // SystemConfigOrder is the exact insertion order of GET /admin/api/config/system.
@@ -38,6 +42,10 @@ var SystemConfigOrder = []string{
 	KeyCircuitProbeIntervalMinutes,
 	KeyCircuitProbeThrottleSeconds,
 	KeyChannelModelRefreshIntervalMins,
+	KeyModelsDevEnabled,
+	KeyModelsDevFile,
+	KeyModelsDevSourceURL,
+	KeyModelsDevRefreshIntervalMins,
 }
 
 // systemConfigDefaults mirrors the fallbacks in AdminConfigService.
@@ -52,6 +60,10 @@ var systemConfigDefaults = map[string]string{
 	KeyCircuitProbeIntervalMinutes:     "30",
 	KeyCircuitProbeThrottleSeconds:     "6",
 	KeyChannelModelRefreshIntervalMins: "30",
+	KeyModelsDevEnabled:                "1",
+	KeyModelsDevFile:                   "data/models.json",
+	KeyModelsDevSourceURL:              "https://models.dev/models.json",
+	KeyModelsDevRefreshIntervalMins:    "30",
 }
 
 // ConfigService reads and writes admin_config.

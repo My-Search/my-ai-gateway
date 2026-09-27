@@ -193,6 +193,16 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 			continue
 		}
 
+		if tooLarge, estimated := ExceedsContextLimit(req, candidate.ContextLength); tooLarge {
+			c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
+				fmt.Sprintf("请求上下文约 %d tokens，超出模型上下文 %d（含 %d 容差）因此跳过 %s",
+					estimated, candidate.ContextLength, ContextToleranceTokens, candidateLabel(*candidate)),
+				retryIndex, nil, nil)
+			remaining = removeCandidate(remaining, candidate)
+			retryIndex++
+			continue
+		}
+
 		slog.Info("路由决策", "channel", candidate.ChannelName, "model", candidate.ModelName,
 			"key", candidate.APIKeyName, "retryIndex", retryIndex)
 
@@ -441,6 +451,16 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 		if unsupported := UnsupportedMediaTypes(currentReq, candidate.Input); len(unsupported) > 0 {
 			c.logPhase(ctx, traceID, gwKeyID, *candidate, currentReq, PhaseSkip,
 				"当前模型不支持请求中含有的这些类型："+strings.Join(unsupported, "、")+" 因此跳过 "+candidateLabel(*candidate), retryIndex, nil, nil)
+			remaining = removeCandidate(remaining, candidate)
+			retryIndex++
+			continue
+		}
+
+		if tooLarge, estimated := ExceedsContextLimit(currentReq, candidate.ContextLength); tooLarge {
+			c.logPhase(ctx, traceID, gwKeyID, *candidate, currentReq, PhaseSkip,
+				fmt.Sprintf("请求上下文约 %d tokens，超出模型上下文 %d（含 %d 容差）因此跳过 %s",
+					estimated, candidate.ContextLength, ContextToleranceTokens, candidateLabel(*candidate)),
+				retryIndex, nil, nil)
 			remaining = removeCandidate(remaining, candidate)
 			retryIndex++
 			continue

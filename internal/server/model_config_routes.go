@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http"
 	"strings"
 	"time"
 
@@ -10,103 +11,140 @@ import (
 	"github.com/my-search/my-ai-gateway/internal/httpx"
 	"github.com/my-search/my-ai-gateway/internal/jtime"
 	"github.com/my-search/my-ai-gateway/internal/models"
+	"github.com/my-search/my-ai-gateway/internal/service"
 	"github.com/my-search/my-ai-gateway/internal/store"
 )
 
+// registerMultiModalRoutes wires the model-config rules and prompt injections.
+//
+// A model config rule merges the former multimodal and context rules: one regex
+// matched against channel model names that can append input modalities and/or
+// set a context window. Its effect is layered on top of the models.dev baseline
+// data, and always wins over it.
 func registerMultiModalRoutes(g *gin.RouterGroup, d Deps) {
-	// GET /admin/api/multimodal-rules
-	g.GET("/multimodal-rules", func(c *gin.Context) {
+	// ---------------------------------------------------------------------------
+	// Model config rules (/admin/api/model-config-rules)
+	// ---------------------------------------------------------------------------
+
+	// GET /admin/api/model-config-rules
+	g.GET("/model-config-rules", func(c *gin.Context) {
 		ctx := c.Request.Context()
-		rows, _ := d.Store.Query(ctx, "SELECT * FROM multimodal_rules ORDER BY created_at ASC")
-		out := make([]models.MultiModalRule, 0, len(rows))
+		rows, err := d.Store.Query(ctx, "SELECT * FROM model_config_rules ORDER BY created_at ASC, id ASC")
+		if err != nil {
+			// 查询失败（如表缺失）必须暴露出来，返回空列表会掩盖故障
+			httpx.JSON(c, http.StatusInternalServerError, failureEnvelope(err.Error()))
+			return
+		}
+		out := make([]models.ModelConfigRule, 0, len(rows))
 		for _, r := range rows {
-			out = append(out, store.RowToMultiModalRule(r))
+			out = append(out, store.RowToModelConfigRule(r))
 		}
 		httpx.OK(c, out)
 	})
 
-	// POST /admin/api/multimodal-rules
-	g.POST("/multimodal-rules", func(c *gin.Context) {
+	// POST /admin/api/model-config-rules
+	g.POST("/model-config-rules", func(c *gin.Context) {
 		ctx := c.Request.Context()
-		var rule models.MultiModalRule
-		if err := c.ShouldBindJSON(&rule); err != nil {
-			httpx.OK(c, failureEnvelope("请求参数错误"))
-			return
-		}
-		if rule.Pattern == "" {
-			httpx.OK(c, failureEnvelope("pattern 不能为空"))
-			return
-		}
-		if _, err := regexp2.Compile(rule.Pattern, 0); err != nil {
-			httpx.OK(c, failureEnvelope("正则表达式语法错误: "+err.Error()))
-			return
-		}
-		if rule.AppendType == "" {
-			rule.AppendType = "image"
-		}
-		now := jtime.FormatApp(time.Now().UTC())
-		id, err := d.Store.Insert(ctx,
-			"INSERT INTO multimodal_rules (pattern, append_type, created_at, updated_at) VALUES (?, ?, ?, ?)",
-			rule.Pattern, rule.AppendType, now, now)
-		if err != nil {
-			httpx.OK(c, failureEnvelope(err.Error()))
-			return
-		}
-		channelload.InvalidateRuleCache()
-		channelload.ReapplyAllRules(ctx, d.Store)
-		row, _ := d.Store.QueryOne(ctx, "SELECT * FROM multimodal_rules WHERE id=?", id)
-		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("data", store.RowToMultiModalRule(row)))
-	})
-
-	// PUT /admin/api/multimodal-rules/{id}
-	g.PUT("/multimodal-rules/:id", func(c *gin.Context) {
-		ctx := c.Request.Context()
-		id, ok := pathID(c, "id")
-		if !ok {
-			httpx.OK(c, failureEnvelope("规则不存在"))
-			return
-		}
-		row, _ := d.Store.QueryOne(ctx, "SELECT * FROM multimodal_rules WHERE id=?", id)
-		if row == nil {
-			httpx.OK(c, failureEnvelope("规则不存在"))
-			return
-		}
 		var body struct {
-			Pattern    string `json:"pattern"`
-			AppendType string `json:"appendType"`
+			Pattern       string `json:"pattern"`
+			AppendType    string `json:"appendType"`
+			ContextLength int64  `json:"contextLength"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			httpx.OK(c, failureEnvelope("请求参数错误"))
+			return
+		}
+		body.Pattern = strings.TrimSpace(body.Pattern)
+		if body.Pattern == "" {
+			httpx.OK(c, failureEnvelope("pattern 不能为空"))
 			return
 		}
 		if _, err := regexp2.Compile(body.Pattern, 0); err != nil {
 			httpx.OK(c, failureEnvelope("正则表达式语法错误: "+err.Error()))
 			return
 		}
+		if body.ContextLength < 0 {
+			httpx.OK(c, failureEnvelope("上下文大小不能为负数"))
+			return
+		}
+		if strings.TrimSpace(body.AppendType) == "" && body.ContextLength == 0 {
+			httpx.OK(c, failureEnvelope("请输入输入模态或上下文大小，至少一项"))
+			return
+		}
 		now := jtime.FormatApp(time.Now().UTC())
-		d.Store.Exec(ctx, "UPDATE multimodal_rules SET pattern=?, append_type=?, updated_at=? WHERE id=?", body.Pattern, body.AppendType, now, id)
+		id, err := d.Store.Insert(ctx,
+			"INSERT INTO model_config_rules (pattern, append_type, context_length, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+			body.Pattern, strings.TrimSpace(body.AppendType), body.ContextLength, now, now)
+		if err != nil {
+			httpx.OK(c, failureEnvelope(err.Error()))
+			return
+		}
 		channelload.InvalidateRuleCache()
 		channelload.ReapplyAllRules(ctx, d.Store)
-		updated, _ := d.Store.QueryOne(ctx, "SELECT * FROM multimodal_rules WHERE id=?", id)
-		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("data", store.RowToMultiModalRule(updated)))
+		row, _ := d.Store.QueryOne(ctx, "SELECT * FROM model_config_rules WHERE id=?", id)
+		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("data", store.RowToModelConfigRule(row)))
 	})
 
-	// DELETE /admin/api/multimodal-rules/{id}
-	g.DELETE("/multimodal-rules/:id", func(c *gin.Context) {
+	// PUT /admin/api/model-config-rules/{id}
+	g.PUT("/model-config-rules/:id", func(c *gin.Context) {
 		ctx := c.Request.Context()
 		id, ok := pathID(c, "id")
 		if !ok {
 			httpx.OK(c, failureEnvelope("规则不存在"))
 			return
 		}
-		d.Store.Exec(ctx, "DELETE FROM multimodal_rules WHERE id=?", id)
+		row, _ := d.Store.QueryOne(ctx, "SELECT * FROM model_config_rules WHERE id=?", id)
+		if row == nil {
+			httpx.OK(c, failureEnvelope("规则不存在"))
+			return
+		}
+		var body struct {
+			Pattern       string `json:"pattern"`
+			AppendType    string `json:"appendType"`
+			ContextLength int64  `json:"contextLength"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			httpx.OK(c, failureEnvelope("请求参数错误"))
+			return
+		}
+		body.Pattern = strings.TrimSpace(body.Pattern)
+		if _, err := regexp2.Compile(body.Pattern, 0); err != nil {
+			httpx.OK(c, failureEnvelope("正则表达式语法错误: "+err.Error()))
+			return
+		}
+		if body.ContextLength < 0 {
+			httpx.OK(c, failureEnvelope("上下文大小不能为负数"))
+			return
+		}
+		if strings.TrimSpace(body.AppendType) == "" && body.ContextLength == 0 {
+			httpx.OK(c, failureEnvelope("请输入输入模态或上下文大小，至少一项"))
+			return
+		}
+		now := jtime.FormatApp(time.Now().UTC())
+		d.Store.Exec(ctx, "UPDATE model_config_rules SET pattern=?, append_type=?, context_length=?, updated_at=? WHERE id=?",
+			body.Pattern, strings.TrimSpace(body.AppendType), body.ContextLength, now, id)
+		channelload.InvalidateRuleCache()
+		channelload.ReapplyAllRules(ctx, d.Store)
+		updated, _ := d.Store.QueryOne(ctx, "SELECT * FROM model_config_rules WHERE id=?", id)
+		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("data", store.RowToModelConfigRule(updated)))
+	})
+
+	// DELETE /admin/api/model-config-rules/{id}
+	g.DELETE("/model-config-rules/:id", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		id, ok := pathID(c, "id")
+		if !ok {
+			httpx.OK(c, failureEnvelope("规则不存在"))
+			return
+		}
+		d.Store.Exec(ctx, "DELETE FROM model_config_rules WHERE id=?", id)
 		channelload.InvalidateRuleCache()
 		channelload.ReapplyAllRules(ctx, d.Store)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
 	})
 
-	// POST /admin/api/multimodal-rules/test
-	g.POST("/multimodal-rules/test", func(c *gin.Context) {
+	// POST /admin/api/model-config-rules/test
+	g.POST("/model-config-rules/test", func(c *gin.Context) {
 		ctx := c.Request.Context()
 		var body struct {
 			Pattern  string   `json:"pattern"`
@@ -134,21 +172,42 @@ func registerMultiModalRoutes(g *gin.RouterGroup, d Deps) {
 			Matched bool   `json:"matched"`
 		}
 		results := make([]resultItem, 0, len(body.TestData))
-		for _, d := range body.TestData {
-			// Match via channelload.MatchPattern (same engine/options as
-			// ComputeInput) so the test result equals the applied result.
-			m, _ := channelload.MatchPattern(body.Pattern, d)
-			results = append(results, resultItem{Data: d, Matched: m})
+		for _, data := range body.TestData {
+			m, _ := channelload.MatchPattern(body.Pattern, data)
+			results = append(results, resultItem{Data: data, Matched: m})
 		}
-		// Also match against every real channel model: the pattern is applied
-		// to channel_models.model_name, so testing against hand-typed IDs alone
-		// can claim a match that never takes effect (e.g. "^hy" vs "workbuddy/hy4-preview").
-		matchedModels := make([]string, 0)
+		// Also match against every real channel model: the pattern is applied to
+		// channel_models.model_name, so testing against hand-typed IDs alone can
+		// claim a match that never takes effect (e.g. "^hy" vs "workbuddy/hy4-preview").
+		type matchedModel struct {
+			ModelName     string `json:"modelName"`
+			// ContextLength is the effective window after our rules and the
+			// models.dev baseline are combined; nil = unknown, no filtering.
+			ContextLength *int64 `json:"contextLength"`
+			// ContextSource is "rule" / "catalog" / "none" for that window.
+			ContextSource string `json:"contextSource"`
+			// Input is the effective modality set after baseline + rule appends.
+			Input string `json:"input"`
+			// CatalogContextLength / CatalogInput are the raw baseline values, so
+			// the operator can see what a rule overrides.
+			CatalogContextLength int64  `json:"catalogContextLength"`
+			CatalogInput         string `json:"catalogInput"`
+		}
+		matchedModels := make([]matchedModel, 0)
 		modelRows, _ := d.Store.Query(ctx, "SELECT DISTINCT model_name FROM channel_models WHERE model_name != '' ORDER BY model_name")
 		for _, row := range modelRows {
 			name := row.Str("model_name")
 			if m, _ := channelload.MatchPattern(body.Pattern, name); m {
-				matchedModels = append(matchedModels, name)
+				effective, _ := channelload.ResolveModelConfig(ctx, d.Store, name)
+				catalogCtx, catalogInput := channelload.CatalogInfo(name)
+				matchedModels = append(matchedModels, matchedModel{
+					ModelName:            name,
+					ContextLength:        channelload.ResolveContextLength(ctx, d.Store, name),
+					ContextSource:        channelload.ContextLengthSource(ctx, d.Store, name),
+					Input:                effective,
+					CatalogContextLength: catalogCtx,
+					CatalogInput:         catalogInput,
+				})
 			}
 		}
 		httpx.OK(c, httpx.NewOrderedMap().
@@ -156,6 +215,59 @@ func registerMultiModalRoutes(g *gin.RouterGroup, d Deps) {
 			Set("data", results).
 			Set("matchedModels", matchedModels).
 			Set("totalModels", len(modelRows)))
+	})
+
+	// ---------------------------------------------------------------------------
+	// models.dev data file (/admin/api/models-dev/*)
+	//
+	// The catalog is read from a local file; the scheduled task refreshes that
+	// file, and a successful update triggers a model-config reapply.
+	// ---------------------------------------------------------------------------
+
+	// GET /admin/api/models-dev/status
+	g.GET("/models-dev/status", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		st := channelload.CatalogStatus()
+		httpx.OK(c, httpx.NewOrderedMap().
+			Set("success", true).
+			Set("enabled", d.Config.GetValue(ctx, service.KeyModelsDevEnabled, "1") == "1").
+			Set("file", d.Config.GetValue(ctx, service.KeyModelsDevFile, "data/models.json")).
+			Set("sourceUrl", d.Config.GetValue(ctx, service.KeyModelsDevSourceURL, "https://models.dev/models.json")).
+			Set("count", st.Count).
+			Set("path", st.Path).
+			Set("updatedAt", catalogModTime(st)).
+			Set("loadedAt", catalogLoadedAt(st)).
+			Set("lastError", st.LastError))
+	})
+
+	// POST /admin/api/models-dev/reload — re-read the local file (no download)
+	g.POST("/models-dev/reload", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		path := d.Config.GetValue(ctx, service.KeyModelsDevFile, "data/models.json")
+		channelload.SetCatalogPath(path)
+		n := channelload.ReloadCatalog()
+		channelload.InvalidateRuleCache()
+		channelload.ReapplyAllRules(ctx, d.Store)
+		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("count", n))
+	})
+
+	// POST /admin/api/models-dev/refresh — download into the local file, then reload
+	g.POST("/models-dev/refresh", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		path := d.Config.GetValue(ctx, service.KeyModelsDevFile, "data/models.json")
+		url := strings.TrimSpace(d.Config.GetValue(ctx, service.KeyModelsDevSourceURL, "https://models.dev/models.json"))
+		usedURL, n, err := channelload.DownloadCatalogWithFallback(url, path)
+		if err != nil {
+			channelload.SetCatalogError(err.Error())
+			httpx.OK(c, failureEnvelope("models.dev 更新失败: "+err.Error()))
+			return
+		}
+		channelload.SetCatalogPath(path)
+		channelload.ReloadCatalog()
+		channelload.InvalidateRuleCache()
+		channelload.ReapplyAllRules(ctx, d.Store)
+		channelload.SetCatalogError("")
+		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("count", n).Set("sourceUrl", usedURL))
 	})
 
 	// GET /admin/api/models/{modelId}/prompt-injections
@@ -321,4 +433,19 @@ func registerMultiModalRoutes(g *gin.RouterGroup, d Deps) {
 		d.Store.Exec(ctx, "DELETE FROM prompt_injections WHERE id=?", id)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
 	})
+}
+
+// catalogModTime / catalogLoadedAt format the data file's timestamps for the UI.
+func catalogModTime(st channelload.CatalogFileState) string {
+	if st.ModTime.IsZero() {
+		return ""
+	}
+	return jtime.FormatApp(st.ModTime.UTC())
+}
+
+func catalogLoadedAt(st channelload.CatalogFileState) string {
+	if st.LoadedAt.IsZero() {
+		return ""
+	}
+	return jtime.FormatApp(st.LoadedAt.UTC())
 }

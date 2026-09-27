@@ -150,7 +150,149 @@ func Migrate(conn *sql.DB) error {
 		slog.Info("迁移版本完成", "version", b.version)
 	}
 
+	if err := repairModelConfigRules(conn); err != nil {
+		return fmt.Errorf("修复模型配置规则状态: %w", err)
+	}
+
 	slog.Info("=== 数据库迁移完成 ===")
+	return nil
+}
+
+// createModelConfigRulesSQL 与 update.sql 的 v1.41.0 块保持一致。
+const createModelConfigRulesSQL = `CREATE TABLE IF NOT EXISTS model_config_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pattern TEXT NOT NULL,
+    append_type TEXT NOT NULL DEFAULT '',
+    context_length INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`
+
+// repairModelConfigRules 按“状态”而非版本号修复 v1.41.0 的历史问题：
+// 该版本号曾被第一版草稿占用（建的是 context_rules / model_context_catalog），
+// 记录进 db_schema_version 后，合并版的同号 SQL 块就被永久跳过——表没建、
+// 旧表没搬、种子配置没写。因为迁移按版本号幂等，重写已记录的版本块无法
+// 自愈，这里在每次迁移结束后检查实际状态并补齐，健康库一次探测即返回。
+func repairModelConfigRules(conn *sql.DB) error {
+	// 1. 表状态探测
+	rows, err := conn.Query(`SELECT name FROM sqlite_master WHERE type='table'
+		AND name IN ('model_config_rules','multimodal_rules','context_rules','model_context_catalog')`)
+	if err != nil {
+		return fmt.Errorf("探测表状态: %w", err)
+	}
+	exist := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return err
+		}
+		exist[name] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// 2. 渠道模型上下文列
+	var hasCtxCol int
+	if err := conn.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('channel_models') WHERE name='context_length'`).Scan(&hasCtxCol); err != nil {
+		return fmt.Errorf("探测 channel_models.context_length: %w", err)
+	}
+
+	// 3. models.dev 种子配置（含草稿版遗留的 models_dev_url）
+	var seedCount, staleURL int
+	if err := conn.QueryRow(`SELECT COUNT(*) FROM admin_config WHERE config_key IN
+		('models_dev_enabled','models_dev_file','models_dev_source_url','models_dev_refresh_interval_minutes')`).
+		Scan(&seedCount); err != nil {
+		return fmt.Errorf("探测 models.dev 配置: %w", err)
+	}
+	if err := conn.QueryRow(
+		`SELECT COUNT(*) FROM admin_config WHERE config_key='models_dev_url'`).Scan(&staleURL); err != nil {
+		return fmt.Errorf("探测 models_dev_url: %w", err)
+	}
+
+	needRepair := !exist["model_config_rules"] || exist["multimodal_rules"] ||
+		exist["context_rules"] || exist["model_context_catalog"] ||
+		hasCtxCol == 0 || seedCount < 4 || staleURL > 0
+	if !needRepair {
+		return nil
+	}
+	slog.Info("检测到模型配置规则状态不完整，开始修复",
+		"model_config_rules", exist["model_config_rules"],
+		"multimodal_rules", exist["multimodal_rules"],
+		"context_rules", exist["context_rules"],
+		"context_length_column", hasCtxCol > 0,
+		"seed_keys", seedCount, "stale_models_dev_url", staleURL)
+
+	tx, err := conn.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if !exist["model_config_rules"] {
+		if _, err := tx.Exec(createModelConfigRulesSQL); err != nil {
+			return fmt.Errorf("创建 model_config_rules: %w", err)
+		}
+	}
+	if exist["multimodal_rules"] {
+		// 多模态规则原样并入（上下文留 0=不覆盖），行必须先搬再删表。
+		if _, err := tx.Exec(`INSERT INTO model_config_rules
+			(pattern, append_type, context_length, created_at, updated_at)
+			SELECT pattern, append_type, 0, created_at, updated_at FROM multimodal_rules`); err != nil {
+			return fmt.Errorf("迁移 multimodal_rules 行: %w", err)
+		}
+		if _, err := tx.Exec(`DROP TABLE multimodal_rules`); err != nil {
+			return fmt.Errorf("删除 multimodal_rules: %w", err)
+		}
+	}
+	if exist["context_rules"] {
+		if _, err := tx.Exec(`INSERT INTO model_config_rules
+			(pattern, append_type, context_length, created_at, updated_at)
+			SELECT pattern, '', context_length, created_at, updated_at FROM context_rules`); err != nil {
+			return fmt.Errorf("迁移 context_rules 行: %w", err)
+		}
+		if _, err := tx.Exec(`DROP TABLE context_rules`); err != nil {
+			return fmt.Errorf("删除 context_rules: %w", err)
+		}
+	}
+	if exist["model_context_catalog"] {
+		// 目录数据已改为本地文件缓存，DB 目录表整体废弃。
+		if _, err := tx.Exec(`DROP TABLE model_context_catalog`); err != nil {
+			return fmt.Errorf("删除 model_context_catalog: %w", err)
+		}
+	}
+	if hasCtxCol == 0 {
+		if _, err := tx.Exec(`ALTER TABLE channel_models ADD COLUMN context_length INTEGER`); err != nil {
+			return fmt.Errorf("添加 channel_models.context_length: %w", err)
+		}
+	}
+	// 草稿版把下载地址存在 models_dev_url，先带上原值迁到新键，再补默认值。
+	if _, err := tx.Exec(`INSERT INTO admin_config (config_key, config_value, description)
+		SELECT 'models_dev_source_url', config_value,
+			'用于更新本地缓存文件的下载地址（定时拉取写入 models_dev_file）'
+		FROM admin_config WHERE config_key='models_dev_url'
+		  AND NOT EXISTS (SELECT 1 FROM admin_config WHERE config_key='models_dev_source_url')`); err != nil {
+		return fmt.Errorf("迁移 models_dev_url 值: %w", err)
+	}
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUES
+		('models_dev_enabled', '1', '是否启用 models.dev 数据文件缓存（1=启用，0=关闭）'),
+		('models_dev_file', 'data/models.json', 'models.dev 数据文件的本地缓存路径（models.json / api.json），仅读取本地文件'),
+		('models_dev_source_url', 'https://models.dev/models.json', '用于更新本地缓存文件的下载地址（定时拉取写入 models_dev_file）'),
+		('models_dev_refresh_interval_minutes', '30', 'models.dev 数据文件更新间隔（分钟），默认 30 分钟；更新成功后自动重新应用模型配置')`); err != nil {
+		return fmt.Errorf("写入 models.dev 配置种子: %w", err)
+	}
+	if staleURL > 0 {
+		if _, err := tx.Exec(`DELETE FROM admin_config WHERE config_key='models_dev_url'`); err != nil {
+			return fmt.Errorf("清理 models_dev_url: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	slog.Info("模型配置规则状态修复完成")
 	return nil
 }
 
