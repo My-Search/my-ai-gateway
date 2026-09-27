@@ -66,7 +66,7 @@
           <div v-for="rule in rules" :key="rule.id" class="mcr-rule-item">
             <div class="mcr-rule-info">
               <code class="mcr-pattern">{{ rule.pattern }}</code>
-              <span v-if="rule.appendType" class="mcr-badge badge badge-info">+{{ rule.appendType }}</span>
+              <span v-if="rule.appendType" class="mcr-badge badge badge-info">{{ rule.appendType }}</span>
               <span v-if="rule.contextLength" class="mcr-badge badge badge-warning">ctx {{ formatTokens(rule.contextLength) }}</span>
             </div>
             <div class="mcr-rule-actions">
@@ -111,26 +111,18 @@
           <div class="form-hint">{{ t('modelConfigRule.appendTypeHint') }}</div>
         </div>
 
-        <!-- Context window: preset dropdown + free-form input -->
+        <!-- Context window: preset dropdown drives the value; input only editable for custom -->
         <div class="form-group">
           <label>{{ t('modelConfigRule.contextLength') }}</label>
           <div class="mcr-context-row">
-            <input v-model="contextDraft" type="number" class="form-control"
-                   min="1024" max="2097152" step="1024" placeholder="128000"
-                   @keydown.enter.prevent="commitContext" @change="commitContext" />
+            <input v-model="contextInput" type="number" class="form-control"
+                   min="1" step="1024" :placeholder="t('modelConfigRule.ctxCustomPlaceholder')"
+                   :disabled="!isCustomContext" />
             <select class="form-control mcr-context-preset" :value="presetValue" @change="onPresetChange">
+              <option value="">{{ t('modelConfigRule.ctxNone') }}</option>
               <option v-for="p in contextPresets" :key="p.value" :value="String(p.value)">{{ t(p.labelKey) }}</option>
-              <option value="0">{{ t('modelConfigRule.ctxCustom') }}</option>
+              <option value="custom">{{ t('modelConfigRule.ctxCustom') }}</option>
             </select>
-          </div>
-          <!-- committed value renders as a removable tag, matching the modality tags above -->
-          <div v-if="form.contextLength > 0" class="mcr-tags mcr-context-tags">
-            <span class="mcr-tag">
-              {{ formatTokens(form.contextLength) }}
-              <span class="mcr-tag-remove" :title="t('common.delete')" @click="clearContext">
-                <SvgIcon name="x" :size="10" />
-              </span>
-            </span>
           </div>
           <div class="form-hint">{{ t('modelConfigRule.contextLengthHint') }}</div>
         </div>
@@ -251,7 +243,7 @@ const form = ref<{ pattern: string; contextLength: number }>({
   contextLength: 0
 })
 
-/** 常见上下文窗口预设（输入框在左，下拉在右；自定义=0 表示自由输入） */
+/** 常见上下文窗口预设（下拉在右驱动取值，输入框仅在“自定义”时可编辑） */
 const contextPresets = [
   { value: 128000, labelKey: 'modelConfigRule.ctxPreset128' },
   { value: 200000, labelKey: 'modelConfigRule.ctxPreset200' },
@@ -259,36 +251,39 @@ const contextPresets = [
   { value: 2000000, labelKey: 'modelConfigRule.ctxPreset2m' }
 ] as const
 
-/** 命中预设时下拉显示对应项，否则显示“自定义” */
+/** 用户显式选择了“自定义”下拉项 */
+const customContext = ref(false)
+
+const isCustomContext = computed(() =>
+  customContext.value ||
+  (form.value.contextLength > 0 && !contextPresets.some(p => p.value === form.value.contextLength))
+)
+
+/** 下拉选中项：不设置 / 命中的预设 / 自定义（含已填的自定义值） */
 const presetValue = computed(() => {
-  const v = Number(form.value.contextLength) || 0
-  return contextPresets.some(p => p.value === v) ? String(v) : '0'
+  if (isCustomContext.value) return 'custom'
+  return form.value.contextLength > 0 ? String(form.value.contextLength) : ''
 })
 
-/** 输入框是草稿区：回车/失焦后确认，确认结果以 tag 形式展示 */
-const contextDraft = ref<number | string>('')
-
-function commitContext() {
-  const v = Number(contextDraft.value)
-  if (Number.isFinite(v) && v > 0) {
-    form.value.contextLength = Math.floor(v)
-    contextDraft.value = ''
+/** 输入框与 form.contextLength 双向绑定，仅自定义模式下可写 */
+const contextInput = computed<number | string>({
+  get: () => form.value.contextLength || '',
+  set: (v) => {
+    const n = Number(v)
+    form.value.contextLength = Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
   }
-}
-
-function clearContext() {
-  form.value.contextLength = 0
-  contextDraft.value = ''
-}
+})
 
 function onPresetChange(e: Event) {
-  const v = Number((e.target as HTMLSelectElement).value)
-  if (v > 0) {
-    form.value.contextLength = v
-    contextDraft.value = ''
+  const sel = (e.target as HTMLSelectElement).value
+  if (sel === '') {
+    form.value.contextLength = 0
+    customContext.value = false
+  } else if (sel === 'custom') {
+    customContext.value = true
   } else {
-    // 自定义：清掉已确认的值，让用户在输入框自由填写
-    clearContext()
+    customContext.value = false
+    form.value.contextLength = Number(sel)
   }
 }
 
@@ -351,7 +346,7 @@ async function loadRules() {
 function openAddRule() {
   editingRule.value = null
   form.value = { pattern: '', contextLength: 0 }
-  contextDraft.value = ''
+  customContext.value = false
   // 默认给出最常见的三种模态，用户可删减
   appendTypeTags.value = ['image', 'video', 'audio']
   appendTypeInput.value = ''
@@ -362,7 +357,7 @@ function openAddRule() {
 function openEditRule(rule: ModelConfigRule) {
   editingRule.value = rule
   form.value = { pattern: rule.pattern, contextLength: rule.contextLength || 0 }
-  contextDraft.value = ''
+  customContext.value = false
   appendTypeTags.value = rule.appendType ? rule.appendType.split(',').filter(Boolean) : []
   appendTypeInput.value = ''
   resetTestState()
@@ -431,13 +426,16 @@ async function runTest() {
 
 async function saveRule() {
   formError.value = ''
-  commitContext()
   if (!form.value.pattern.trim()) {
     showDialog(t('common.prompt'), t('modelConfigRule.patternRequired'))
     return
   }
   const appendType = appendTypeTags.value.join(',')
   const contextLength = Number(form.value.contextLength) || 0
+  if (isCustomContext.value && contextLength <= 0) {
+    formError.value = t('modelConfigRule.ctxCustomRequired')
+    return
+  }
   if (!appendType && contextLength <= 0) {
     formError.value = t('modelConfigRule.atLeastOneRequired')
     return
@@ -674,9 +672,8 @@ function onDialogConfirm() {
 .mcr-context-row {
   display: flex; gap: 8px; align-items: center;
 }
-.mcr-context-row input { flex: 1.6; min-width: 0; }
-.mcr-context-row .mcr-context-preset { flex: 1; min-width: 0; }
-.mcr-context-tags { margin-top: 8px; flex: none; }
+.mcr-context-row input { flex: 1; min-width: 0; }
+.mcr-context-row .mcr-context-preset { flex: 1.2; min-width: 0; }
 .mcr-test-input-wrap .form-control { flex: 1; }
 .mcr-test-tags {
   display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
