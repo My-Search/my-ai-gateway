@@ -175,7 +175,7 @@
               <span v-if="currentMode === 'self_add'" class="drag-handle" :title="t('model.rels.dragSort')">≡</span>
               <span v-else class="sort-index">{{ index + 1 }}</span>
             </td>
-            <td>
+            <td class="rel-channel-cell">
               <span :class="{ 'text-disabled': isRelUnavailable(rel) }">{{ rel.channelName }}</span>
               <span v-if="rel.channelEnabled !== 1" class="badge badge-disabled">{{ t('common.disabled') }}</span>
               <span v-if="rel.apiKeyAvailable === 0" class="badge badge-no-key">{{ t('model.rels.noApiKey') }}</span>
@@ -889,6 +889,11 @@ onMounted(async () => {
 /* Ensure all table cells are vertically centered */
 table td {
   vertical-align: middle;
+}
+
+/* 渠道名列：渠道名整体不换行显示 */
+td.rel-channel-cell {
+  white-space: nowrap;
 }
 
 /* Row disabled state */
