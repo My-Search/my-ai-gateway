@@ -87,6 +87,18 @@ type InternalRequest struct {
 	ContextRetry       bool
 	ReasoningEffort    *string
 	DetectedMediaTypes []string
+
+	// Passthrough is a raw upstream request body for non-chat endpoints
+	// (currently POST /v1/embeddings). When non-empty, BuildProviderRequest
+	// forwards it verbatim (only rewriting the model field) instead of
+	// rendering the request from Messages.
+	Passthrough json.RawMessage
+	// EndpointPath overrides the upstream URL suffix (e.g. "/embeddings").
+	// Empty means the protocol default ("/chat/completions" or "/messages").
+	EndpointPath string
+	// EstimatedTokens, when > 0, overrides the message-based token heuristic
+	// used by the context-limit guard for payloads without chat messages.
+	EstimatedTokens int64
 }
 
 // InternalMessage is the unified internal message representation.

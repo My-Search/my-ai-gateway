@@ -348,6 +348,12 @@ func hasToolResultBlock(parts []map[string]any) bool {
 
 // BuildProviderRequest renders the upstream request body for the target provider.
 func BuildProviderRequest(req *InternalRequest, provider string) string {
+	// Non-chat passthrough (e.g. embeddings): forward the original body, only
+	// rewriting the model field to the channel model name (req.Model is already
+	// the candidate's model name by the time this is called).
+	if len(req.Passthrough) > 0 {
+		return ReplaceModelInJSON(string(req.Passthrough), req.Model)
+	}
 	if provider == ProtoAnthropic {
 		return buildAnthropicRequest(req)
 	}

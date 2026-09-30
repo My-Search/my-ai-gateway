@@ -211,17 +211,28 @@ func registerV1Routes(g *gin.RouterGroup, d Deps) {
 		c.JSON(200, map[string]any{"object": "list", "data": data})
 	})
 
-	// POST /v1/embeddings — passes through as chat (matches Java behaviour)
+	// POST /v1/embeddings — OpenAI Embeddings API. Non-stream passthrough:
+	// the body is forwarded verbatim (only the model field is rewritten per
+	// candidate) to the upstream {base_url}/embeddings endpoint, reusing the
+	// candidate routing / retry / circuit-breaking / logging pipeline.
 	g.POST("/embeddings", func(c *gin.Context) {
 		rawBody, _ := io.ReadAll(c.Request.Body)
 		authHeader := c.GetHeader("Authorization")
 
-		ctx := c.Request.Context()
-		internalReq, err := relay.ParseRequest(string(rawBody), relay.ProtoOpenAI)
+		if authHeader == "" {
+			c.JSON(401, relay.ErrorMapOpenAI(
+				"Authorization header is required. Expected: Authorization: Bearer sk-myai-xxx",
+				"authentication_error", 401))
+			return
+		}
+
+		internalReq, err := relay.ParseEmbeddingsRequest(string(rawBody))
 		if err != nil {
 			c.JSON(400, relay.ErrorMapOpenAI("Invalid request body", "invalid_request_error", 400))
 			return
 		}
+
+		ctx := c.Request.Context()
 		result := d.Relay.RelayNonStream(ctx, internalReq, authHeader, buildHeadersJSON(c), string(rawBody))
 		c.Header("Content-Type", "application/json;charset=UTF-8")
 		c.Writer.WriteHeader(result.StatusCode)

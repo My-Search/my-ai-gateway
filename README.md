@@ -227,6 +227,27 @@ curl http://localhost:3990/v1/messages \
   }'
 ```
 
+### Embeddings
+
+`POST /v1/embeddings` follows the OpenAI Embeddings API. Create an entry model
+whose name maps to your upstream embedding model (e.g. `text-embedding-3-small`),
+then call it as usual — the gateway routes to the upstream `{base_url}/embeddings`
+and returns the vectors unchanged (`model` is rewritten back to the entry model).
+
+```bash
+curl http://localhost:3990/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "your-embedding-model",
+    "input": "The quick brown fox"
+  }'
+```
+
+`input` accepts a string, an array of strings, or token arrays, exactly like the
+upstream API. Embeddings are non-streaming. To keep an embedding-only model out
+of `GET /v1/models`, mark it as hidden in the admin console.
+
 ## Database Migration
 
 Migration scripts live in `src/main/resources/update.sql`, using versioned incremental migrations (v1.0.0 ~ v1.27.0).

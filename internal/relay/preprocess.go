@@ -252,6 +252,11 @@ func EstimateRequestTokens(req *InternalRequest) int64 {
 	if req == nil {
 		return 0
 	}
+	// Non-chat payloads (e.g. embeddings) have no messages to measure; the
+	// parser supplies a pre-computed estimate instead.
+	if req.EstimatedTokens > 0 {
+		return req.EstimatedTokens
+	}
 	var tokens int64
 	tokens += estimateTextTokens(req.SystemPrompt)
 	for _, msg := range req.Messages {

@@ -225,6 +225,25 @@ curl http://localhost:3990/v1/messages \
   }'
 ```
 
+### 向量（Embeddings）
+
+`POST /v1/embeddings` 遵循 OpenAI Embeddings API。创建一个入口模型，其名称指向上游的
+Embedding 模型（如 `text-embedding-3-small`），即可按常规调用——网关会转发到上游
+`{base_url}/embeddings`，并将响应原样返回（`model` 会改回入口模型名）。
+
+```bash
+curl http://localhost:3990/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "your-embedding-model",
+    "input": "The quick brown fox"
+  }'
+```
+
+`input` 与上游一致，支持字符串、字符串数组或 token 数组。Embeddings 不支持流式。
+若不想让纯 Embedding 模型出现在 `GET /v1/models` 中，可在管理后台将其设为「隐藏」。
+
 ## 数据库迁移
 
 数据库迁移脚本位于 `src/main/resources/update.sql`，采用版本化增量迁移方式（v1.0.0 ~ v1.27.0）。

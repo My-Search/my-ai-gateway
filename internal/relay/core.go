@@ -326,7 +326,7 @@ func (c *RelayCore) callProvider(ctx context.Context, attemptCtx context.Context
 	req *InternalRequest, candidate RoutingCandidate, provider, traceID string, timeoutMs int64) (string, int, *int64, error) {
 
 	upstreamBody := BuildProviderRequest(ReqForCandidate(req, candidate), provider)
-	endpoint := buildProviderURL(candidate, provider)
+	endpoint := buildProviderURL(candidate, provider, req.EndpointPath)
 	headers := buildProviderHeaders(candidate, provider)
 
 	started := time.Now()
@@ -638,7 +638,7 @@ func (c *RelayCore) callProviderStream(ctx context.Context, req *InternalRequest
 	startTime time.Time) (error, *int64) {
 
 	upstreamBody := BuildProviderRequest(ReqForCandidate(req, candidate), provider)
-	endpoint := buildProviderURL(candidate, provider)
+	endpoint := buildProviderURL(candidate, provider, req.EndpointPath)
 	headers := buildProviderHeaders(candidate, provider)
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader([]byte(upstreamBody)))
@@ -1022,7 +1022,7 @@ func buildFailMessage(err error) string {
 	return msg
 }
 
-func buildProviderURL(candidate RoutingCandidate, provider string) string {
+func buildProviderURL(candidate RoutingCandidate, provider, endpointPath string) string {
 	baseURL := strings.TrimRight(strings.TrimSpace(candidate.BaseURL), "/")
 	if baseURL == "" {
 		if provider == ProtoAnthropic {
@@ -1033,6 +1033,10 @@ func buildProviderURL(candidate RoutingCandidate, provider string) string {
 	}
 	if provider == ProtoAzure {
 		return baseURL
+	}
+	// Non-chat endpoints (e.g. /embeddings) override the protocol default.
+	if endpointPath != "" {
+		return baseURL + endpointPath
 	}
 	if provider == ProtoAnthropic {
 		return baseURL + "/messages"
