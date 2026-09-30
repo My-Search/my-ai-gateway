@@ -75,7 +75,9 @@ func WireRelayRuntime(core *relay.RelayCore, st *store.Store, cfgSvc *service.Co
 	recovery.ConfigMgr = configMgr
 	recovery.Resolver = &resolution{st: st}
 	recovery.ThrottleFn = func(ctx context.Context) float64 {
-		return float64(cfgSvc.IntValue(ctx, service.KeyCircuitProbeThrottleSeconds, 6))
+		// FloatValue (not IntValue) because the config carries fractions
+		// (step 0.1); the circuit layer additionally clamps to [0, 30]s.
+		return cfgSvc.FloatValue(ctx, service.KeyCircuitProbeThrottleSeconds, 30)
 	}
 
 	// 探测成功/失败后也失效缓存，使下一请求立即感知状态变化

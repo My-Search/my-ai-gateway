@@ -100,6 +100,12 @@ func registerConfigRoutes(g *gin.RouterGroup, d Deps) {
 						return
 					}
 				}
+			case "circuit_breaker_probe_throttle_seconds":
+				f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+				if err != nil || f < 0 || f > 30 {
+					httpx.OK(c, failureEnvelope("触发探测节流必须在 0-30 秒之间"))
+					return
+				}
 			case "channel_model_refresh_interval_minutes":
 				n, err := strconv.Atoi(v)
 				if err != nil || n < 1 || n > 1440 {

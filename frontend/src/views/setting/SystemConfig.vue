@@ -160,7 +160,7 @@
           <div class="config-row-control">
             <input type="number" class="form-control" style="width:120px;"
                    v-model.number="form.circuit_breaker_probe_throttle_seconds"
-                   :min="0" :max="3600" :step="0.1" />
+                   :min="0" :max="30" :step="0.1" />
           </div>
         </div>
       </div>
@@ -297,7 +297,7 @@ const form = reactive({
   timeout_min_seconds: 20,
   timeout_max_seconds: 60,
   circuit_breaker_probe_interval_minutes: 30,
-  circuit_breaker_probe_throttle_seconds: 6,
+  circuit_breaker_probe_throttle_seconds: 30,
   channel_model_refresh_interval_minutes: 30,
   models_dev_enabled: '1',
   models_dev_file: 'data/models.json',
@@ -344,7 +344,7 @@ async function loadConfig() {
       const probeInterval = parseInt(res.data.data.circuit_breaker_probe_interval_minutes)
       form.circuit_breaker_probe_interval_minutes = Number.isNaN(probeInterval) ? 30 : probeInterval
       const probeThrottle = parseFloat(res.data.data.circuit_breaker_probe_throttle_seconds)
-      form.circuit_breaker_probe_throttle_seconds = Number.isNaN(probeThrottle) ? 6 : probeThrottle
+      form.circuit_breaker_probe_throttle_seconds = Number.isNaN(probeThrottle) ? 30 : probeThrottle
       const modelRefreshInterval = parseInt(res.data.data.channel_model_refresh_interval_minutes)
       form.channel_model_refresh_interval_minutes = Number.isNaN(modelRefreshInterval) ? 30 : modelRefreshInterval
       form.models_dev_enabled = res.data.data.models_dev_enabled === '1' ? '1' : '0'
@@ -389,7 +389,7 @@ async function handleSave() {
     return
   }
 
-  if (form.circuit_breaker_probe_throttle_seconds < 0) {
+  if (form.circuit_breaker_probe_throttle_seconds < 0 || form.circuit_breaker_probe_throttle_seconds > 30) {
     error.value = t('systemConfig.probeThrottleInvalid')
     return
   }

@@ -331,4 +331,158 @@ func TestEvaluateRelBrokenLatestProbe(t *testing.T) {
 	}
 }
 
+// stubResolver is a canned circuit.Resolution for probe-path tests.
+type stubResolver struct{}
+
+func (stubResolver) ChannelEnabled(context.Context, int64) (bool, string, string, string, string, string, bool) {
+	return true, "openai", "http://example.invalid", "", "ch", "", true
+}
+func (stubResolver) ChannelModelEnabled(context.Context, int64) (bool, int64, string, string, bool) {
+	return true, 1, "m", "", true
+}
+func (stubResolver) FirstEnabledChannelModel(context.Context, int64) (string, bool, int64, bool) {
+	return "m", true, 100, true
+}
+func (stubResolver) APIKeyEnabled(context.Context, int64) (string, string, bool, bool) {
+	return "sk", "k", true, true
+}
+func (stubResolver) FirstEnabledAPIKey(context.Context, int64) (string, string, int64, bool) {
+	return "sk", "k", 7, true
+}
+
+// TestThrottleSecondsClamp verifies the throttle is clamped to [0, 30] so even a
+// misconfigured (huge) value can never delay a due probe beyond 30 seconds.
+func TestThrottleSecondsClamp(t *testing.T) {
+	for _, tc := range []struct {
+		cfg  float64
+		want float64
+	}{
+		{3600, 30}, {30, 30}, {12, 12}, {0, 0}, {-5, 0},
+	} {
+		s := &RecoveryService{ThrottleFn: func(context.Context) float64 { return tc.cfg }}
+		if got := s.throttleSeconds(context.Background()); got != tc.want {
+			t.Errorf("throttleSeconds(cfg=%v) = %v, want %v", tc.cfg, got, tc.want)
+		}
+	}
+	// No ThrottleFn: the 30s default applies.
+	s := &RecoveryService{}
+	if got := s.throttleSeconds(context.Background()); got != 30 {
+		t.Errorf("default throttle = %v, want 30", got)
+	}
+}
+
+// TestTriggerProbeByChannelCoalesces verifies duplicate signals for one channel
+// collapse to a single queued item, while distinct channels each get one.
+func TestTriggerProbeByChannelCoalesces(t *testing.T) {
+	s := NewRecoveryService()
+	for i := 0; i < 100; i++ {
+		s.TriggerProbeByChannel(7)
+	}
+	if got := len(s.Queue); got != 1 {
+		t.Fatalf("queue length after 100 triggers for one channel = %d, want 1", got)
+	}
+	s.TriggerProbeByChannel(8)
+	s.TriggerProbeByChannel(9)
+	if got := len(s.Queue); got != 3 {
+		t.Fatalf("queue length = %d, want 3 (one per channel)", got)
+	}
+	// A zero channel id is ignored.
+	s.TriggerProbeByChannel(0)
+	if got := len(s.Queue); got != 3 {
+		t.Fatalf("queue length after channel 0 = %d, want 3", got)
+	}
+}
+
+// TestMaybeProbeChannelSkipsWhenNothingDue verifies the channel-level skip: a
+// broken-but-not-yet-due record, and a channel with no records, must not probe.
+func TestMaybeProbeChannelSkipsWhenNothingDue(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	gate := &Gate{Store: st}
+
+	probing := 0
+	probe := &ProbeService{HTTPDo: func(context.Context, ProbeTarget, string, map[string]string, string) ProbeResult {
+		probing++
+		return ProbeResult{Alive: true, StatusCode: 200}
+	}}
+	svc := &RecoveryService{
+		Gate: gate, Probe: probe, ConfigMgr: &ConfigManager{Store: st},
+		Resolver: stubResolver{}, ThrottleFn: func(context.Context) float64 { return 0 },
+	}
+
+	// Broken model gate, but expiry is in the future -> not due.
+	future := jtime.FormatApp(time.Now().UTC().Add(time.Hour))
+	if _, err := st.Insert(ctx,
+		"INSERT INTO circuit_breaker_states (channel_id, channel_api_key_id, channel_model_id, is_open, fail_count, opened_at, expire_at, created_at, updated_at) VALUES (1, 7, 100, 1, 1, ?, ?, ?, ?)",
+		future, future, future, future); err != nil {
+		t.Fatal(err)
+	}
+	svc.maybeProbeChannel(1)
+	if probing != 0 {
+		t.Fatalf("probe called %d times for a not-yet-due record, want 0", probing)
+	}
+
+	// Channel with no breaker records at all -> skipped.
+	svc.maybeProbeChannel(99)
+	if probing != 0 {
+		t.Fatalf("probe called %d times for a channel with no records, want 0", probing)
+	}
+
+	// Now a due, broken model gate -> probed exactly once (alive deletes it).
+	past := jtime.FormatApp(time.Now().UTC().Add(-time.Minute))
+	if _, err := st.Insert(ctx,
+		"INSERT INTO circuit_breaker_states (channel_id, channel_api_key_id, channel_model_id, is_open, fail_count, opened_at, expire_at, created_at, updated_at) VALUES (1, 7, 100, 1, 1, ?, ?, ?, ?)",
+		past, past, past, past); err != nil {
+		t.Fatal(err)
+	}
+	svc.maybeProbeChannel(1)
+	if probing != 1 {
+		t.Fatalf("probe called %d times for a due record, want 1", probing)
+	}
+	if row, _ := st.QueryOne(ctx, "SELECT COUNT(*) cnt FROM circuit_breaker_states WHERE is_open = 1"); row != nil && row.I64("cnt", 0) != 1 {
+		t.Fatalf("expected only the future record to remain, got %d", row.I64("cnt", 0))
+	}
+}
+
+// TestMaybeProbeChannelThrottlesAfterProbe verifies the throttle window is
+// measured from the end of the previous probe: a second signal inside the
+// window must not probe again even when a fresh due record appears.
+func TestMaybeProbeChannelThrottlesAfterProbe(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	gate := &Gate{Store: st}
+
+	probing := 0
+	probe := &ProbeService{HTTPDo: func(context.Context, ProbeTarget, string, map[string]string, string) ProbeResult {
+		probing++
+		return ProbeResult{Alive: true, StatusCode: 200}
+	}}
+	svc := &RecoveryService{
+		Gate: gate, Probe: probe, ConfigMgr: &ConfigManager{Store: st},
+		Resolver: stubResolver{}, ThrottleFn: func(context.Context) float64 { return 30 },
+	}
+
+	due := jtime.FormatApp(time.Now().UTC().Add(-time.Minute))
+	insertDue := func() {
+		if _, err := st.Insert(ctx,
+			"INSERT INTO circuit_breaker_states (channel_id, channel_api_key_id, channel_model_id, is_open, fail_count, opened_at, expire_at, created_at, updated_at) VALUES (1, 7, 100, 1, 1, ?, ?, ?, ?)",
+			due, due, due, due); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	insertDue()
+	svc.maybeProbeChannel(1)
+	if probing != 1 {
+		t.Fatalf("first probe should run, got %d calls", probing)
+	}
+
+	// A fresh due record appears immediately; the 30s throttle must suppress it.
+	insertDue()
+	svc.maybeProbeChannel(1)
+	if probing != 1 {
+		t.Fatalf("second probe inside the 30s window should be throttled, got %d calls", probing)
+	}
+}
+
 func i64ptr(v int64) *int64 { return &v }

@@ -35,7 +35,12 @@ const (
 	// ProbeTimeoutSeconds is the total connect+response timeout of a probe request.
 	ProbeTimeoutSeconds         = 30
 	defaultProbeIntervalMinutes = 30
-	defaultProbeThrottleSeconds = 6
+	// defaultProbeThrottleSeconds / maxProbeThrottleSeconds bound the request-triggered
+	// probe throttle. Under high concurrency the throttle must never delay a due
+	// probe beyond maxProbeThrottleSeconds (30s): even a worst-case config is
+	// clamped here so a broken path is always re-checked within 30 seconds.
+	defaultProbeThrottleSeconds = 30
+	maxProbeThrottleSeconds     = 30
 )
 
 // probeDetailMaxRunes caps the stored probe response detail (raw body or
@@ -618,9 +623,14 @@ type RecoveryService struct {
 	// ThrottleFn returns the probe throttle in seconds (0 disables throttling).
 	ThrottleFn func(ctx context.Context) float64
 
-	lastProbeAt  sync.Map // channelID -> int64 (unix millis)
-	lastFullScan time.Time
-	mu           sync.Mutex
+	// lastProbeAt: channelID -> int64 (unix millis). Stamped when a probe run
+	// actually executes, so the throttle window is measured from the end of the
+	// previous probe rather than from when the signal happened to be processed.
+	lastProbeAt sync.Map
+	// pending coalesces request-path trigger signals per channel: at most one
+	// outstanding signal per channel sits in Queue, so a burst of requests cannot
+	// flood the queue and starve other channels.
+	pending sync.Map
 
 	stopOnce sync.Once
 	stop     chan struct{}
@@ -654,24 +664,37 @@ func (s *RecoveryService) workerLoop() {
 			if task == FullScanMark {
 				s.doFullScan()
 			} else {
+				// Clear the coalescing mark before probing so that a signal
+				// arriving while this channel is being probed can be queued
+				// again (one extra, bounded) instead of being lost.
+				s.pending.Delete(task)
 				s.maybeProbeChannel(task)
 			}
 		}
 	}
 }
 
-// TriggerProbeByChannel offers a channel id, dropping the signal when the queue is full.
+// TriggerProbeByChannel offers a channel id, coalescing duplicate signals so the
+// queue holds at most one pending probe per channel. A full queue rolls the
+// marker back so a later request can retry instead of losing the channel
+// permanently under heavy load.
 func (s *RecoveryService) TriggerProbeByChannel(channelID int64) {
 	if channelID == 0 {
 		return
 	}
+	if _, loaded := s.pending.LoadOrStore(channelID, struct{}{}); loaded {
+		return // a signal for this channel is already queued
+	}
 	select {
 	case s.Queue <- channelID:
 	default:
+		// Queue full: clear the marker so the next trigger can try again.
+		s.pending.Delete(channelID)
 	}
 }
 
-// ScanExpiredGates enqueues the full-scan marker.
+// ScanExpiredGates enqueues the full-scan marker. The marker is not coalesced:
+// a dropped signal only means the next scheduled tick retries.
 func (s *RecoveryService) ScanExpiredGates() {
 	select {
 	case s.Queue <- FullScanMark:
@@ -679,11 +702,21 @@ func (s *RecoveryService) ScanExpiredGates() {
 	}
 }
 
+// throttleSeconds returns the effective per-channel throttle, clamped to
+// [0, maxProbeThrottleSeconds] so a misconfigured (or huge) value can never
+// delay a due probe beyond 30 seconds.
 func (s *RecoveryService) throttleSeconds(ctx context.Context) float64 {
+	v := float64(defaultProbeThrottleSeconds)
 	if s.ThrottleFn != nil {
-		return s.ThrottleFn(ctx)
+		v = s.ThrottleFn(ctx)
 	}
-	return defaultProbeThrottleSeconds
+	if v < 0 {
+		return 0
+	}
+	if v > float64(maxProbeThrottleSeconds) {
+		return float64(maxProbeThrottleSeconds)
+	}
+	return v
 }
 
 func (s *RecoveryService) maybeProbeChannel(channelID int64) {
@@ -695,16 +728,24 @@ func (s *RecoveryService) maybeProbeChannel(channelID int64) {
 			return
 		}
 	}
+	// Stamp before the query so a burst of empty triggers cannot hammer the DB;
+	// the stamp is refreshed after the probe finishes (below) so the throttle
+	// window is measured from the end of the previous probe.
 	s.lastProbeAt.Store(channelID, now)
 
 	expired := s.Gate.ListExpiredStatesByChannel(ctx, channelID)
 	if len(expired) == 0 {
+		// No due, broken associated record for this channel: nothing to probe.
 		return
 	}
 	slog.Info("调用触发熔断探测", "channelId", channelID, "到期记录", len(expired))
 	for _, state := range expired {
 		s.processExpiredState(ctx, state)
 	}
+	// Re-stamp after the (possibly slow) probe so the next probe of this channel
+	// waits a full throttle window, keeping slow upstreams from monopolising the
+	// single worker and starving other channels.
+	s.lastProbeAt.Store(channelID, time.Now().UnixMilli())
 }
 
 func (s *RecoveryService) doFullScan() {

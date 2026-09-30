@@ -58,7 +58,7 @@ var systemConfigDefaults = map[string]string{
 	KeyTimeoutMaxSeconds:               "60",
 	KeyRequestDataSaveLevel:            "info",
 	KeyCircuitProbeIntervalMinutes:     "30",
-	KeyCircuitProbeThrottleSeconds:     "6",
+	KeyCircuitProbeThrottleSeconds:     "30",
 	KeyChannelModelRefreshIntervalMins: "30",
 	KeyModelsDevEnabled:                "1",
 	KeyModelsDevFile:                   "data/models.json",
