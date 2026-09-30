@@ -27,7 +27,7 @@ type RelayCore struct {
 	MetricsFn      func(model, channel, result string, latencyMs int64)
 	CircuitSkipFn  func(scope string)
 	CircuitCheckFn func(ctx context.Context, candidate RoutingCandidate) (broken bool, scope string)
-	CircuitTripFn  func(ctx context.Context, modelID, channelID, channelModelID int64, apiKeyID *int64)
+	CircuitTripFn  func(ctx context.Context, modelID, channelID, channelModelID int64, apiKeyID *int64, protocol string)
 	// TriggerProbeFn mirrors CandidateRouter.triggerProbeForCandidates.
 	TriggerProbeFn func(channelID int64)
 	// LastUsedFn updates channel_model.last_used_at and api_keys.last_used_at.
@@ -857,7 +857,7 @@ func (c *RelayCore) handleFailure(ctx context.Context, req *InternalRequest, can
 		return
 	}
 	apiKeyID := candidate.APIKeyID
-	c.CircuitTripFn(ctx, modelID, candidate.ChannelID, candidate.ChannelModelID, &apiKeyID)
+	c.CircuitTripFn(ctx, modelID, candidate.ChannelID, candidate.ChannelModelID, &apiKeyID, ClientProtocol(req))
 }
 
 // triggerProbeForCandidates mirrors CandidateRouter.triggerProbeForCandidates.

@@ -934,10 +934,10 @@ func applyRelBrokenMarks(ctx context.Context, st *store.Store, rels []models.Mod
 	}
 	enabledKeysByChannel := map[int64][]circuit.KeyRef{}
 	if len(channelIDs) > 0 {
-		rows, _ := st.Query(ctx, "SELECT id, channel_id FROM channel_api_keys WHERE channel_id IN ("+strings.Join(channelIDs, ",")+") AND enabled = 1")
+		rows, _ := st.Query(ctx, "SELECT id, channel_id, key_name FROM channel_api_keys WHERE channel_id IN ("+strings.Join(channelIDs, ",")+") AND enabled = 1")
 		for _, row := range rows {
 			chID := row.I64("channel_id", 0)
-			enabledKeysByChannel[chID] = append(enabledKeysByChannel[chID], circuit.KeyRef{ID: row.I64("id", 0), Enabled: true})
+			enabledKeysByChannel[chID] = append(enabledKeysByChannel[chID], circuit.KeyRef{ID: row.I64("id", 0), Enabled: true, Name: row.Str("key_name")})
 		}
 	}
 	boundKeyIDs := map[int64]circuit.KeyRef{}
@@ -951,10 +951,12 @@ func applyRelBrokenMarks(ctx context.Context, st *store.Store, rels []models.Mod
 		}
 		if kID := cm.I64Ptr("channel_api_key_id"); kID != nil {
 			enabled := false
-			if kRow, err := st.QueryOne(ctx, "SELECT enabled FROM channel_api_keys WHERE id = ?", *kID); err == nil {
+			name := ""
+			if kRow, err := st.QueryOne(ctx, "SELECT enabled, key_name FROM channel_api_keys WHERE id = ?", *kID); err == nil {
 				enabled = kRow.Int("enabled", 0) == 1
+				name = kRow.Str("key_name")
 			}
-			boundKeyIDs[*kID] = circuit.KeyRef{ID: *kID, Enabled: enabled}
+			boundKeyIDs[*kID] = circuit.KeyRef{ID: *kID, Enabled: enabled, Name: name}
 		}
 	}
 
@@ -980,6 +982,15 @@ func applyRelBrokenMarks(ctx context.Context, st *store.Store, rels []models.Mod
 			}
 			rel.LastProbeStatus = mark.LastProbeStatus
 			rel.LastProbeDetail = mark.LastProbeDetail
+			if len(mark.ProtocolsByKey) > 0 {
+				protocols := make([]models.APIKeyProtocol, 0, len(mark.ProtocolsByKey))
+				for _, kp := range mark.ProtocolsByKey {
+					protocols = append(protocols, models.APIKeyProtocol{
+						KeyID: kp.KeyID, KeyName: kp.KeyName, Protocol: kp.Protocol,
+					})
+				}
+				rel.CircuitBrokenProtocols = protocols
+			}
 		}
 	}
 }
@@ -998,6 +1009,7 @@ func circuitStateFromRow(r store.Row) circuit.CircuitBreakerState {
 		FailCount:       r.Int("fail_count", 0),
 		OpenedAt:        jtime.ScanTime(r["opened_at"]),
 		ExpireAt:        jtime.ScanTime(r["expire_at"]),
+		Protocol:        r.Str("protocol"),
 		LastProbeAt:     jtime.ScanTime(r["last_probe_at"]),
 		LastProbeStatus: r.IntPtr("last_probe_status"),
 		LastProbeDetail: r.StrPtr("last_probe_detail"),

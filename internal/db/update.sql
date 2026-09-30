@@ -654,3 +654,13 @@ INSERT OR IGNORE INTO admin_config (config_key, config_value, description) VALUE
 
 -- 合并后旧的独立多模态规则表不再使用
 DROP TABLE IF EXISTS multimodal_rules;
+
+-- ========================================
+-- VERSION:v1.42.0
+-- 熔断记录保存触发失败的入站协议（openai-chat / anthropic-messages /
+--   openai-responses / embeddings），用于：
+--   1) 恢复探测时按同一协议请求对应上游端点（从哪摔倒从哪站起来）；
+--   2) 入口模型关联页熔断气泡按 API Key 展示各自命中的协议。
+--   后续失败会覆盖为最近一次协议；历史记录为 NULL，探测回退为默认对话协议。
+-- ========================================
+ALTER TABLE circuit_breaker_states ADD COLUMN protocol TEXT;

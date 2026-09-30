@@ -31,7 +31,8 @@ func newTestStore(t *testing.T) *store.Store {
 			id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER, channel_model_id INTEGER,
 			is_open INTEGER, fail_count INTEGER, opened_at TEXT, expire_at TEXT,
 			created_at TEXT, updated_at TEXT, channel_api_key_id INTEGER,
-			last_probe_at TEXT, last_probe_status INTEGER, last_probe_detail TEXT)`,
+			last_probe_at TEXT, last_probe_status INTEGER, last_probe_detail TEXT,
+			protocol TEXT)`,
 	}
 	for _, q := range ddl {
 		if _, err := db.Exec(q); err != nil {

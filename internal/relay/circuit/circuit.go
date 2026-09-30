@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/my-search/my-ai-gateway/internal/jtime"
+	"github.com/my-search/my-ai-gateway/internal/relay"
 	"github.com/my-search/my-ai-gateway/internal/store"
 )
 
@@ -115,8 +116,10 @@ type Trigger struct {
 	StateCache *StateCache
 }
 
-// TriggerBreak mirrors CircuitTrigger.triggerCircuitBreak.
-func (t *Trigger) TriggerBreak(ctx context.Context, modelID, channelID int64, channelAPIKeyID *int64, channelModelID int64) {
+// TriggerBreak mirrors CircuitTrigger.triggerCircuitBreak. The protocol is the
+// inbound client protocol that failed (see relay.ClientProtocol); it is stored
+// so recovery probes the same endpoint and the admin UI can display it.
+func (t *Trigger) TriggerBreak(ctx context.Context, modelID, channelID int64, channelAPIKeyID *int64, channelModelID int64, protocol string) {
 	cfg := t.ConfigMgr.GetConfig(ctx, modelID)
 	if cfg == nil || cfg.Enabled != 1 {
 		return
@@ -133,8 +136,8 @@ func (t *Trigger) TriggerBreak(ctx context.Context, modelID, channelID int64, ch
 				_, _ = tx.ExecContext(ctx, "DELETE FROM circuit_breaker_states WHERE channel_id = ?", channelID)
 			}
 			_, err := tx.ExecContext(ctx,
-				"INSERT INTO circuit_breaker_states (channel_id, channel_api_key_id, is_open, fail_count, opened_at, expire_at, created_at, updated_at) VALUES (?, ?, 1, 1, ?, ?, ?, ?)",
-				channelID, channelAPIKeyID, jtime.FormatApp(now), jtime.FormatApp(expireAt), jtime.FormatApp(now), jtime.FormatApp(now))
+				"INSERT INTO circuit_breaker_states (channel_id, channel_api_key_id, protocol, is_open, fail_count, opened_at, expire_at, created_at, updated_at) VALUES (?, ?, ?, 1, 1, ?, ?, ?, ?)",
+				channelID, channelAPIKeyID, protocol, jtime.FormatApp(now), jtime.FormatApp(expireAt), jtime.FormatApp(now), jtime.FormatApp(now))
 			return err
 		}
 		if channelAPIKeyID != nil {
@@ -143,8 +146,8 @@ func (t *Trigger) TriggerBreak(ctx context.Context, modelID, channelID int64, ch
 			_, _ = tx.ExecContext(ctx, "DELETE FROM circuit_breaker_states WHERE channel_model_id = ?", channelModelID)
 		}
 		_, err := tx.ExecContext(ctx,
-			"INSERT INTO circuit_breaker_states (channel_id, channel_api_key_id, channel_model_id, is_open, fail_count, opened_at, expire_at, created_at, updated_at) VALUES (?, ?, ?, 1, 1, ?, ?, ?, ?)",
-			channelID, channelAPIKeyID, channelModelID, jtime.FormatApp(now), jtime.FormatApp(expireAt), jtime.FormatApp(now), jtime.FormatApp(now))
+			"INSERT INTO circuit_breaker_states (channel_id, channel_api_key_id, channel_model_id, protocol, is_open, fail_count, opened_at, expire_at, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?, ?)",
+			channelID, channelAPIKeyID, channelModelID, protocol, jtime.FormatApp(now), jtime.FormatApp(expireAt), jtime.FormatApp(now), jtime.FormatApp(now))
 		return err
 	})
 
@@ -449,6 +452,10 @@ type CircuitBreakerState struct {
 	FailCount       int
 	OpenedAt        *time.Time
 	ExpireAt        *time.Time
+	// Protocol is the inbound client protocol that tripped the breaker
+	// (openai-chat / anthropic-messages / openai-responses / embeddings),
+	// used to probe the failing endpoint on recovery.
+	Protocol string
 	// 最近一次探测信息：探测失败续期时写入；探测成功时记录即被删除。
 	LastProbeAt     *time.Time
 	LastProbeStatus *int
@@ -465,6 +472,7 @@ func rowToCircuitBreakerState(r store.Row) CircuitBreakerState {
 		FailCount:       r.Int("fail_count", 0),
 		OpenedAt:        jtime.ScanTime(r["opened_at"]),
 		ExpireAt:        jtime.ScanTime(r["expire_at"]),
+		Protocol:        r.Str("protocol"),
 		LastProbeAt:     jtime.ScanTime(r["last_probe_at"]),
 		LastProbeStatus: r.IntPtr("last_probe_status"),
 		LastProbeDetail: r.StrPtr("last_probe_detail"),
@@ -486,6 +494,9 @@ type ProbeTarget struct {
 	APIKey         string
 	APIKeyName     string
 	ChannelModelID int64
+	// Protocol is the inbound client protocol to probe with (see
+	// relay.ClientProtocol); empty falls back to the chat probe.
+	Protocol string
 }
 
 // ProbeResult is the outcome of one probe request. Alive means the upstream
@@ -557,13 +568,15 @@ func BuildProviderHeaders(channelType, apiKey, customHeadersJSON string) map[str
 }
 
 // Probe sends the minimal request. A missing HTTPDo or model name counts as failure.
+// The probe endpoint and body follow target.Protocol so a broken path is probed
+// with the same protocol that failed (embeddings vs chat/messages).
 func (s *ProbeService) Probe(ctx context.Context, target ProbeTarget) ProbeResult {
 	if s.HTTPDo == nil || target.ModelName == "" {
 		return ProbeResult{Detail: "探测配置无效（缺少模型名或 HTTP 客户端）"}
 	}
-	endpoint := BuildEndpoint(target.ChannelType, target.BaseURL, target.ChannelType)
+	endpoint := probeEndpoint(target)
 	headers := BuildProviderHeaders(target.ChannelType, target.APIKey, target.CustomHeaders)
-	body := `{"model":` + jsonString(target.ModelName) + `,"max_tokens":1,"messages":[{"role":"user","content":"ping"}]}`
+	body := probeBody(target)
 	timeoutMs := int64(ProbeTimeoutSeconds * 1000)
 	if s.TimeoutFn != nil {
 		if t := s.TimeoutFn(target.ChannelID, target.ChannelModelID); t > 0 {
@@ -573,6 +586,30 @@ func (s *ProbeService) Probe(ctx context.Context, target ProbeTarget) ProbeResul
 	probeCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
 	defer cancel()
 	return s.HTTPDo(probeCtx, target, endpoint, headers, body)
+}
+
+// probeEndpoint returns the upstream URL for a probe. Embeddings probes
+// {base}/embeddings; every other protocol keeps the legacy chat/messages
+// endpoint. Azure keeps returning the base URL unchanged (its deployment path
+// lives in base_url), matching BuildEndpoint.
+func probeEndpoint(target ProbeTarget) string {
+	base := BuildEndpoint(target.ChannelType, target.BaseURL, target.ChannelType)
+	if target.Protocol != relay.ClientProtocolEmbeddings || target.ChannelType == "azure" {
+		return base
+	}
+	// BuildEndpoint already appended "/chat/completions" (or "/messages") for
+	// non-azure channels; swap that suffix for "/embeddings".
+	base = strings.TrimSuffix(base, "/chat/completions")
+	base = strings.TrimSuffix(base, "/messages")
+	return strings.TrimRight(base, "/") + "/embeddings"
+}
+
+// probeBody builds the minimal request body matching the probe protocol.
+func probeBody(target ProbeTarget) string {
+	if target.Protocol == relay.ClientProtocolEmbeddings {
+		return `{"model":` + jsonString(target.ModelName) + `,"input":"ping"}`
+	}
+	return `{"model":` + jsonString(target.ModelName) + `,"max_tokens":1,"messages":[{"role":"user","content":"ping"}]}`
 }
 
 func jsonString(s string) string {
@@ -813,6 +850,7 @@ func (s *RecoveryService) handleChannelGate(ctx context.Context, state CircuitBr
 		ChannelID: state.ChannelID, ChannelName: chName, ChannelType: chType,
 		BaseURL: baseURL, CustomHeaders: customHeaders,
 		ModelName: modelName, APIKey: apiKey, APIKeyName: keyName, ChannelModelID: cmID,
+		Protocol: state.Protocol,
 	})
 	if result.Alive {
 		s.Gate.RemoveState(ctx, state.ID)
@@ -862,6 +900,7 @@ func (s *RecoveryService) handleModelGate(ctx context.Context, state CircuitBrea
 		ChannelID: channelID, ChannelName: chName, ChannelType: chType,
 		BaseURL: baseURL, CustomHeaders: customHeaders,
 		ModelName: modelName, APIKey: apiKey, APIKeyName: keyName, ChannelModelID: channelModelID,
+		Protocol: state.Protocol,
 	})
 	if result.Alive {
 		s.Gate.RecoverModelState(ctx, state)
@@ -880,6 +919,16 @@ type RelBrokenMark struct {
 	LastProbeAt     *time.Time
 	LastProbeStatus *int
 	LastProbeDetail *string
+	// ProtocolsByKey 列出每个可见 API Key 各自熔断时所用的入站协议
+	// （不同 Key 可能协议不同；遗留的整渠道记录归属到各 Key）。
+	ProtocolsByKey []KeyProtocol
+}
+
+// KeyProtocol pairs an API key with the inbound protocol its breaker tripped on.
+type KeyProtocol struct {
+	KeyID    int64
+	KeyName  string
+	Protocol string
 }
 
 // PathAvailable mirrors CircuitCheck.isPathAvailable over pre-grouped states.
@@ -977,13 +1026,58 @@ func EvaluateRelBroken(channelModelID, channelID int64, relKeyID *int64,
 			}
 		}
 	}
+	// 每个可见 Key 各自的熔断协议：模型级优先于渠道级，同级取开启时间最新的一条。
+	for _, key := range paths {
+		protocol := protocolForBrokenKey(key.ID, channelStates, modelStates)
+		if protocol == "" {
+			continue
+		}
+		mark.ProtocolsByKey = append(mark.ProtocolsByKey, KeyProtocol{
+			KeyID: key.ID, KeyName: key.Name, Protocol: protocol,
+		})
+	}
 	return mark
+}
+
+// protocolForBrokenKey returns the protocol of the breaker record covering
+// keyID, preferring model-level rows over channel-level ones and, within a
+// level, the most recently opened record. Legacy whole-channel rows
+// (ChannelAPIKeyID == nil) cover every key.
+func protocolForBrokenKey(keyID int64, channelStates, modelStates []CircuitBreakerState) string {
+	pick := func(states []CircuitBreakerState) (string, *time.Time) {
+		best := ""
+		var bestAt *time.Time
+		for _, s := range states {
+			if s.ChannelAPIKeyID != nil && *s.ChannelAPIKeyID != keyID {
+				continue
+			}
+			if s.Protocol == "" {
+				continue
+			}
+			if bestAt == nil || (s.OpenedAt != nil && s.OpenedAt.After(*bestAt)) {
+				best = s.Protocol
+				if s.OpenedAt != nil {
+					t := *s.OpenedAt
+					bestAt = &t
+				}
+			}
+		}
+		return best, bestAt
+	}
+	if p, _ := pick(modelStates); p != "" {
+		return p
+	}
+	p, _ := pick(channelStates)
+	return p
 }
 
 // KeyRef is a minimal API key reference for mark computation.
 type KeyRef struct {
 	ID      int64
 	Enabled bool
+	// Name is the API key's display name (channel_api_keys.key_name), used by
+	// the per-key protocol display. Optional.
+	Name string
 }
 
 // ParseCustomHeaders decodes the custom_headers JSON object.

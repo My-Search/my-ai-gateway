@@ -64,6 +64,16 @@ export interface ModelChannelRel {
   circuitBrokenLastProbeStatus?: number | null
   /** 最近一次探测的响应详情（响应体摘要或网络错误，原样展示） */
   circuitBrokenLastProbeDetail?: string | null
+  /** 各 API Key 熔断时命中的入站协议（不同 Key 可能协议不同） */
+  circuitBrokenProtocols?: APIKeyProtocol[] | null
+}
+
+/** 某个 API Key 熔断时命中的入站协议 */
+export interface APIKeyProtocol {
+  keyId: number
+  keyName: string
+  /** openai-chat | anthropic-messages | openai-responses | embeddings */
+  protocol: string
 }
 
 export interface CircuitBreakerConfig {

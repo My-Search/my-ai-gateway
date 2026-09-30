@@ -23,6 +23,37 @@ const (
 	ProtoResponses = "responses"
 )
 
+// Client protocol slugs recorded on circuit-breaker records so a broken path is
+// later probed with the very protocol that failed, and so the admin UI can show
+// which protocol tripped the breaker. Unlike ProtoOpenAI/ProtoAnthropic (which
+// describe the wire format), these identify the actual inbound endpoint.
+const (
+	ClientProtocolOpenAIChat        = "openai-chat"
+	ClientProtocolAnthropicMessages = "anthropic-messages"
+	ClientProtocolOpenAIResponses   = "openai-responses"
+	ClientProtocolEmbeddings        = "embeddings"
+)
+
+// ClientProtocol derives the inbound-protocol slug from a parsed request.
+// Embeddings reuses the OpenAI wire format, so it is distinguished by the
+// endpoint override rather than by ClientAPIFormat.
+func ClientProtocol(req *InternalRequest) string {
+	if req == nil {
+		return ClientProtocolOpenAIChat
+	}
+	if req.EndpointPath == embeddingsEndpoint {
+		return ClientProtocolEmbeddings
+	}
+	switch req.ClientAPIFormat {
+	case ProtoAnthropic:
+		return ClientProtocolAnthropicMessages
+	case ProtoResponses:
+		return ClientProtocolOpenAIResponses
+	default:
+		return ClientProtocolOpenAIChat
+	}
+}
+
 // Phase/Status values for request_logs.
 const (
 	PhaseStart        = "start"

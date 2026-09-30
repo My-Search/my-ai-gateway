@@ -336,7 +336,12 @@ func BuildRequestWithContext(originalReq *InternalRequest, accumulatedContent st
 		OriginalRequestRaw: originalReq.OriginalRequestRaw,
 		ClientAPIFormat:    originalReq.ClientAPIFormat,
 		ReasoningEffort:    originalReq.ReasoningEffort,
-		ContextRetry:       true,
+		// Carry the passthrough markers so protocol derivation (ClientProtocol)
+		// stays stable across a reroute.
+		Passthrough:     originalReq.Passthrough,
+		EndpointPath:    originalReq.EndpointPath,
+		EstimatedTokens: originalReq.EstimatedTokens,
+		ContextRetry:    true,
 	}
 	newMessages := make([]InternalMessage, 0, len(originalReq.Messages)+1)
 	newMessages = append(newMessages, originalReq.Messages...)

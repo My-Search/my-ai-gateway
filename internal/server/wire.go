@@ -118,14 +118,14 @@ func WireRelayRuntime(core *relay.RelayCore, st *store.Store, cfgSvc *service.Co
 		return false, ""
 	}
 
-	core.CircuitTripFn = func(ctx context.Context, modelID, channelID, channelModelID int64, apiKeyID *int64) {
+	core.CircuitTripFn = func(ctx context.Context, modelID, channelID, channelModelID int64, apiKeyID *int64, protocol string) {
 		defer func() {
 			if rec := recover(); rec != nil {
 				// 熔断写入失败不阻断主流程（Java CandidateRouter.handleFailure）
 				slog.Error("触发熔断写入失败", "error", rec)
 			}
 		}()
-		trigger.TriggerBreak(ctx, modelID, channelID, apiKeyID, channelModelID)
+		trigger.TriggerBreak(ctx, modelID, channelID, apiKeyID, channelModelID, protocol)
 		// TriggerBreak 已通过 StateCache.Invalidate 失效缓存，
 		// 此处无需重复失效
 	}

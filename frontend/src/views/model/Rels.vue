@@ -307,6 +307,16 @@
         </template>
         <div v-else class="probe-hint-empty">{{ t('model.rels.lastProbeNone') }}</div>
       </div>
+      <div class="probe-hint-probe">
+        <div class="probe-hint-title">{{ t('model.rels.protocolTitle') }}</div>
+        <template v-if="probeHintRel?.circuitBrokenProtocols?.length">
+          <div v-for="kp in probeHintRel.circuitBrokenProtocols" :key="kp.keyId" class="probe-hint-row">
+            <span class="probe-hint-label">{{ kp.keyName || ('#' + kp.keyId) }}</span>
+            <span>{{ protocolLabel(kp.protocol) }}</span>
+          </div>
+        </template>
+        <div v-else class="probe-hint-empty">{{ t('model.rels.protocolNone') }}</div>
+      </div>
     </div>
   </Teleport>
 </template>
@@ -450,6 +460,19 @@ function formatRespTime(ms: number): string {
 
 function effortLabel(value: string): string {
   return value // 直接显示原始值（预设 low/medium/high/... 或自定义输入值）
+}
+
+/** 熔断协议 slug → 展示文案（未知值原样回退显示） */
+const PROTOCOL_LABEL_KEYS: Record<string, string> = {
+  'openai-chat': 'model.rels.protocolOpenaiChat',
+  'anthropic-messages': 'model.rels.protocolAnthropicMessages',
+  'openai-responses': 'model.rels.protocolOpenaiResponses',
+  'embeddings': 'model.rels.protocolEmbeddings'
+}
+
+function protocolLabel(protocol: string): string {
+  const key = PROTOCOL_LABEL_KEYS[protocol]
+  return key ? t(key) : protocol
 }
 
 /** 探测说明气泡状态：visible 是否显示；pos 为 fixed 定位坐标（基于图标位置计算）及方位 */

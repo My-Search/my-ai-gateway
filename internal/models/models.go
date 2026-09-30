@@ -127,6 +127,17 @@ type ModelChannelRel struct {
 	LastProbeAt           APITime `json:"circuitBrokenLastProbeAt"`
 	LastProbeStatus       *int    `json:"circuitBrokenLastProbeStatus"`
 	LastProbeDetail       *string `json:"circuitBrokenLastProbeDetail"`
+	// CircuitBrokenProtocols 按 API Key 列出各自熔断时命中的入站协议
+	// （不同 Key 可能协议不同）；未熔断或无数据时为 null。
+	CircuitBrokenProtocols []APIKeyProtocol `json:"circuitBrokenProtocols"`
+}
+
+// APIKeyProtocol pairs a channel API key with the inbound protocol its breaker
+// tripped on (openai-chat / anthropic-messages / openai-responses / embeddings).
+type APIKeyProtocol struct {
+	KeyID    int64  `json:"keyId"`
+	KeyName  string `json:"keyName"`
+	Protocol string `json:"protocol"`
 }
 
 // CircuitBreakerConfig mirrors circuit_breaker_configs.
