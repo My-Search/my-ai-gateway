@@ -152,6 +152,43 @@ func registerV1Routes(g *gin.RouterGroup, d Deps) {
 		c.Writer.Write([]byte(result.Body))
 	})
 
+	// POST /v1/responses (OpenAI Responses API)
+	g.POST("/responses", func(c *gin.Context) {
+		rawBody, _ := io.ReadAll(c.Request.Body)
+		authHeader := c.GetHeader("Authorization")
+
+		if authHeader == "" {
+			c.JSON(401, relay.ErrorMapOpenAI(
+				"Authorization header is required. Expected: Authorization: Bearer sk-myai-xxx",
+				"authentication_error", 401))
+			return
+		}
+
+		internalReq, err := relay.ParseRequest(string(rawBody), relay.ProtoResponses)
+		if err != nil {
+			c.JSON(400, relay.ErrorMapOpenAI("Invalid request body", "invalid_request_error", 400))
+			return
+		}
+
+		ctx := c.Request.Context()
+
+		if internalReq.Stream {
+			c.Header("Content-Type", "text/event-stream;charset=UTF-8")
+			c.Header("Cache-Control", "no-cache")
+			c.Header("X-Accel-Buffering", "no")
+
+			internalClient := c.GetHeader("X-Internal-Client") == "playground"
+			d.Relay.RelayStream(ctx, internalReq, authHeader, buildHeadersJSON(c), string(rawBody), internalClient,
+				responsesSinkFor(c))
+			return
+		}
+
+		result := d.Relay.RelayNonStream(ctx, internalReq, authHeader, buildHeadersJSON(c), string(rawBody))
+		c.Header("Content-Type", "application/json;charset=UTF-8")
+		c.Writer.WriteHeader(result.StatusCode)
+		c.Writer.Write([]byte(result.Body))
+	})
+
 	// GET /v1/models — 获取模型列表，无需 API Key 认证
 	g.GET("/models", func(c *gin.Context) {
 		ctx := c.Request.Context()
@@ -339,6 +376,38 @@ func registerShareRoutes(g *gin.RouterGroup, d Deps) {
 		c.Writer.WriteHeader(result.StatusCode)
 		c.Writer.Write([]byte(result.Body))
 	})
+}
+
+// responsesSinkFor builds a sink for the OpenAI Responses API. Unlike the chat
+// sink it never emits a literal `[DONE]` frame: the terminal `response.completed`
+// event is authoritative. Named events use the payload's own "type" field.
+func responsesSinkFor(c *gin.Context) relay.StreamSink {
+	seq := 0
+	return relay.StreamSink{
+		OnEvent: func(event, data string) {
+			if event == "" {
+				var probe struct {
+					Type string `json:"type"`
+				}
+				if json.Unmarshal([]byte(data), &probe) == nil {
+					event = probe.Type
+				}
+			}
+			c.Writer.Write(relay.FormatSSE(event, data))
+			c.Writer.Flush()
+		},
+		OnDone: func() {},
+		OnError: func(err error) {
+			slog.Error("Responses 流式请求失败", "error", err)
+			seq++
+			payload, _ := json.Marshal(map[string]any{
+				"type": "error", "code": "server_error",
+				"message": err.Error(), "sequence_number": seq,
+			})
+			c.Writer.Write(relay.FormatSSE("error", string(payload)))
+			c.Writer.Flush()
+		},
+	}
 }
 
 // Helpers

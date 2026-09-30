@@ -34,6 +34,7 @@
           <select v-model="protocol" class="form-control">
             <option value="openai">{{ t('playground.protocolOpenai') }}</option>
             <option value="anthropic">{{ t('playground.protocolAnthropic') }}</option>
+            <option value="responses">{{ t('playground.protocolResponses') }}</option>
           </select>
         </div>
 
@@ -537,7 +538,7 @@ function restoreConfig() {
     if (config.selectedApiKey) {
       selectedApiKey.value = config.selectedApiKey
     }
-    if (config.protocol === 'openai' || config.protocol === 'anthropic') {
+    if (config.protocol === 'openai' || config.protocol === 'anthropic' || config.protocol === 'responses') {
       protocol.value = config.protocol
     }
     if (typeof config.temperature === 'number' && config.temperature >= 0 && config.temperature <= 2) {
@@ -650,11 +651,54 @@ function buildAnthropicImageSource(url: string): Record<string, any> {
   return { type: 'url', url }
 }
 
-/** 构建请求体（按所选 API 协议构建对应格式：openai / anthropic） */
+/** 构建请求体（按所选 API 协议构建对应格式：openai / anthropic / responses） */
 function buildRequestBody() {
   const validMessages = messages.value
     .filter(m => m.role !== 'system-msg')
     .filter(m => m.content.trim() !== '' || (m.images && m.images.length))
+
+  // OpenAI Responses API 格式（POST /v1/responses）
+  if (protocol.value === 'responses') {
+    // system 角色消息提取为顶层 instructions
+    const instructions = validMessages
+      .filter(m => m.role === 'system')
+      .map(m => m.content)
+      .join('\n\n')
+
+    const input = validMessages
+      .filter(m => m.role !== 'system')
+      .map(m => {
+        // 用户消息含图片时构建 input_text / input_image 内容块
+        if (m.role === 'user' && m.images && m.images.length > 0) {
+          const content: any[] = []
+          if (m.content.trim()) {
+            content.push({ type: 'input_text', text: m.content })
+          }
+          for (const imgUrl of m.images) {
+            content.push({ type: 'input_image', image_url: imgUrl })
+          }
+          return { type: 'message', role: 'user', content }
+        }
+        return { type: 'message', role: m.role, content: m.content }
+      })
+
+    const body: Record<string, any> = {
+      model: selectedModel.value,
+      input,
+      stream: true,
+      max_output_tokens: maxTokens.value
+    }
+    if (instructions.trim()) {
+      body.instructions = instructions
+    }
+    if (temperature.value !== undefined) {
+      body.temperature = temperature.value
+    }
+    if (reasoningEffort.value) {
+      body.reasoning = { effort: reasoningEffort.value }
+    }
+    return body
+  }
 
   // Anthropic Messages API 格式（POST /v1/messages）
   if (protocol.value === 'anthropic') {
@@ -800,7 +844,7 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
     buildRequestBody(),
     isShareMode.value,
     props.fixedShareCode,
-    protocol.value as 'openai' | 'anthropic',
+    protocol.value as 'openai' | 'anthropic' | 'responses',
     selectedApiKeyValue.value
   )
 
@@ -902,6 +946,44 @@ async function sendStreamRequest(targetMsg: ChatMessage) {
               hasNewContent = true
             }
           } else if (json.type) {
+            // OpenAI Responses API 原生 SSE 事件（protocol='responses' 时后端输出 response.* 事件）
+            if (json.type === 'response.output_text.delta' && typeof json.delta === 'string') {
+              fullContent += json.delta
+              targetMsg.content = fullContent
+              hasNewContent = true
+            }
+            if (json.type === 'response.reasoning_summary_text.delta' && typeof json.delta === 'string') {
+              if (!targetMsg.reasoningContent) {
+                targetMsg.reasoningContent = ''
+                const msgIdx = messages.value.indexOf(targetMsg)
+                if (msgIdx >= 0) {
+                  expandedThinking.value = { ...expandedThinking.value, [msgIdx]: true }
+                }
+              }
+              targetMsg.reasoningContent += json.delta
+              hasNewContent = true
+            }
+            if (json.type === 'response.completed' && json.response) {
+              // 响应完成事件携带最终 response 对象与准确 usage
+              const resp = json.response
+              if (typeof resp.output_text === 'string' && resp.output_text) {
+                fullContent = resp.output_text
+                targetMsg.content = fullContent
+              }
+              if (resp.status === 'incomplete') {
+                targetMsg.truncated = true
+              }
+              if (resp.usage && resp.usage.output_tokens != null && resp.usage.output_tokens > 0) {
+                tokenNum = resp.usage.output_tokens
+                usageExact = true
+              }
+              hasNewContent = true
+            }
+            if (json.type === 'error') {
+              lastErrorText = json.message || json.code || 'stream error'
+              targetMsg.content = t('playground.error') + ': ' + lastErrorText
+              hasNewContent = true
+            }
             // Anthropic SSE 格式处理（protocol='anthropic' 时后端翻译为此格式）
             if (json.type === 'content_block_delta' && json.delta) {
               if (json.delta.type === 'text_delta' && json.delta.text) {
@@ -1480,6 +1562,7 @@ function renderReasoningMarkdown(text: string): string {
 .channel-badge { padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
 .channel-badge.openai { background: rgba(16, 163, 127, 0.15); color: #10a37f; border: 1px solid rgba(16, 163, 127, 0.3); }
 .channel-badge.anthropic { background: rgba(204, 146, 80, 0.15); color: #cc9250; border: 1px solid rgba(204, 146, 80, 0.3); }
+.channel-badge.responses { background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3); }
 .channel-badge.trying { background: rgba(139, 92, 246, 0.15); color: var(--accent-purple); border: 1px solid rgba(139, 92, 246, 0.3); }
 .channel-name { color: var(--text-muted); font-weight: 500; }
 .channel-arrow { color: var(--text-muted); opacity: 0.5; }

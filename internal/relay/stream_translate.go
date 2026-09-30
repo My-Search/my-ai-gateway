@@ -66,6 +66,12 @@ func (s *AnthropicToOpenAIState) translatorName() string { return "anthropic->op
 
 // NewTranslateState creates the state for a provider→client direction.
 func NewTranslateState(provider, clientFormat string) StreamTranslateState {
+	if clientFormat == ProtoResponses {
+		if provider == ProtoResponses {
+			provider = ProtoOpenAI
+		}
+		return &ResponsesState{Provider: provider}
+	}
 	if provider == ProtoAnthropic {
 		return &AnthropicToOpenAIState{}
 	}
@@ -77,6 +83,9 @@ func NewTranslateState(provider, clientFormat string) StreamTranslateState {
 func TranslateStreamEvent(state StreamTranslateState, provider, eventType, eventData, originalModel string) []string {
 	if state == nil {
 		return nil
+	}
+	if s, ok := state.(*ResponsesState); ok {
+		return responsesEventFromProvider(s, provider, eventType, eventData, originalModel)
 	}
 	if provider == ProtoAnthropic {
 		if s, ok := state.(*AnthropicToOpenAIState); ok {
@@ -94,6 +103,9 @@ func TranslateStreamEvent(state StreamTranslateState, provider, eventType, event
 func TranslateStreamEnd(state StreamTranslateState, provider, originalModel string) []string {
 	if state == nil {
 		return nil
+	}
+	if s, ok := state.(*ResponsesState); ok {
+		return responsesStreamEnd(s, originalModel)
 	}
 	if provider == ProtoAnthropic {
 		if s, ok := state.(*AnthropicToOpenAIState); ok {

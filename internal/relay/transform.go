@@ -29,6 +29,9 @@ func ParseRequest(requestBody, clientFormat string) (*InternalRequest, error) {
 	if clientFormat == ProtoAnthropic {
 		return parseAnthropicRequest(raw), nil
 	}
+	if clientFormat == ProtoResponses {
+		return parseResponsesRequest(raw), nil
+	}
 	return parseOpenAIRequest(raw), nil
 }
 
@@ -685,8 +688,21 @@ func TransformResponse(providerBody, provider, clientFormat, originalModel strin
 	if err := json.Unmarshal([]byte(providerBody), &root); err != nil {
 		return providerBody
 	}
+	// The Responses API is inbound-only; an upstream is never "responses".
+	if provider == ProtoResponses {
+		provider = ProtoOpenAI
+	}
 	if clientFormat == provider {
 		return replaceModelInValue(root, originalModel, providerBody)
+	}
+	if clientFormat == ProtoResponses {
+		if obj, ok := root.(map[string]any); ok {
+			if provider == ProtoAnthropic {
+				return convertAnthropicMessageToResponses(obj, originalModel)
+			}
+			return convertChatCompletionToResponses(obj, originalModel)
+		}
+		return providerBody
 	}
 	if provider == ProtoAnthropic { // anthropic → openai
 		return convertAnthropicResponseToOpenAI(root, originalModel)

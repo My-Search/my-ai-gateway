@@ -2,7 +2,7 @@ import http from './index'
 
 /**
  * 流式聊天（SSE）
- * - 管理端 Playground：根据协议调用实际的 API 端点（/v1/chat/completions 或 /v1/messages），
+ * - 管理端 Playground：根据协议调用实际的 API 端点（/v1/chat/completions、/v1/messages 或 /v1/responses），
  *   使用 API Key 值进行认证（模拟真实客户端调用）
  * - 分享模式：URL 携带 shareCode 鉴权
  *
@@ -13,7 +13,7 @@ export function chatStream(
   isShareMode: boolean,
   shareCode?: string,
   /** 管理端 Playground：API 协议类型 */
-  protocol?: 'openai' | 'anthropic',
+  protocol?: 'openai' | 'anthropic' | 'responses',
   /** 管理端 Playground：API Key 明文值（用于认证头） */
   apiKeyValue?: string
 ): Promise<Response> {
@@ -31,6 +31,14 @@ export function chatStream(
       headers['x-api-key'] = apiKeyValue
     }
     headers['anthropic-version'] = '2023-06-01'
+    // Playground 内部调用标记，后端据此发送 _gateway_meta 等内部事件
+    headers['X-Internal-Client'] = 'playground'
+  } else if (protocol === 'responses') {
+    // OpenAI Responses API 原生端点
+    url = '/v1/responses'
+    if (apiKeyValue) {
+      headers['Authorization'] = `Bearer ${apiKeyValue}`
+    }
     // Playground 内部调用标记，后端据此发送 _gateway_meta 等内部事件
     headers['X-Internal-Client'] = 'playground'
   } else {

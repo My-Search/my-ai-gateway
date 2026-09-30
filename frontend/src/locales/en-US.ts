@@ -602,6 +602,7 @@ export default {
   'playground.protocol': 'API Protocol',
   'playground.protocolOpenai': 'OpenAI',
   'playground.protocolAnthropic': 'Anthropic',
+  'playground.protocolResponses': 'OpenAI Responses',
   'playground.reasoningEffort': 'Reasoning Effort',
   'playground.reasoningEffortDefault': 'Default (not sent)',
   'playground.entryProtocol': 'Entry:',

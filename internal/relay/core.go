@@ -822,10 +822,16 @@ func candidateLabel(c RoutingCandidate) string {
 }
 
 func (c *RelayCore) resolveProvider(candidate RoutingCandidate, defaultProvider string) string {
-	if strings.TrimSpace(candidate.ChannelType) != "" {
-		return candidate.ChannelType
+	p := strings.TrimSpace(candidate.ChannelType)
+	if p == "" {
+		p = defaultProvider
 	}
-	return defaultProvider
+	// The Responses API is an inbound-only client format: upstream channels
+	// never speak it. Fall back to an OpenAI-compatible chat channel.
+	if p == ProtoResponses {
+		return ProtoOpenAI
+	}
+	return p
 }
 
 // circuitBreakScope mirrors CandidateRouter.circuitBreakScope, returning the
