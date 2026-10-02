@@ -18,8 +18,9 @@ const (
 	ProtoAnthropic = "anthropic"
 	ProtoAzure     = "azure"
 	// ProtoResponses is the OpenAI-native Responses API (POST /v1/responses).
-	// It is only ever an inbound *client* format; upstream channels keep speaking
-	// openai/anthropic chat protocols.
+	// It is both an inbound *client* format and a valid upstream channel
+	// protocol: a channel whose channel_type is "responses" is sent Responses
+	// requests and its Responses responses are translated to the client format.
 	ProtoResponses = "responses"
 )
 

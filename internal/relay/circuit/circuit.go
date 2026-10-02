@@ -541,6 +541,9 @@ func BuildEndpoint(channelType, baseURL string, fallbackType string) string {
 	if provider == "anthropic" {
 		return base + "/messages"
 	}
+	if provider == "responses" {
+		return base + "/responses"
+	}
 	return base + "/chat/completions"
 }
 
@@ -608,6 +611,9 @@ func probeEndpoint(target ProbeTarget) string {
 func probeBody(target ProbeTarget) string {
 	if target.Protocol == relay.ClientProtocolEmbeddings {
 		return `{"model":` + jsonString(target.ModelName) + `,"input":"ping"}`
+	}
+	if target.ChannelType == "responses" {
+		return `{"model":` + jsonString(target.ModelName) + `,"input":"ping","max_output_tokens":1}`
 	}
 	return `{"model":` + jsonString(target.ModelName) + `,"max_tokens":1,"messages":[{"role":"user","content":"ping"}]}`
 }

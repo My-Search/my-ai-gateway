@@ -1,10 +1,11 @@
 // OpenAI Responses API (POST /v1/responses) inbound support.
 //
-// The gateway treats "responses" purely as a *client* protocol: the request is
-// normalized into the shared InternalRequest (so routing, retries, logging,
-// prompt injection and media handling all work unchanged), and upstream
-// channels keep speaking the openai/anthropic chat protocols. Provider
-// responses are converted back into Responses objects / SSE events.
+// The request is normalized into the shared InternalRequest (so routing,
+// retries, logging, prompt injection and media handling all work unchanged),
+// and provider responses are converted back into Responses objects / SSE
+// events. Upstream channels normally speak the openai/anthropic chat
+// protocols, but a channel whose channel_type is "responses" is also supported
+// (see responses_upstream.go and the Responses branch in stream_translate.go).
 //
 // This implementation is stateless: previous_response_id chaining is not
 // supported and is ignored with a warning, so clients must send the full

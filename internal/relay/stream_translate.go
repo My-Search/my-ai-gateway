@@ -66,6 +66,19 @@ func (s *AnthropicToOpenAIState) translatorName() string { return "anthropic->op
 
 // NewTranslateState creates the state for a provider→client direction.
 func NewTranslateState(provider, clientFormat string) StreamTranslateState {
+	// Upstream speaks Responses. When the client does too, the relay loop
+	// passes events through (provider == clientFormat) and the state is unused;
+	// other clients are served by translating Responses SSE → chat chunks first.
+	if provider == ProtoResponses {
+		switch clientFormat {
+		case ProtoOpenAI, ProtoResponses:
+			return &ResponsesToOpenAIState{}
+		case ProtoAnthropic:
+			return &ResponsesToAnthropicState{}
+		default:
+			return &ResponsesToOpenAIState{}
+		}
+	}
 	if clientFormat == ProtoResponses {
 		if provider == ProtoResponses {
 			provider = ProtoOpenAI
@@ -87,6 +100,9 @@ func TranslateStreamEvent(state StreamTranslateState, provider, eventType, event
 	if s, ok := state.(*ResponsesState); ok {
 		return responsesEventFromProvider(s, provider, eventType, eventData, originalModel)
 	}
+	if provider == ProtoResponses {
+		return responsesProviderEvent(state, eventType, eventData, originalModel)
+	}
 	if provider == ProtoAnthropic {
 		if s, ok := state.(*AnthropicToOpenAIState); ok {
 			return anthropicEventToOpenAI(s, eventType, eventData, originalModel)
@@ -106,6 +122,9 @@ func TranslateStreamEnd(state StreamTranslateState, provider, originalModel stri
 	}
 	if s, ok := state.(*ResponsesState); ok {
 		return responsesStreamEnd(s, originalModel)
+	}
+	if provider == ProtoResponses {
+		return responsesProviderStreamEnd(state, originalModel)
 	}
 	if provider == ProtoAnthropic {
 		if s, ok := state.(*AnthropicToOpenAIState); ok {
@@ -521,6 +540,13 @@ func ExtractTextContentFromRawData(rawData, provider string) string {
 	if err := json.Unmarshal([]byte(rawData), &root); err != nil {
 		return ""
 	}
+	if provider == ProtoResponses {
+		// Responses streams text via response.output_text.delta events.
+		if strVal(root["type"]) == "response.output_text.delta" {
+			return strVal(root["delta"])
+		}
+		return ""
+	}
 	if provider == ProtoAnthropic {
 		if delta, ok := root["delta"].(map[string]any); ok {
 			if t, ok := delta["text"]; ok {
@@ -556,6 +582,12 @@ func ExtractUsageFromSseData(data string) (pt, ct, tt int, ok bool) {
 		return 0, 0, 0, false
 	}
 	usage, isObj := root["usage"].(map[string]any)
+	if !isObj {
+		// Responses nests usage under the terminal response object.
+		if resp, ok := root["response"].(map[string]any); ok {
+			usage, isObj = resp["usage"].(map[string]any)
+		}
+	}
 	if !isObj {
 		return 0, 0, 0, false
 	}

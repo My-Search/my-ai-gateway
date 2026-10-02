@@ -32,7 +32,7 @@
         <tbody>
           <tr v-for="ch in channels" :key="ch.id">
             <td><strong>{{ ch.name }}</strong></td>
-            <td><span class="badge badge-info">{{ ch.channelType }}</span></td>
+            <td><span class="badge badge-info">{{ protocolLabel(ch.channelType) }}</span></td>
             <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text-muted);">
               {{ ch.baseUrl }}
             </td>
@@ -100,7 +100,7 @@
         <div class="mobile-card-body">
           <div class="mobile-card-row">
             <span class="mobile-card-label">{{ t('channel.list.type') }}</span>
-            <span class="badge badge-info">{{ ch.channelType }}</span>
+            <span class="badge badge-info">{{ protocolLabel(ch.channelType) }}</span>
           </div>
           <div class="mobile-card-row">
             <span class="mobile-card-label">{{ t('channel.list.endpoint') }}</span>
@@ -267,6 +267,16 @@ const apiKeySelectOptions = computed(() =>
     label: k.enabled === 1 ? k.keyName : `${k.keyName}（${t('common.disabled')}）`
   }))
 )
+
+/* 对接协议友好名：未知协议回退原始值 */
+function protocolLabel(type: string): string {
+  switch (type) {
+    case 'openai': return t('channel.protocolOpenai')
+    case 'anthropic': return t('channel.protocolAnthropic')
+    case 'responses': return t('channel.protocolResponses')
+    default: return type
+  }
+}
 
 /* 首字节响应时间格式化：秒保留 1 位小数，无效值显示 - */
 function formatTtfb(ms?: number): string {

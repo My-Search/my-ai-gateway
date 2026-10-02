@@ -86,6 +86,35 @@ func TestProbeUsesProtocol(t *testing.T) {
 	}
 }
 
+// TestProbeResponsesChannel verifies a "responses" channel is probed at
+// {base}/responses with an input-shaped body.
+func TestProbeResponsesChannel(t *testing.T) {
+	var gotEndpoint, gotBody string
+	probe := &ProbeService{
+		HTTPDo: func(_ context.Context, _ ProbeTarget, endpoint string, _ map[string]string, body string) ProbeResult {
+			gotEndpoint, gotBody = endpoint, body
+			return ProbeResult{Alive: true, StatusCode: 200}
+		},
+	}
+	probe.Probe(context.Background(), ProbeTarget{
+		ChannelType: "responses", BaseURL: "https://api.openai.com/v1",
+		ModelName: "gpt-5", Protocol: relay.ClientProtocolOpenAIChat,
+	})
+	if gotEndpoint != "https://api.openai.com/v1/responses" {
+		t.Errorf("responses endpoint = %q, want .../responses", gotEndpoint)
+	}
+	var body map[string]any
+	if err := json.Unmarshal([]byte(gotBody), &body); err != nil {
+		t.Fatalf("responses probe body not JSON: %v (%s)", err, gotBody)
+	}
+	if body["input"] != "ping" {
+		t.Errorf("responses probe body input = %v, want ping", body["input"])
+	}
+	if _, ok := body["messages"]; ok {
+		t.Errorf("responses probe body must not contain messages: %s", gotBody)
+	}
+}
+
 // TestEvaluateRelBrokenProtocolsByKey checks that each broken API key reports
 // its own protocol, and that model-level records take precedence.
 func TestEvaluateRelBrokenProtocolsByKey(t *testing.T) {

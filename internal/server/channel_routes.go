@@ -1031,11 +1031,14 @@ func quickTestProvider(channel models.Channel, channelModel models.ChannelModel,
 	baseURL = strings.TrimRight(baseURL, "/")
 
 	var endpoint string
-	if provider == "azure" {
+	switch provider {
+	case "azure":
 		endpoint = baseURL
-	} else if provider == "anthropic" {
+	case "anthropic":
 		endpoint = baseURL + "/messages"
-	} else {
+	case "responses":
+		endpoint = baseURL + "/responses"
+	default:
 		endpoint = baseURL + "/chat/completions"
 	}
 
@@ -1045,7 +1048,14 @@ func quickTestProvider(channel models.Channel, channelModel models.ChannelModel,
 		"stream":     true,
 		"messages":   []any{map[string]string{"role": "user", "content": message}},
 	}
-	if provider != "anthropic" && provider != "azure" {
+	switch provider {
+	case "responses":
+		delete(reqBody, "messages")
+		reqBody["input"] = message
+		reqBody["max_output_tokens"] = 100
+	case "anthropic", "azure":
+		// no stream_options
+	default:
 		reqBody["stream_options"] = map[string]bool{"include_usage": true}
 	}
 
@@ -1125,10 +1135,19 @@ func quickTestProvider(channel models.Channel, channelModel models.ChannelModel,
 								}
 							}
 						}
-						if typ, ok := evt["type"].(string); ok && typ == "content_block_delta" {
-							if delta, ok := evt["delta"].(map[string]any); ok {
-								if t, ok := delta["text"].(string); ok {
-									text.WriteString(t)
+						if typ, ok := evt["type"].(string); ok {
+							if typ == "content_block_delta" {
+								if delta, ok := evt["delta"].(map[string]any); ok {
+									if t, ok := delta["text"].(string); ok {
+										text.WriteString(t)
+									}
+								}
+							}
+							// Responses API streams text (and its final usage) via
+							// response.output_text.delta / response.completed events.
+							if typ == "response.output_text.delta" {
+								if d, ok := evt["delta"].(string); ok {
+									text.WriteString(d)
 								}
 							}
 						}
@@ -1139,6 +1158,13 @@ func quickTestProvider(channel models.Channel, channelModel models.ChannelModel,
 								usage = int64(ct)
 							} else if ot, ok := u["output_tokens"].(float64); ok {
 								usage = int64(ot)
+							}
+						}
+						if respObj, ok := evt["response"].(map[string]any); ok {
+							if u, ok := respObj["usage"].(map[string]any); ok {
+								if ot, ok := u["output_tokens"].(float64); ok {
+									usage = int64(ot)
+								}
 							}
 						}
 					}
@@ -1168,6 +1194,16 @@ func quickTestProvider(channel models.Channel, channelModel models.ChannelModel,
 			if u, ok := fallback["usage"].(map[string]any); ok {
 				if ct, ok := u["completion_tokens"].(float64); ok {
 					usage = int64(ct)
+				}
+			}
+			// Responses object (non-stream): output_text + usage.
+			if ot, ok := fallback["output_text"].(string); ok && ot != "" {
+				text.Reset()
+				text.WriteString(ot)
+			}
+			if u, ok := fallback["usage"].(map[string]any); ok {
+				if oc, ok := u["output_tokens"].(float64); ok {
+					usage = int64(oc)
 				}
 			}
 		}

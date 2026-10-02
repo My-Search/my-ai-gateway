@@ -299,7 +299,8 @@ func DefaultModels(chType string) []ModelPair {
 			{"claude-3-5-haiku-20241022", "Claude 3.5 Haiku"},
 		}
 	}
-	if chType == "openai" {
+	// responses is an OpenAI-compatible host for model listing/keys.
+	if chType == "openai" || chType == "responses" {
 		return []ModelPair{
 			{"gpt-4o", "GPT-4o"},
 			{"gpt-4o-mini", "GPT-4o Mini"},

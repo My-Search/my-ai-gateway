@@ -822,16 +822,17 @@ func candidateLabel(c RoutingCandidate) string {
 }
 
 func (c *RelayCore) resolveProvider(candidate RoutingCandidate, defaultProvider string) string {
-	p := strings.TrimSpace(candidate.ChannelType)
-	if p == "" {
-		p = defaultProvider
+	// An explicit channel type wins (including "responses", which is a valid
+	// upstream protocol).
+	if p := strings.TrimSpace(candidate.ChannelType); p != "" {
+		return p
 	}
-	// The Responses API is an inbound-only client format: upstream channels
-	// never speak it. Fall back to an OpenAI-compatible chat channel.
-	if p == ProtoResponses {
+	// Untyped channel: inherit the client protocol, but never send a Responses
+	// request to an untyped channel — fall back to OpenAI-compatible chat.
+	if defaultProvider == ProtoResponses {
 		return ProtoOpenAI
 	}
-	return p
+	return defaultProvider
 }
 
 // circuitBreakScope mirrors CandidateRouter.circuitBreakScope, returning the
@@ -1040,6 +1041,9 @@ func buildProviderURL(candidate RoutingCandidate, provider, endpointPath string)
 	}
 	if provider == ProtoAnthropic {
 		return baseURL + "/messages"
+	}
+	if provider == ProtoResponses {
+		return baseURL + "/responses"
 	}
 	return baseURL + "/chat/completions"
 }

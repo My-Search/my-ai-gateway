@@ -357,6 +357,9 @@ func BuildProviderRequest(req *InternalRequest, provider string) string {
 	if provider == ProtoAnthropic {
 		return buildAnthropicRequest(req)
 	}
+	if provider == ProtoResponses {
+		return buildResponsesRequest(req)
+	}
 	return buildOpenAIRequest(req)
 }
 
@@ -694,12 +697,23 @@ func TransformResponse(providerBody, provider, clientFormat, originalModel strin
 	if err := json.Unmarshal([]byte(providerBody), &root); err != nil {
 		return providerBody
 	}
-	// The Responses API is inbound-only; an upstream is never "responses".
-	if provider == ProtoResponses {
-		provider = ProtoOpenAI
-	}
+	// The Responses API is both a client format and a valid upstream protocol.
 	if clientFormat == provider {
 		return replaceModelInValue(root, originalModel, providerBody)
+	}
+	// Upstream Responses → other client formats (convert via OpenAI chat shape).
+	if provider == ProtoResponses {
+		if obj, ok := root.(map[string]any); ok {
+			openaiBody := convertResponsesToOpenAI(obj, originalModel)
+			if clientFormat == ProtoAnthropic {
+				var openaiObj any
+				if json.Unmarshal([]byte(openaiBody), &openaiObj) == nil {
+					return convertOpenAIResponseToAnthropic(openaiObj, originalModel)
+				}
+			}
+			return openaiBody
+		}
+		return providerBody
 	}
 	if clientFormat == ProtoResponses {
 		if obj, ok := root.(map[string]any); ok {

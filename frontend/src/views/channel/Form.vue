@@ -19,7 +19,8 @@
         <select id="channelType" v-model="form.channelType" class="form-control" required>
           <option value="">{{ t('channel.form.typePlaceholder') }}</option>
           <option value="openai">{{ t('channel.form.typeOpenAI') }}</option>
-          <option value="anthropic">Anthropic</option>
+          <option value="anthropic">{{ t('channel.form.typeAnthropic') }}</option>
+          <option value="responses">{{ t('channel.form.typeResponses') }}</option>
         </select>
         <div class="form-hint">{{ t('channel.form.typeHint') }}</div>
       </div>
