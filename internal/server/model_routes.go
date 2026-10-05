@@ -338,6 +338,12 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 				model.RelMode = models.Str("self_add")
 				model.InheritFromModelID = nil
 			}
+		} else if model.InheritFromModelID != nil {
+			// 自添加模式下保留的「上次继承源」：源已被删除时静默清除，避免切回继承时引用悬空
+			if src, _ := d.Store.QueryOne(ctx, "SELECT id FROM models WHERE id=?", *model.InheritFromModelID); src == nil {
+				d.Store.Exec(ctx, "UPDATE models SET inherit_from_model_id=NULL, updated_at=? WHERE id=?", jtime.FormatApp(time.Now().UTC()), id)
+				model.InheritFromModelID = nil
+			}
 		}
 
 		// Resolve rels (support inheritance)
@@ -447,12 +453,10 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 
-		row, err := d.Store.QueryOne(ctx, "SELECT * FROM models WHERE id = ?", id)
-		if err != nil {
+		if _, err := d.Store.QueryOne(ctx, "SELECT id FROM models WHERE id = ?", id); err != nil {
 			httpx.OK(c, failureEnvelope("模型不存在"))
 			return
 		}
-		m := store.RowToModel(row)
 
 		var cycleBrokenModel *models.Model
 
@@ -477,19 +481,17 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 			if closing := findCycleClosing(ctx, d.Store, *body.SourceModelID, visited); closing != nil {
 				now := jtime.FormatApp(time.Now().UTC())
 				d.Store.Exec(ctx, "UPDATE models SET rel_mode='self_add', inherit_from_model_id=NULL, updated_at=? WHERE id=?", now, closing.ID)
-				srcRow, _ := d.Store.QueryOne(ctx, "SELECT model_name FROM models WHERE id=?", closing.ID)
-				cycleBrokenModel = &m
-				if srcRow != nil {
-					cycleBrokenModel.ModelName = srcRow.Str("model_name")
-				}
+				cycleBrokenModel = closing
 				cycleBrokenModel.RelMode = models.Str("self_add")
 				cycleBrokenModel.InheritFromModelID = nil
 			}
 			now := jtime.FormatApp(time.Now().UTC())
 			d.Store.Exec(ctx, "UPDATE models SET rel_mode='inherit', inherit_from_model_id=?, updated_at=? WHERE id=?", *body.SourceModelID, now, id)
 		} else {
+			// 保留 inherit_from_model_id 作为「上次继承源」，切回继承时自动沿用；
+			// 仅在检测到循环继承被重置时（上方 closing 分支）才清空
 			now := jtime.FormatApp(time.Now().UTC())
-			d.Store.Exec(ctx, "UPDATE models SET rel_mode='self_add', inherit_from_model_id=NULL, updated_at=? WHERE id=?", now, id)
+			d.Store.Exec(ctx, "UPDATE models SET rel_mode='self_add', updated_at=? WHERE id=?", now, id)
 		}
 		m2, _ := d.Store.QueryOne(ctx, "SELECT * FROM models WHERE id = ?", id)
 		updated := store.RowToModel(m2)

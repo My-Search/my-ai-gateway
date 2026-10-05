@@ -14,7 +14,7 @@ export interface CustomModel {
   createdAt?: string
   /** 关联模式：self_add | inherit，默认 self_add */
   relMode?: RelMode
-  /** 继承源模型 ID（仅在 relMode='inherit' 时有值） */
+  /** 继承源模型 ID（relMode='inherit' 时为当前继承源；relMode='self_add' 时保留为上次继承源，切回继承时自动沿用） */
   inheritFromModelId?: number | null
   /** 图片失效会话数：0=关闭；N>0 表示最近一个含图片的 user 消息后有 N 个 user 消息时，图片失效被移除 */
   imageInvalidateCount?: number
