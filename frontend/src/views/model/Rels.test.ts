@@ -183,9 +183,36 @@ describe('入口模型关联页 - 小组行渲染', () => {
     )
     const tds = groupRow(wrapper).findAll('td')
     expect(tds[8].text()).toContain('熔断中（2/2）')
+    // 全熔断时 n 与 m 都为红色（.ratio-n--broken / .ratio-m--broken）
+    expect(tds[8].find('.ratio-n--broken').exists()).toBe(true)
+    expect(tds[8].find('.ratio-m--broken').exists()).toBe(true)
     // 没有解除按钮和探测详情问号 icon
     expect(tds[8].find('.cb-recover-btn').exists()).toBe(false)
     expect(tds[8].find('.cb-hint').exists()).toBe(false)
+  })
+
+  it('部分熔断时 n 标红、m 不标红；无熔断时两者均不标红', async () => {
+    // 1/3 熔断 → n 红、m 常规色
+    const partial = await mountRels(
+      [],
+      [makeGroupRel({ id: 8, groupId: 13, brokenCount: 1, memberCount: 3 })]
+    )
+    const partialTds = groupRow(partial).findAll('td')
+    expect(partialTds[8].text()).toContain('（1/3）')
+    expect(partialTds[8].find('.ratio-n.ratio-n--broken').exists()).toBe(true)
+    expect(partialTds[8].find('.ratio-m--broken').exists()).toBe(false)
+    partial.unmount()
+
+    // 0/2 熔断 → n 不红
+    const healthy = await mountRels(
+      [],
+      [makeGroupRel({ id: 9, groupId: 14, brokenCount: 0, memberCount: 2 })]
+    )
+    const healthyTds = groupRow(healthy).findAll('td')
+    expect(healthyTds[8].text()).toContain('（0/2）')
+    expect(healthyTds[8].find('.ratio-n--broken').exists()).toBe(false)
+    expect(healthyTds[8].find('.ratio-m--broken').exists()).toBe(false)
+    healthy.unmount()
   })
 
   it('全熔断时按聚合级别显示熔断中（模型级/渠道级 n/m）', async () => {

@@ -238,15 +238,16 @@
               </td>
               <td>
                 <span class="group-circuit">
-                  <span v-if="gOf(entry).circuitBroken === 1" class="badge badge-broken">{{ groupBrokenLabel(gOf(entry)) }}</span>
+                  <span v-if="gOf(entry).circuitBroken === 1" class="badge badge-broken">{{ groupBrokenPrefix(gOf(entry)) }}<span class="ratio-n ratio-n--broken">{{ gOf(entry).brokenCount ?? 0 }}</span>/<span class="ratio-m ratio-m--broken">{{ gOf(entry).memberCount ?? 0 }}</span>）</span>
                   <span v-else class="text-muted">{{ t('model.rels.brokenNone') }}</span>
-                  <!-- 正常态：状态词 + 熔断成员数/成员总数，读法与模型行的「熔断中（渠道级）」一致。 -->
+                  <!-- 正常态：状态词 + 熔断成员数/成员总数；n 有熔断即标红（表示已熔断个数），
+                       全熔断时 n、m 同为红色。 -->
                   <span
                     v-if="gOf(entry).circuitBroken !== 1"
                     class="badge-avail"
                     :class="{ 'badge-avail--empty': (gOf(entry).availableCount ?? 0) === 0 }"
                     :title="(gOf(entry).availableCount ?? 0) === 0 ? t('model.rels.groupEmptyHint') : undefined"
-                  >（{{ gOf(entry).brokenCount ?? 0 }}/{{ gOf(entry).memberCount ?? 0 }}）</span>
+                  >（<span class="ratio-n" :class="{ 'ratio-n--broken': (gOf(entry).brokenCount ?? 0) > 0 }">{{ gOf(entry).brokenCount ?? 0 }}</span>/<span class="ratio-m">{{ gOf(entry).memberCount ?? 0 }}</span>）</span>
                 </span>
               </td>
               <td><span class="text-muted">--</span></td>
@@ -768,15 +769,15 @@ function groupStrategyLabel(s?: string): string {
 }
 
 /**
- * 小组全部熔断时的徽章文案：「熔断中（模型级 2/2）」。
- * 级别取组内成员聚合结果（两者 > 渠道级 > 模型级），n/m 是熔断成员数与成员总数，
- * 与渠道模型行的「熔断中（渠道级）」保持同一读法。
+ * 小组全部熔断时的徽章前缀：「熔断中（模型级 」——n/m 由模板单独渲染成可着色的
+ * 两个 span，因此这里只返回到数字之前的部分。
+ * 级别取组内成员聚合结果（两者 > 渠道级 > 模型级），与渠道模型行的
+ * 「熔断中（渠道级）」保持同一读法。
  */
-function groupBrokenLabel(g: ModelGroupRel): string {
-  const ratio = `（${g.brokenCount ?? 0}/${g.memberCount ?? 0}）`
+function groupBrokenPrefix(g: ModelGroupRel): string {
   const scopeKey = ({ model: 'model.rels.brokenModel', channel: 'model.rels.brokenChannel', both: 'model.rels.brokenBoth' } as Record<string, string>)[g.circuitBrokenScope || '']
-  if (!scopeKey) return `${t('model.rels.broken')}${ratio}`
-  return `${t('model.rels.broken')}（${t(scopeKey)} ${g.brokenCount ?? 0}/${g.memberCount ?? 0}）`
+  if (!scopeKey) return `${t('model.rels.broken')}（`
+  return `${t('model.rels.broken')}（${t(scopeKey)} `
 }
 
 /**
@@ -1743,6 +1744,15 @@ a.group-name.group-name-link:hover {
 }
 .badge-avail--empty {
   color: var(--accent-red);
+}
+/* n = 已熔断成员数：有熔断即标红；0 时随父级颜色（正常态为绿）。 */
+.ratio-n--broken {
+  color: var(--accent-red);
+}
+/* 全熔断：n、m 同为红色。父级徽章已是红字，显式声明避免主题色变动后失衡。 */
+.badge-broken .ratio-n--broken,
+.badge-broken .ratio-m--broken {
+  color: inherit;
 }
 .group-actions {
   display: flex;
