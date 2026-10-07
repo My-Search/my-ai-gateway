@@ -23,6 +23,10 @@
         <SvgIcon name="channel" :size="16" class="nav-icon" />
         <span>{{ t('nav.channels') }}</span>
       </router-link>
+      <router-link to="/admin/model/group/list" @click="$emit('close')" class="nav-link">
+        <SvgIcon name="grid" :size="16" class="nav-icon" />
+        <span>{{ t('nav.modelGroups') }}</span>
+      </router-link>
       <router-link to="/admin/model/list" @click="$emit('close')" class="nav-link">
         <SvgIcon name="model" :size="16" class="nav-icon" />
         <span>{{ t('nav.models') }}</span>

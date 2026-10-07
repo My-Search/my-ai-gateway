@@ -246,6 +246,17 @@ func (s *Store) QueryOneReadOnly(ctx context.Context, query string, args ...any)
 	return rows[0], nil
 }
 
+// QueryOneOrZero is QueryOne with a nil row instead of an error when nothing
+// matches. Callers that treat "absent" as a normal case (counts, existence
+// probes) avoid the err != nil check without losing the not-found signal.
+func (s *Store) QueryOneOrZero(ctx context.Context, query string, args ...any) Row {
+	row, err := s.QueryOne(ctx, query, args...)
+	if err != nil {
+		return nil
+	}
+	return row
+}
+
 // Exec runs a statement, returning rows affected.
 func (s *Store) Exec(ctx context.Context, query string, args ...any) (int64, error) {
 	res, err := s.DB.ExecContext(ctx, query, args...)
@@ -424,6 +435,48 @@ func RowToRel(r Row) models.ModelChannelRel {
 		SortOrder:       r.IntPtr("sort_order"),
 		Enabled:         r.IntPtr("enabled"),
 		CreatedAt:       r.TimePtr("created_at"),
+	}
+}
+
+func RowToModelGroup(r Row) models.ModelGroup {
+	return models.ModelGroup{
+		ID:          r.I64("id", 0),
+		Name:        r.Str("name"),
+		Description: r.StrPtr("description"),
+		Strategy:    r.StrPtr("strategy"),
+		Sticky:      r.IntPtr("sticky"),
+		Enabled:     r.IntPtr("enabled"),
+		CreatedAt:   r.TimePtr("created_at"),
+		UpdatedAt:   r.TimePtr("updated_at"),
+	}
+}
+
+func RowToModelGroupMember(r Row) models.ModelGroupMember {
+	return models.ModelGroupMember{
+		ID:              r.I64("id", 0),
+		GroupID:         r.I64Ptr("group_id"),
+		ChannelModelID:  r.I64Ptr("channel_model_id"),
+		Weight:          r.IntPtr("weight"),
+		ReasoningEffort: r.StrPtr("reasoning_effort"),
+		SortOrder:       r.IntPtr("sort_order"),
+		Enabled:         r.IntPtr("enabled"),
+		CreatedAt:       r.TimePtr("created_at"),
+	}
+}
+
+func RowToModelGroupRel(r Row) models.ModelGroupRel {
+	return models.ModelGroupRel{
+		ID:               r.I64("id", 0),
+		ModelID:          r.I64Ptr("model_id"),
+		GroupID:          r.I64Ptr("group_id"),
+		SortOrder:        r.IntPtr("sort_order"),
+		Enabled:          r.IntPtr("enabled"),
+		CreatedAt:        r.TimePtr("created_at"),
+		GroupName:        r.StrPtr("group_name"),
+		GroupStrategy:    r.StrPtr("group_strategy"),
+		GroupSticky:      r.IntPtr("group_sticky"),
+		GroupEnabled:     r.IntPtr("group_enabled"),
+		GroupDescription: r.StrPtr("group_description"),
 	}
 }
 

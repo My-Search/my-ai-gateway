@@ -23,7 +23,15 @@
             :width="300"
             :dropdown-width="500"
           />
-          <button class="btn btn-primary btn-sm" :disabled="selectedModelIds.length === 0" @click="addRel">
+          <SearchableSelect
+            v-model="selectedGroupIds"
+            :options="groupOptions"
+            :placeholder="t('model.rels.selectGroup')"
+            :multiple="true"
+            :width="240"
+            :dropdown-width="420"
+          />
+          <button class="btn btn-primary btn-sm" :disabled="selectedModelIds.length === 0 && selectedGroupIds.length === 0" @click="addRel">
             <SvgIcon name="link" :size="14" /> {{ t('model.rels.addRel') }}
           </button>
           <button v-if="isDirty" class="btn btn-primary btn-sm" :disabled="isSaving" @click="saveOrder">
@@ -32,7 +40,7 @@
           <button
             class="btn btn-sm"
             :class="selectionMode && selectedCount > 0 ? 'btn-danger' : 'btn-secondary'"
-            :disabled="!selectionMode && rels.length === 0"
+            :disabled="!selectionMode && combinedEntries.length === 0"
             @click="onBatchSelectClick"
           >
             <SvgIcon :name="selectionMode ? (selectedCount > 0 ? 'trash' : 'x') : 'list'" :size="14" />
@@ -136,14 +144,15 @@
                 class="rel-checkbox"
                 :checked="isAllSelected"
                 :indeterminate="isIndeterminate"
-                :disabled="!rels.length"
+                :disabled="!combinedEntries.length"
                 :aria-label="t('model.rels.selectAll')"
                 :title="t('model.rels.selectAll')"
                 @change="toggleSelectAll"
               />
             </th>
             <th>{{ t('model.rels.sort') }}</th>
-            <th>{{ t('model.rels.channel') }}</th>
+            <th>{{ t('model.rels.relType') }}</th>
+            <th>{{ t('model.rels.relName') }}</th>
             <th>{{ t('model.rels.model') }}</th>
             <th>{{ t('model.rels.inputTypes') }}</th>
             <th>{{ t('model.rels.contextLength') }}</th>
@@ -156,95 +165,179 @@
         </thead>
         <tbody ref="tbodyRef">
           <tr
-            v-for="(rel, index) in rels"
-            :key="rel.id"
+            v-for="(entry, index) in combinedEntries"
+            :key="entry.key"
             :data-index="index"
-            :class="{ 'row-disabled': isRelUnavailable(rel), 'row-selected': selectedRelIds.has(rel.id) }"
+            :class="{ 'row-disabled': isEntryUnavailable(entry), 'row-selected': selectedRelIds.has(entry.key), 'row-group': entry.kind === 'g' }"
           >
             <td v-if="selectionMode" class="col-check">
               <input
                 type="checkbox"
                 class="rel-checkbox"
-                :checked="selectedRelIds.has(rel.id)"
+                :checked="selectedRelIds.has(entry.key)"
                 :aria-label="t('model.rels.selectRow')"
                 :title="t('model.rels.selectRow')"
-                @change="toggleSelectRel(rel)"
+                @change="toggleSelectEntry(entry)"
               />
             </td>
             <td>
               <span v-if="currentMode === 'self_add'" class="drag-handle" :title="t('model.rels.dragSort')">≡</span>
               <span v-else class="sort-index">{{ index + 1 }}</span>
             </td>
-            <td class="rel-channel-cell">
-              <span :class="{ 'text-disabled': isRelUnavailable(rel) }">{{ rel.channelName }}</span>
-              <span v-if="rel.channelEnabled !== 1" class="badge badge-disabled">{{ t('common.disabled') }}</span>
-              <span v-if="rel.apiKeyAvailable === 0" class="badge badge-no-key">{{ t('model.rels.noApiKey') }}</span>
-            </td>
-            <td>
-              <code class="model-tag" :class="{ 'text-disabled': isRelUnavailable(rel) }">{{ rel.channelModelName }}</code>
-            </td>
-            <td>
-              <span v-if="rel.input" class="input-tags">
-                <span v-for="type in (rel.input || '').split(',')" :key="type" class="input-tag" :class="'input-tag--' + type">{{ type }}</span>
-              </span>
-              <span v-else class="text-muted">text</span>
-            </td>
-            <td>
-              <span v-if="rel.contextLength" class="input-tag input-tag--ctx">{{ formatTokens(rel.contextLength) }}</span>
-              <span v-else class="text-muted">-</span>
-            </td>
-            <td>
-              <span v-if="rel.ttftMs != null" class="resp-time">
-                {{ formatRespTime(rel.ttftMs) }}
-                <span v-if="rel.sampleCount != null" class="sample-count">({{ rel.sampleCount }})</span>
-              </span>
-              <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
-            </td>
-            <td>
-              <span v-if="rel.outputSpeed != null" class="resp-time">
-                {{ rel.outputSpeed.toFixed(1) }} <span class="sample-count">tokens/s</span>
-              </span>
-              <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
-            </td>
-            <td>
-              <span v-if="rel.circuitBroken === 1" class="cb-broken">
-                <span class="badge badge-broken">
-                  {{ t('model.rels.broken') }}
-                  <template v-if="rel.circuitBrokenScope === 'channel'">（{{ t('model.rels.brokenChannel') }}）</template>
-                  <template v-else-if="rel.circuitBrokenScope === 'model'">（{{ t('model.rels.brokenModel') }}）</template>
-                  <template v-else-if="rel.circuitBrokenScope === 'both'">（{{ t('model.rels.brokenBoth') }}）</template>
+            <!-- 小组行：与渠道模型行同样的列式布局；组内无对应数据的列显示 --。 -->
+            <template v-if="entry.kind === 'g'">
+              <td class="rel-type-cell">
+                <span class="group-badge">{{ t('model.rels.typeGroup') }}</span>
+              </td>
+              <td class="rel-channel-cell">
+                <router-link
+                  v-if="currentMode === 'self_add' && gOf(entry).groupId"
+                  :to="'/admin/model/group/' + gOf(entry).groupId"
+                  class="group-name group-name-link"
+                  :title="t('group.list.manageMembers')"
+                >{{ gOf(entry).groupName }}</router-link>
+                <span v-else class="group-name" :class="{ 'text-disabled': gOf(entry).groupEnabled === 0 }">{{ gOf(entry).groupName }}</span>
+                <span
+                  v-if="gOf(entry).groupEnabled === 0"
+                  class="badge badge-disabled"
+                >{{ t('common.disabled') }}</span>
+              </td>
+              <td>
+                <div class="group-models">
+                  <div class="group-model-names">
+                    <code v-for="name in (gOf(entry).memberModelNames?.length ? gOf(entry).memberModelNames : ['--'])" :key="name" class="model-tag">{{ name }}</code>
+                  </div>
+                  <div class="group-models-side">
+                    <span v-if="gOf(entry).groupSticky === 1" class="badge badge-sticky">{{ t('group.list.stickyOn') }}</span>
+                    <span class="badge badge-strategy">{{ groupStrategyLabel(gOf(entry).groupStrategy) }}</span>
+                  </div>
+                </div>
+              </td>
+              <td>
+                <span v-if="gOf(entry).input" class="input-tags">
+                  <span v-for="type in gOf(entry).input!.split(',')" :key="type" class="input-tag" :class="'input-tag--' + type">{{ type }}</span>
                 </span>
-                <span class="cb-hint" @click="toggleProbeHint($event, rel)">
-                  <SvgIcon name="question" :size="12" class="cb-hint-icon" />
+                <span v-else class="text-muted">--</span>
+              </td>
+              <td>
+                <span v-if="gOf(entry).maxContextLength" class="input-tag input-tag--ctx">{{ formatTokens(gOf(entry).maxContextLength) }}</span>
+                <span v-else class="text-muted">--</span>
+              </td>
+              <td>
+                <span v-if="gOf(entry).ttftMs != null" class="resp-time">
+                  {{ formatRespTime(gOf(entry).ttftMs!) }}
+                  <span v-if="gOf(entry).sampleCount != null" class="sample-count">({{ gOf(entry).sampleCount }})</span>
                 </span>
-                <button class="btn btn-sm btn-secondary cb-recover-btn" @click="recoverRel(rel)">
-                  <SvgIcon name="check" :size="12" /> {{ t('model.rels.recover') }}
-                </button>
-              </span>
-              <span v-else class="text-muted">{{ t('model.rels.brokenNone') }}</span>
-            </td>
-            <td>
-              <input
-                v-if="currentMode === 'self_add'"
-                class="form-control effort-select"
-                type="text"
-                :value="rel.reasoningEffort ?? ''"
-                :list="effortDatalistId"
-                :placeholder="t('model.rels.effortCustomPlaceholder')"
-                :title="t('model.rels.effortCustomHint')"
-                @change="updateEffort(rel, ($event.target as HTMLInputElement).value)"
-              />
-              <span v-else class="text-muted">
-                {{ rel.reasoningEffort ? effortLabel(rel.reasoningEffort) : '--' }}
-              </span>
-            </td>
-            <td>
-              <button v-if="currentMode === 'self_add'" class="btn btn-sm btn-danger" @click="removeRel(rel)"><SvgIcon name="trash" :size="14" /> {{ t('model.rels.delete') }}</button>
-              <span v-else class="text-muted">--</span>
-            </td>
+                <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
+              </td>
+              <td>
+                <span v-if="gOf(entry).outputSpeed != null" class="resp-time">
+                  {{ gOf(entry).outputSpeed!.toFixed(1) }} <span class="sample-count">tokens/s</span>
+                </span>
+                <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
+              </td>
+              <td>
+                <span class="group-circuit">
+                  <span v-if="gOf(entry).circuitBroken === 1" class="badge badge-broken">{{ groupBrokenLabel(gOf(entry)) }}</span>
+                  <span v-else class="text-muted">{{ t('model.rels.brokenNone') }}</span>
+                  <!-- 正常态：状态词 + 可路由成员数，读法与模型行的「熔断中（渠道级）」一致。 -->
+                  <span
+                    v-if="gOf(entry).circuitBroken !== 1"
+                    class="badge-avail"
+                    :class="{ 'badge-avail--empty': (gOf(entry).availableCount ?? 0) === 0 }"
+                    :title="(gOf(entry).availableCount ?? 0) === 0 ? t('model.rels.groupEmptyHint') : undefined"
+                  >（{{ gOf(entry).availableCount ?? 0 }}/{{ gOf(entry).memberCount ?? 0 }}）</span>
+                </span>
+              </td>
+              <td><span class="text-muted">--</span></td>
+              <td>
+                <div class="group-actions">
+                  <button
+                    v-if="currentMode === 'self_add'"
+                    class="btn btn-sm btn-danger group-remove-btn"
+                    @click="removeGroupRel(gOf(entry))"
+                  >
+                    <SvgIcon name="trash" :size="13" /> {{ t('model.rels.delete') }}
+                  </button>
+                  <span v-else class="text-muted">--</span>
+                </div>
+              </td>
+            </template>
+            <template v-else>
+              <td class="rel-type-cell">
+                <span class="type-badge type-badge--model">{{ t('model.rels.typeModel') }}</span>
+              </td>
+              <td class="rel-channel-cell">
+                <span :class="{ 'text-disabled': isRelUnavailable(cmOf(entry)) }">{{ cmOf(entry).channelName }}</span>
+                <span v-if="cmOf(entry).channelEnabled !== 1" class="badge badge-disabled">{{ t('common.disabled') }}</span>
+                <span v-if="cmOf(entry).apiKeyAvailable === 0" class="badge badge-no-key">{{ t('model.rels.noApiKey') }}</span>
+              </td>
+              <td>
+                <code class="model-tag" :class="{ 'text-disabled': isRelUnavailable(cmOf(entry)) }">{{ cmOf(entry).channelModelName }}</code>
+              </td>
+              <td>
+                <span v-if="cmOf(entry).input" class="input-tags">
+                  <span v-for="type in (cmOf(entry).input || '').split(',')" :key="type" class="input-tag" :class="'input-tag--' + type">{{ type }}</span>
+                </span>
+                <span v-else class="text-muted">text</span>
+              </td>
+              <td>
+                <span v-if="cmOf(entry).contextLength" class="input-tag input-tag--ctx">{{ formatTokens(cmOf(entry).contextLength) }}</span>
+                <span v-else class="text-muted">-</span>
+              </td>
+              <td>
+                <span v-if="cmOf(entry).ttftMs != null" class="resp-time">
+                  {{ formatRespTime(cmOf(entry).ttftMs!) }}
+                  <span v-if="cmOf(entry).sampleCount != null" class="sample-count">({{ cmOf(entry).sampleCount }})</span>
+                </span>
+                <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
+              </td>
+              <td>
+                <span v-if="cmOf(entry).outputSpeed != null" class="resp-time">
+                  {{ cmOf(entry).outputSpeed!.toFixed(1) }} <span class="sample-count">tokens/s</span>
+                </span>
+                <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
+              </td>
+              <td>
+                <span v-if="cmOf(entry).circuitBroken === 1" class="cb-broken">
+                  <span class="badge badge-broken">
+                    {{ t('model.rels.broken') }}
+                    <template v-if="cmOf(entry).circuitBrokenScope === 'channel'">（{{ t('model.rels.brokenChannel') }}）</template>
+                    <template v-else-if="cmOf(entry).circuitBrokenScope === 'model'">（{{ t('model.rels.brokenModel') }}）</template>
+                    <template v-else-if="cmOf(entry).circuitBrokenScope === 'both'">（{{ t('model.rels.brokenBoth') }}）</template>
+                  </span>
+                  <span class="cb-hint" @click="toggleProbeHint($event, cmOf(entry))">
+                    <SvgIcon name="question" :size="12" class="cb-hint-icon" />
+                  </span>
+                  <button class="btn btn-sm btn-secondary cb-recover-btn" @click="recoverRel(cmOf(entry))">
+                    <SvgIcon name="check" :size="12" /> {{ t('model.rels.recover') }}
+                  </button>
+                </span>
+                <span v-else class="text-muted">{{ t('model.rels.brokenNone') }}</span>
+              </td>
+              <td>
+                <input
+                  v-if="currentMode === 'self_add'"
+                  class="form-control effort-select"
+                  type="text"
+                  :value="cmOf(entry).reasoningEffort ?? ''"
+                  :list="effortDatalistId"
+                  :placeholder="t('model.rels.effortCustomPlaceholder')"
+                  :title="t('model.rels.effortCustomHint')"
+                  @change="updateEffort(cmOf(entry), ($event.target as HTMLInputElement).value)"
+                />
+                <span v-else class="text-muted">
+                  {{ cmOf(entry).reasoningEffort ? effortLabel(cmOf(entry).reasoningEffort!) : '--' }}
+                </span>
+              </td>
+              <td>
+                <button v-if="currentMode === 'self_add'" class="btn btn-sm btn-danger" @click="removeRel(cmOf(entry))"><SvgIcon name="trash" :size="14" /> {{ t('model.rels.delete') }}</button>
+                <span v-else class="text-muted">--</span>
+              </td>
+            </template>
           </tr>
-          <tr v-if="!rels.length">
-            <td :colspan="selectionMode ? 10 : 9" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
+          <tr v-if="!combinedEntries.length">
+            <td :colspan="selectionMode ? 12 : 11" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
           </tr>
         </tbody>
       </table>
@@ -327,7 +420,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
-import { modelApi, type CustomModel, type ModelChannelRel, type RelMode } from '@/api/model'
+import { modelApi, type CustomModel, type ModelChannelRel, type ModelGroupRel, type AvailableModelGroup, type RelMode } from '@/api/model'
+import { groupApi } from '@/api/group'
 import { formatLocalDateTimeFull } from '@/utils/date'
 import { formatTokens } from '@/utils/format'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
@@ -342,6 +436,9 @@ const { visible: dialogVisible, title: dialogTitle, message: dialogMessage, type
 const { showToast } = useToast()
 const model = ref<CustomModel | null>(null)
 const rels = ref<ModelChannelRel[]>([])
+const groupRels = ref<ModelGroupRel[]>([])
+const availableGroups = ref<AvailableModelGroup[]>([])
+const selectedGroupIds = ref<number[]>([])
 const loading = ref(true)
 const availableModels = ref<any[]>([])
 const inheritableModels = ref<CustomModel[]>([])
@@ -357,7 +454,7 @@ const tbodyRef = ref<HTMLElement | null>(null)
 let sortableInstance: Sortable | null = null
 
 const isDirty = ref(false)
-const originalRelIds = ref<number[]>([])
+const originalRelIds = ref<string[]>([])
 const isSaving = ref(false)
 
 /* ---------- 思考强度（支持自定义输入） ---------- */
@@ -372,12 +469,12 @@ const effortDatalistId = 'rel-effort-presets'
  * 取消多选 / 删除成功 / 数据重载 / 打开源选择器时退出，勾选列恢复隐藏。
  */
 const selectionMode = ref(false)
-const selectedRelIds = ref<Set<number>>(new Set())
+const selectedRelIds = ref<Set<string>>(new Set())
 
 const selectedCount = computed(() => selectedRelIds.value.size)
 
 const isAllSelected = computed(() =>
-  rels.value.length > 0 && rels.value.every(r => selectedRelIds.value.has(r.id))
+  combinedEntries.value.length > 0 && combinedEntries.value.every(e => selectedRelIds.value.has(e.key))
 )
 
 const isIndeterminate = computed(() =>
@@ -386,15 +483,15 @@ const isIndeterminate = computed(() =>
 
 function toggleSelectAll(e: Event) {
   const checked = (e.target as HTMLInputElement).checked
-  selectedRelIds.value = checked ? new Set(rels.value.map(r => r.id)) : new Set()
+  selectedRelIds.value = checked ? new Set(combinedEntries.value.map(e => e.key)) : new Set()
 }
 
-function toggleSelectRel(rel: ModelChannelRel) {
+function toggleSelectEntry(entry: RelEntry) {
   const next = new Set(selectedRelIds.value)
-  if (next.has(rel.id)) {
-    next.delete(rel.id)
+  if (next.has(entry.key)) {
+    next.delete(entry.key)
   } else {
-    next.add(rel.id)
+    next.add(entry.key)
   }
   selectedRelIds.value = next
 }
@@ -411,7 +508,7 @@ function exitSelectionMode() {
 /** 「多选删除」按钮：未进入→进入多选；多选中且无勾选→取消多选；有勾选→移除选中 */
 function onBatchSelectClick() {
   if (!selectionMode.value) {
-    if (currentMode.value !== 'self_add' || rels.value.length === 0) return
+    if (currentMode.value !== 'self_add' || combinedEntries.value.length === 0) return
     selectionMode.value = true
     return
   }
@@ -435,12 +532,27 @@ function removeSelectedRels() {
       try {
         // 与单条删除一致：若已调整过顺序（未保存），先持久化，避免 loadData 刷新丢失排序
         if (!(await persistOrder())) return
-        const res = await modelApi.batchRemoveRels(ids)
-        if (res.data.success) {
+        // 勾选集合存的是合并条目的 key（"cm:<id>" / "g:<id>"），按前缀分流删除。
+        const cmIds = ids.filter(k => k.startsWith('cm:')).map(k => Number(k.slice(3)))
+        const gIds = ids.filter(k => k.startsWith('g:')).map(k => Number(k.slice(2)))
+        let ok = true
+        if (cmIds.length > 0) {
+          const res = await modelApi.batchRemoveRels(cmIds)
+          if (!res.data.success) {
+            ok = false
+            openDialog({ title: t('model.rels.deleteFailed'), message: res.data.error || t('error.unknown') })
+          }
+        }
+        if (ok && gIds.length > 0) {
+          const res = await groupApi.batchRemoveModelRels(gIds)
+          if (!res.data.success) {
+            ok = false
+            openDialog({ title: t('model.rels.deleteFailed'), message: res.data.error || t('error.unknown') })
+          }
+        }
+        if (ok) {
           exitSelectionMode()
           await loadData()
-        } else {
-          openDialog({ title: t('model.rels.deleteFailed'), message: res.data.error || t('error.unknown') })
         }
       } catch (e: any) {
         openDialog({ title: t('model.rels.deleteFailed'), message: e.message })
@@ -452,6 +564,15 @@ function removeSelectedRels() {
 /** 关联不可用：渠道被禁用或无可用 API Key（行效果与禁用一致，仅标签不同） */
 function isRelUnavailable(rel: ModelChannelRel): boolean {
   return rel.channelEnabled !== 1 || rel.apiKeyAvailable === 0
+}
+
+/** 合并条目不可用：渠道模型行按渠道/Key 判定；小组行看小组被禁用或可用成员数为 0。 */
+function isEntryUnavailable(entry: RelEntry): boolean {
+  if (entry.kind === 'g') {
+    const g = gOf(entry)
+    return g.groupEnabled === 0 || (g.availableCount ?? 0) === 0
+  }
+  return isRelUnavailable(cmOf(entry))
 }
 
 function formatRespTime(ms: number): string {
@@ -604,12 +725,59 @@ const selectOptions = computed(() => {
     }))
 })
 
+const groupOptions = computed(() => {
+  const existing = new Set(groupRels.value.map(r => r.groupId))
+  return availableGroups.value
+    .filter(g => !existing.has(g.id))
+    .map(g => ({ value: g.id, label: `${g.name} (${t('group.list.members')}: ${g.memberCount ?? 0})` }))
+})
+
 const inheritableOptions = computed(() => {
   return inheritableModels.value.map(m => ({
     value: m.id!,
     label: m.modelName
   }))
 })
+
+/* ---------- 直连关联与小组关联的统一队列 ----------
+ * 两类关联共用 sort_order，页面上展示为一张合并列表；拖拽排序后把合并顺序
+ * 用 "cm:<relId>" / "g:<relId>" 前缀提交给后端统一编号。
+ * kind: 'cm' = 渠道模型关联，'g' = 模型小组关联。
+ */
+type RelEntry = { key: string; kind: 'cm' | 'g'; sortOrder: number; rel: ModelChannelRel | ModelGroupRel }
+
+const combinedEntries = computed<RelEntry[]>(() => {
+  const cm: RelEntry[] = rels.value.map(r => ({ key: 'cm:' + r.id, kind: 'cm', sortOrder: r.sortOrder, rel: r }))
+  const g: RelEntry[] = groupRels.value.map(r => ({ key: 'g:' + r.id, kind: 'g', sortOrder: r.sortOrder, rel: r }))
+  return [...cm, ...g].sort((a, b) => a.sortOrder - b.sortOrder)
+})
+
+/** 模板里把合并条目还原为渠道模型关联行的类型窄化辅助。 */
+function cmOf(entry: RelEntry): ModelChannelRel {
+  return entry.rel as ModelChannelRel
+}
+
+/** 模板里把合并条目还原为小组关联行的类型窄化辅助。 */
+function gOf(entry: RelEntry): ModelGroupRel {
+  return entry.rel as ModelGroupRel
+}
+
+function groupStrategyLabel(s?: string): string {
+  const key = ({ failover: 'group.strategy.failover', random: 'group.strategy.random', round_robin: 'group.strategy.roundRobin' } as Record<string, string>)[s || 'random']
+  return key ? t(key) : (s || '')
+}
+
+/**
+ * 小组全部熔断时的徽章文案：「熔断中（模型级 2/2）」。
+ * 级别取组内成员聚合结果（两者 > 渠道级 > 模型级），n/m 是可路由成员数与总数，
+ * 与渠道模型行的「熔断中（渠道级）」保持同一读法。
+ */
+function groupBrokenLabel(g: ModelGroupRel): string {
+  const ratio = `（${g.availableCount ?? 0}/${g.memberCount ?? 0}）`
+  const scopeKey = ({ model: 'model.rels.brokenModel', channel: 'model.rels.brokenChannel', both: 'model.rels.brokenBoth' } as Record<string, string>)[g.circuitBrokenScope || '']
+  if (!scopeKey) return `${t('model.rels.broken')}${ratio}`
+  return `${t('model.rels.broken')}（${t(scopeKey)} ${g.availableCount ?? 0}/${g.memberCount ?? 0}）`
+}
 
 /**
  * UI 显示用的模式：选源过程中临时切到 inherit 形态，让"添加关联"按钮消失。
@@ -628,7 +796,10 @@ async function loadData() {
     const res = await modelApi.getRels(id)
     model.value = res.data.model
     rels.value = res.data.rels.sort((a, b) => a.sortOrder - b.sortOrder)
-    originalRelIds.value = rels.value.map(r => r.id)
+    // 小组关联与渠道模型关联共用同一序号空间，合并后按序号统一排序展示。
+    groupRels.value = (res.data.groupRels || []).sort((a, b) => a.sortOrder - b.sortOrder)
+    availableGroups.value = res.data.availableGroups || []
+    originalRelIds.value = combinedEntries.value.map(e => e.key)
     isDirty.value = false
     exitSelectionMode()
     availableModels.value = res.data.availableModels
@@ -667,20 +838,56 @@ async function loadInheritableModels() {
 }
 
 async function addRel() {
-  if (selectedModelIds.value.length === 0) return
+  if (selectedModelIds.value.length === 0 && selectedGroupIds.value.length === 0) return
   if (currentMode.value !== 'self_add') return
   const id = Number(route.params.id)
   try {
-    const res = await modelApi.batchAddRels(id, selectedModelIds.value)
-    if (res.data.success) {
-      selectedModelIds.value = []
-      await loadData()
-    } else {
-      openDialog({ title: t('model.rels.addFailed'), message: res.data.error || t('error.unknown') })
+    let ok = true
+    if (selectedModelIds.value.length > 0) {
+      const res = await modelApi.batchAddRels(id, selectedModelIds.value)
+      if (res.data.success) {
+        selectedModelIds.value = []
+      } else {
+        ok = false
+        openDialog({ title: t('model.rels.addFailed'), message: res.data.error || t('error.unknown') })
+      }
     }
+    if (ok && selectedGroupIds.value.length > 0) {
+      const res = await groupApi.addModelRel(id, selectedGroupIds.value)
+      if (res.data.success) {
+        selectedGroupIds.value = []
+      } else {
+        ok = false
+        openDialog({ title: t('model.rels.addFailed'), message: res.data.error || t('error.unknown') })
+      }
+    }
+    if (ok) await loadData()
   } catch (e: any) {
     openDialog({ title: t('model.rels.addFailed'), message: e.message })
   }
+}
+
+async function removeGroupRel(rel: ModelGroupRel) {
+  if (currentMode.value !== 'self_add') return
+  openDialog({
+    title: t('common.confirmDelete'),
+    message: t('model.rels.deleteConfirm'),
+    type: 'confirm',
+    confirmClass: 'btn-danger',
+    onConfirm: async () => {
+      try {
+        if (!(await persistOrder())) return
+        const res = await groupApi.removeModelRel(rel.id)
+        if (res.data.success) {
+          await loadData()
+        } else {
+          openDialog({ title: t('model.rels.deleteFailed'), message: res.data.error || t('error.unknown') })
+        }
+      } catch (e: any) {
+        openDialog({ title: t('model.rels.deleteFailed'), message: e.message })
+      }
+    }
+  })
 }
 
 function removeRel(rel: ModelChannelRel) {
@@ -750,16 +957,34 @@ function initSortable() {
     onEnd: (evt) => {
       if (evt.oldIndex === undefined || evt.newIndex === undefined || evt.oldIndex === evt.newIndex) return
 
-      const newRels = [...rels.value]
-      const [moved] = newRels.splice(evt.oldIndex, 1)
-      newRels.splice(evt.newIndex, 0, moved)
+      // 合并列表上拖拽：重排 combinedEntries，把新顺序写回两类关联的 sortOrder。
+      const entries = [...combinedEntries.value]
+      const [moved] = entries.splice(evt.oldIndex, 1)
+      entries.splice(evt.newIndex, 0, moved)
       _skipSortableReinit = true
-      rels.value = newRels
+      applyCombinedOrder(entries)
 
-      const currentIds = rels.value.map(r => r.id)
+      const currentIds = combinedEntries.value.map(e => e.key)
       isDirty.value = currentIds.join(',') !== originalRelIds.value.join(',')
     }
   })
+}
+
+/** 把合并后的条目顺序写回两类关联的 sortOrder（仅本地状态，调用 saveOrder 持久化）。 */
+function applyCombinedOrder(entries: RelEntry[]) {
+  const nextRels: ModelChannelRel[] = []
+  const nextGroups: ModelGroupRel[] = []
+  entries.forEach((e, i) => {
+    if (e.kind === 'cm') {
+      const rel = e.rel as ModelChannelRel
+      nextRels.push({ ...rel, sortOrder: i })
+    } else {
+      const rel = e.rel as ModelGroupRel
+      nextGroups.push({ ...rel, sortOrder: i })
+    }
+  })
+  rels.value = nextRels
+  groupRels.value = nextGroups
 }
 
 /**
@@ -771,7 +996,7 @@ async function persistOrder(): Promise<boolean> {
   if (!isDirty.value) return true // 顺序无改动，无需保存
   isSaving.value = true
   try {
-    const sortedRelIds = rels.value.map(r => r.id)
+    const sortedRelIds = combinedEntries.value.map(e => e.key)
     const res = await modelApi.batchUpdateSortOrders(sortedRelIds)
     if (res.data.success) {
       isDirty.value = false
@@ -887,6 +1112,7 @@ watch(() => route.params.id, async (newId, oldId) => {
   showSourcePicker.value = false
   pendingSourceId.value = 0
   selectedModelIds.value = []
+  selectedGroupIds.value = []
   inheritableModels.value = []
   await loadData()
   await nextTick()
@@ -1403,5 +1629,137 @@ td.col-check {
 /* 选中行高亮：比全局 tr:hover td 特异性更高，悬停时不丢失选中底色 */
 tbody tr.row-selected td {
   background-color: color-mix(in srgb, var(--accent-blue) 8%, transparent);
+}
+
+/* 类型列徽章：模型（青）/ 小组（紫），样式统一；列内不换行。
+   模型徽章刻意避开 --accent-blue：模型列值 .model-tag 已占用该色。 */
+td.rel-type-cell {
+  white-space: nowrap;
+}
+.type-badge {
+  flex: none;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.type-badge--model {
+  background: color-mix(in srgb, var(--accent-cyan) 15%, transparent);
+  color: var(--accent-cyan);
+}
+/* 小组行：与渠道模型行同列布局，紫色左侧强调条 + 浅底色区分子路由身份。 */
+tbody tr.row-group > td {
+  background-color: color-mix(in srgb, var(--accent-purple, #c678dd) 5%, transparent);
+}
+.group-badge {
+  flex: none;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  background: rgba(198, 120, 221, 0.15);
+  color: var(--accent-purple, #c678dd);
+  margin-right: 6px;
+}
+.group-name {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 400;
+}
+/* 渠道列的小组名带下划线：表示可点击进入成员管理。 */
+a.group-name.group-name-link {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--text-secondary) 55%, transparent);
+  color: inherit;
+  font-weight: 400;
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+a.group-name.group-name-link:hover {
+  color: var(--accent-blue, #58a6ff);
+  text-decoration-color: currentColor;
+}
+.group-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+/* 模型列：成员模型名一行一个；右侧粘性徽章 + 策略文字上下堆叠，贴右缘居中。 */
+.group-models {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.group-model-names {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+.group-models-side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.group-circuit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  white-space: nowrap;
+}
+.group-circuit .badge-broken {
+  margin-right: 0;
+  flex: none;
+}
+/* 策略标签：与小组列表页的 badge-strategy 同款（蓝底 tag）。 */
+.badge-strategy {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(88, 166, 255, 0.12);
+  color: var(--accent-blue, #58a6ff);
+}
+.badge-sticky {
+  flex: none;
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(63, 185, 80, 0.15);
+  color: #3fb950;
+}
+/* 可路由成员数：常态为绿色，全部不可用转红。 */
+.badge-avail {
+  flex: none;
+  font-size: 11px;
+  color: var(--accent-green);
+  font-variant-numeric: tabular-nums;
+}
+.badge-avail--empty {
+  color: var(--accent-red);
+}
+.group-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+.group-remove-btn {
+  padding: 2px 10px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+@media (max-width: 768px) {
+  .group-row {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
 }
 </style>

@@ -512,6 +512,7 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 		d.Store.Exec(ctx, "DELETE FROM model_channel_rels WHERE channel_model_id = ?", modelID)
+		d.Store.Exec(ctx, "DELETE FROM model_group_members WHERE channel_model_id = ?", modelID)
 		d.Store.Exec(ctx, "DELETE FROM channel_models WHERE id = ?", modelID)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
 	})
@@ -532,6 +533,7 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 		if len(idList) > 0 {
 			ins := joinInts(idList)
 			d.Store.Exec(ctx, "DELETE FROM model_channel_rels WHERE channel_model_id IN ("+ins+")")
+			d.Store.Exec(ctx, "DELETE FROM model_group_members WHERE channel_model_id IN ("+ins+")")
 			d.Store.Exec(ctx, "DELETE FROM channel_models WHERE channel_id = ?", chID)
 		}
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("count", len(ids)))
@@ -731,6 +733,7 @@ func deleteChannel(ctx context.Context, st *store.Store, id int64) {
 	for _, r := range cmRows {
 		mid := r.I64("id", 0)
 		st.Exec(ctx, "DELETE FROM model_channel_rels WHERE channel_model_id = ?", mid)
+		st.Exec(ctx, "DELETE FROM model_group_members WHERE channel_model_id = ?", mid)
 	}
 	st.Exec(ctx, "DELETE FROM channel_models WHERE channel_id = ?", id)
 	st.Exec(ctx, "DELETE FROM channel_api_keys WHERE channel_id = ?", id)
@@ -922,6 +925,7 @@ func updateWithModels(ctx context.Context, st *store.Store, chID int64, modelsJS
 		cmRows, _ := st.Query(ctx, "SELECT id FROM channel_models WHERE channel_id = ?", chID)
 		for _, r := range cmRows {
 			st.Exec(ctx, "DELETE FROM model_channel_rels WHERE channel_model_id = ?", r.I64("id", 0))
+			st.Exec(ctx, "DELETE FROM model_group_members WHERE channel_model_id = ?", r.I64("id", 0))
 		}
 		st.Exec(ctx, "DELETE FROM channel_models WHERE channel_id = ?", chID)
 		return
@@ -954,6 +958,7 @@ func updateWithModels(ctx context.Context, st *store.Store, chID int64, modelsJS
 	for _, r := range existing {
 		if !submittedNames[r.Str("model_name")] {
 			st.Exec(ctx, "DELETE FROM model_channel_rels WHERE channel_model_id = ?", r.I64("id", 0))
+			st.Exec(ctx, "DELETE FROM model_group_members WHERE channel_model_id = ?", r.I64("id", 0))
 			st.Exec(ctx, "DELETE FROM channel_models WHERE id = ?", r.I64("id", 0))
 		}
 	}

@@ -664,3 +664,65 @@ DROP TABLE IF EXISTS multimodal_rules;
 --   后续失败会覆盖为最近一次协议；历史记录为 NULL，探测回退为默认对话协议。
 -- ========================================
 ALTER TABLE circuit_breaker_states ADD COLUMN protocol TEXT;
+
+
+-- ========================================
+-- VERSION:v1.43.0
+-- 模型小组（Model Group）：入口模型的关联目标除渠道模型外，还可选择「模型小组」。
+--
+-- 背景：能力相近、分布在不同渠道的同一类模型原先只能逐个关联到入口模型，
+--   再由入口模型的单一策略（故障转移/随机/轮询）决定先后。小组把「同一能力的多个
+--   渠道模型」聚合成一层子路由，拥有自己的路由方式（随机加权/轮询/故障转移），
+--   从而把同一能力的请求分散到多个渠道，降低单渠道压力。
+--
+-- 关系模型：
+--   model_group_rels     入口模型 -> 小组（与 model_channel_rels 共用同一
+--                        sort_order 序号空间，路由时按 sort_order 合并成一条候选队列）
+--   model_group_members  小组 -> 渠道模型（weight=组内路由权重，reasoning_effort=成员默认思考强度）
+--
+-- 会话粘性（model_groups.sticky=1）：对请求的消息前缀做一致性哈希，把同一会话稳定
+--   映射到组内同一成员，命中上游 prompt cache；成员 weight 决定哈希环虚拟节点数，
+--   权重越大分到的会话越多。哈希全内存计算：不写库、不随重启变化、并发会话互不干扰。
+-- ========================================
+
+CREATE TABLE IF NOT EXISTS model_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    description TEXT DEFAULT '',
+    strategy TEXT DEFAULT 'random',
+    sticky INTEGER DEFAULT 1,
+    enabled INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS model_group_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    channel_model_id INTEGER NOT NULL,
+    weight INTEGER DEFAULT 1,
+    reasoning_effort TEXT,
+    sort_order INTEGER DEFAULT 0,
+    enabled INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (group_id) REFERENCES model_groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (channel_model_id) REFERENCES channel_models(id) ON DELETE CASCADE,
+    UNIQUE(group_id, channel_model_id)
+);
+
+CREATE TABLE IF NOT EXISTS model_group_rels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER NOT NULL,
+    group_id INTEGER NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    enabled INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE,
+    FOREIGN KEY (group_id) REFERENCES model_groups(id) ON DELETE CASCADE,
+    UNIQUE(model_id, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_group_members_group_id ON model_group_members(group_id);
+CREATE INDEX IF NOT EXISTS idx_model_group_members_channel_model_id ON model_group_members(channel_model_id);
+CREATE INDEX IF NOT EXISTS idx_model_group_rels_model_id ON model_group_rels(model_id);
+CREATE INDEX IF NOT EXISTS idx_model_group_rels_group_id ON model_group_rels(group_id);

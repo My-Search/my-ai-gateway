@@ -390,9 +390,13 @@ func ReplaceAPIModels(ctx context.Context, st *store.Store, chID int64, newModel
 	}
 
 	var relRows []store.Row
+	var memberRows []store.Row
 	if len(ids) > 0 {
 		inList := strings.Join(ids, ",")
 		relRows, _ = st.Query(ctx, "SELECT id, channel_model_id, model_id, weight, reasoning_effort, sort_order, enabled FROM model_channel_rels WHERE channel_model_id IN ("+inList+")")
+		// 模型小组的成员同样按渠道模型 id 引用：source='api' 的行会被重建，
+		// 成员关系必须在删除前取出、按模型名回填，否则刷新一次小组就被清空。
+		memberRows, _ = st.Query(ctx, "SELECT id, group_id, channel_model_id, weight, reasoning_effort, sort_order, enabled FROM model_group_members WHERE channel_model_id IN ("+inList+")")
 	}
 
 	// Recompute inputs outside the transaction (each call may hit the DB).
@@ -427,6 +431,7 @@ func ReplaceAPIModels(ctx context.Context, st *store.Store, chID int64, newModel
 		if len(ids) > 0 {
 			inList := strings.Join(ids, ",")
 			_, _ = tx.ExecContext(ctx, "DELETE FROM model_channel_rels WHERE channel_model_id IN ("+inList+")")
+			_, _ = tx.ExecContext(ctx, "DELETE FROM model_group_members WHERE channel_model_id IN ("+inList+")")
 		}
 		_, _ = tx.ExecContext(ctx, "DELETE FROM channel_models WHERE channel_id = ? AND source = 'api'", chID)
 
@@ -451,6 +456,16 @@ func ReplaceAPIModels(ctx context.Context, st *store.Store, chID int64, newModel
 			_, _ = tx.ExecContext(ctx,
 				"INSERT OR IGNORE INTO model_channel_rels (model_id, channel_model_id, weight, reasoning_effort, sort_order, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 				r.I64("model_id", 0), newID, r.Int("weight", 1), r.StrPtr("reasoning_effort"), r.Int("sort_order", 0), r.Int("enabled", 1), now)
+		}
+		for _, r := range memberRows {
+			oldName := nameByOldID[r.I64("channel_model_id", 0)]
+			newID, ok := newIDs[oldName]
+			if oldName == "" || !ok {
+				continue
+			}
+			_, _ = tx.ExecContext(ctx,
+				"INSERT OR IGNORE INTO model_group_members (group_id, channel_model_id, weight, reasoning_effort, sort_order, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				r.I64("group_id", 0), newID, r.Int("weight", 1), r.StrPtr("reasoning_effort"), r.Int("sort_order", 0), r.Int("enabled", 1), now)
 		}
 		return nil
 	})

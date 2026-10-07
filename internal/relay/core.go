@@ -23,7 +23,6 @@ type RelayCore struct {
 	RouteResolver  *RouteResolver
 	LatencyTracker *LatencyTracker
 	ContentMgr     *StreamContentManager
-	BalancerFunc   func(string) Balancer
 	MetricsFn      func(model, channel, result string, latencyMs int64)
 	CircuitSkipFn  func(scope string)
 	CircuitCheckFn func(ctx context.Context, candidate RoutingCandidate) (broken bool, scope string)
@@ -43,7 +42,7 @@ type RelayCore struct {
 	// used for real requests, only cloned per dynamic timeout value
 	// (ResponseHeaderTimeout depends on the per-model dynamic first-byte
 	// timeout, so it cannot be a fixed field on a shared Transport).
-	baseTransport    *http.Transport
+	baseTransport *http.Transport
 	// clientCache maps timeoutMs -> transport clone so connection pools are
 	// reused while the dynamic timeout stays stable.
 	clientMu         sync.Mutex
@@ -63,7 +62,6 @@ func NewRelayCore(store DataStore) *RelayCore {
 		RouteResolver:   NewRouteResolver(store),
 		LatencyTracker:  NewLatencyTrackerFixed(DefaultMinTimeoutMs, DefaultMaxTimeoutMs),
 		ContentMgr:      NewStreamContentManager(),
-		BalancerFunc:    NewBalancerFactory(),
 		streamUsage:     map[string][3]int{},
 		streamTranslate: NewStreamTranslateStates(),
 		// Transport-level timeouts protect against stuck upstream connections
@@ -74,12 +72,12 @@ func NewRelayCore(store DataStore) *RelayCore {
 		// set per request via clientFor() to the model's dynamic timeout
 		// (system-config min/max clamped avg*3), see LatencyTracker.GetTimeout.
 		baseTransport: &http.Transport{
-			MaxIdleConns:         100,
-			MaxIdleConnsPerHost:  10,
-			IdleConnTimeout:      30 * time.Second,
-			TLSHandshakeTimeout:  10 * time.Second,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: time.Duration(DefaultMaxTimeoutMs) * time.Millisecond,
-			TLSClientConfig:      &tls.Config{MinVersion: tls.VersionTLS12},
+			TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 		},
 		clientCache:      map[int64]*http.Client{},
 		maxCachedClients: 16,
@@ -156,47 +154,46 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 	// Java applies a 600s ceiling over the whole candidate loop.
 	deadline := startTime.Add(MaxTotalTimeoutMs * time.Millisecond)
 	if d, ok := ctx.Deadline(); !ok || d.After(deadline) {
-	var cancel context.CancelFunc
-	ctx, cancel = context.WithDeadline(ctx, deadline)
-	defer cancel()
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
 	}
 
-	balancer := c.BalancerFunc(routingCtx.Strategy)
+	// 候选顺序已由 BuildCandidates 按入口模型策略 + 小组策略排定（小组在队列中
+	// 保持连续），这里按序尝试即可；失败/跳过即前进到下一条，等价于原先「每次
+	// 从剩余候选中挑选」的语义，且不会打散小组。
 	retryIndex := 0
 	var lastErr error
 	remaining := append([]RoutingCandidate(nil), candidates...)
 
 	for len(remaining) > 0 {
-		candidate := balancer.Select(remaining, routingCtx.ModelID)
-		if candidate == nil {
-			break
-		}
+		candidate := remaining[0]
 
-		if scope := c.circuitBreakScope(ctx, *candidate); scope != "" {
+		if scope := c.circuitBreakScope(ctx, candidate); scope != "" {
 			slog.Info("已熔断跳过", "channel", candidate.ChannelName, "model", candidate.ModelName,
 				"key", candidate.APIKeyName, "scope", scope, "retryIndex", retryIndex)
 			if c.CircuitSkipFn != nil {
 				c.CircuitSkipFn(scope)
 			}
-			c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
-				scope+"跳过 "+candidateLabel(*candidate), retryIndex, nil, nil)
+			c.logPhase(ctx, traceID, gwKeyID, candidate, req, PhaseSkip,
+				scope+"跳过 "+candidateLabel(candidate), retryIndex, nil, nil)
 			remaining = removeCandidate(remaining, candidate)
 			retryIndex++
 			continue
 		}
 
 		if unsupported := UnsupportedMediaTypes(req, candidate.Input); len(unsupported) > 0 {
-			c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
-				"当前模型不支持请求中含有的这些类型："+strings.Join(unsupported, "、")+" 因此跳过 "+candidateLabel(*candidate), retryIndex, nil, nil)
+			c.logPhase(ctx, traceID, gwKeyID, candidate, req, PhaseSkip,
+				"当前模型不支持请求中含有的这些类型："+strings.Join(unsupported, "、")+" 因此跳过 "+candidateLabel(candidate), retryIndex, nil, nil)
 			remaining = removeCandidate(remaining, candidate)
 			retryIndex++
 			continue
 		}
 
 		if tooLarge, estimated := ExceedsContextLimit(req, candidate.ContextLength); tooLarge {
-			c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
+			c.logPhase(ctx, traceID, gwKeyID, candidate, req, PhaseSkip,
 				fmt.Sprintf("请求上下文约 %d tokens，超出模型上下文 %d（含 %d 容差）因此跳过 %s",
-					estimated, candidate.ContextLength, ContextToleranceTokens, candidateLabel(*candidate)),
+					estimated, candidate.ContextLength, ContextToleranceTokens, candidateLabel(candidate)),
 				retryIndex, nil, nil)
 			remaining = removeCandidate(remaining, candidate)
 			retryIndex++
@@ -206,41 +203,39 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 		slog.Info("路由决策", "channel", candidate.ChannelName, "model", candidate.ModelName,
 			"key", candidate.APIKeyName, "retryIndex", retryIndex)
 
-		effort := resolveEffectiveEffort(req, *candidate)
-		c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseStart,
-			"路由到 "+candidateLabel(*candidate), retryIndex, effort, nil)
+		effort := resolveEffectiveEffort(req, candidate)
+		c.logPhase(ctx, traceID, gwKeyID, candidate, req, PhaseStart,
+			"路由到 "+candidateLabel(candidate), retryIndex, effort, nil)
 
-		provider := c.resolveProvider(*candidate, req.ClientAPIFormat)
+		provider := c.resolveProvider(candidate, req.ClientAPIFormat)
 		maxAttempts := routingCtx.MaxAttempts
 
-		body, firstByteMs, err := c.invokeCandidateWithRetries(ctx, traceID, gwKeyID, req, *candidate, provider,
+		body, firstByteMs, err := c.invokeCandidateWithRetries(ctx, traceID, gwKeyID, req, candidate, provider,
 			retryIndex, maxAttempts, authHeader, false)
 		if err != nil {
 			var nre *NonRetryableProviderError
-				if errors.As(err, &nre) {
-					slog.Warn("候选返回400，不触发熔断，直接重路由", "channel", candidate.ChannelName)
-					c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
-						"400错误跳过 "+candidateLabel(*candidate)+" 原因: "+err.Error(), retryIndex, nil, nil)
-					remaining = removeCandidate(remaining, candidate)
-					lastErr = err
-					retryIndex++
-					continue
-				}
-				slog.Warn("候选失败（重试耗尽）", "channel", candidate.ChannelName, "error", err)
-				c.handleFailure(ctx, req, *candidate)
-				balancer.MarkFailed(candidate)
+			if errors.As(err, &nre) {
+				slog.Warn("候选返回400，不触发熔断，直接重路由", "channel", candidate.ChannelName)
+				c.logPhase(ctx, traceID, gwKeyID, candidate, req, PhaseSkip,
+					"400错误跳过 "+candidateLabel(candidate)+" 原因: "+err.Error(), retryIndex, nil, nil)
 				remaining = removeCandidate(remaining, candidate)
 				lastErr = err
-				c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
-					"重试耗尽跳过 "+candidateLabel(*candidate)+" 原因: "+err.Error(), retryIndex, nil, nil)
 				retryIndex++
 				continue
 			}
+			slog.Warn("候选失败（重试耗尽）", "channel", candidate.ChannelName, "error", err)
+			c.handleFailure(ctx, req, candidate)
+			remaining = removeCandidate(remaining, candidate)
+			lastErr = err
+			c.logPhase(ctx, traceID, gwKeyID, candidate, req, PhaseSkip,
+				"重试耗尽跳过 "+candidateLabel(candidate)+" 原因: "+err.Error(), retryIndex, nil, nil)
+			retryIndex++
+			continue
+		}
 
 		elapsed := time.Since(startTime).Milliseconds()
-		balancer.MarkSuccess(candidate)
-		c.markLastUsed(ctx, *candidate, authHeader)
-		c.recordLatency(*candidate, firstByteMs, elapsed)
+		c.markLastUsed(ctx, candidate, authHeader)
+		c.recordLatency(candidate, firstByteMs, elapsed)
 		if c.MetricsFn != nil {
 			c.MetricsFn(req.Model, candidate.ChannelName, "success", elapsed)
 		}
@@ -285,14 +280,14 @@ func (c *RelayCore) invokeCandidateWithRetries(ctx context.Context, traceID stri
 		body, status, fbMs, err := c.callProvider(ctx, attemptCtx, req, candidate, provider, traceID, timeoutMs)
 		cancel()
 
-			if err == nil && strings.TrimSpace(body) == "" {
-				slog.Warn("候选返回空响应", "channel", candidate.ChannelName, "model", candidate.ModelName,
-					"attempt", attempt, "maxAttempts", maxAttempts)
-				err = newEmptyResponseTimeout()
-			}
-				if err == nil {
-					return body, fbMs, nil
-				}
+		if err == nil && strings.TrimSpace(body) == "" {
+			slog.Warn("候选返回空响应", "channel", candidate.ChannelName, "model", candidate.ModelName,
+				"attempt", attempt, "maxAttempts", maxAttempts)
+			err = newEmptyResponseTimeout()
+		}
+		if err == nil {
+			return body, fbMs, nil
+		}
 
 		_ = status
 		attemptDuration := time.Since(attemptStart).Milliseconds()
@@ -422,7 +417,7 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 		return
 	}
 
-	balancer := c.BalancerFunc(routingCtx.Strategy)
+	// 候选顺序已由 BuildCandidates 排定（小组保持连续），按序尝试即可。
 	retryIndex := 0
 	var lastErr error
 	remaining := append([]RoutingCandidate(nil), candidates...)
@@ -430,36 +425,33 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 	finalLogged := false
 
 	for len(remaining) > 0 {
-		candidate := balancer.Select(remaining, routingCtx.ModelID)
-		if candidate == nil {
-			break
-		}
+		candidate := remaining[0]
 
-		if scope := c.circuitBreakScope(ctx, *candidate); scope != "" {
+		if scope := c.circuitBreakScope(ctx, candidate); scope != "" {
 			slog.Info("已熔断跳过", "channel", candidate.ChannelName, "model", candidate.ModelName,
 				"key", candidate.APIKeyName, "scope", scope, "retryIndex", retryIndex)
 			if c.CircuitSkipFn != nil {
 				c.CircuitSkipFn(scope)
 			}
-			c.logPhase(ctx, traceID, gwKeyID, *candidate, currentReq, PhaseSkip,
-				scope+"跳过 "+candidateLabel(*candidate), retryIndex, nil, nil)
+			c.logPhase(ctx, traceID, gwKeyID, candidate, currentReq, PhaseSkip,
+				scope+"跳过 "+candidateLabel(candidate), retryIndex, nil, nil)
 			remaining = removeCandidate(remaining, candidate)
 			retryIndex++
 			continue
 		}
 
 		if unsupported := UnsupportedMediaTypes(currentReq, candidate.Input); len(unsupported) > 0 {
-			c.logPhase(ctx, traceID, gwKeyID, *candidate, currentReq, PhaseSkip,
-				"当前模型不支持请求中含有的这些类型："+strings.Join(unsupported, "、")+" 因此跳过 "+candidateLabel(*candidate), retryIndex, nil, nil)
+			c.logPhase(ctx, traceID, gwKeyID, candidate, currentReq, PhaseSkip,
+				"当前模型不支持请求中含有的这些类型："+strings.Join(unsupported, "、")+" 因此跳过 "+candidateLabel(candidate), retryIndex, nil, nil)
 			remaining = removeCandidate(remaining, candidate)
 			retryIndex++
 			continue
 		}
 
 		if tooLarge, estimated := ExceedsContextLimit(currentReq, candidate.ContextLength); tooLarge {
-			c.logPhase(ctx, traceID, gwKeyID, *candidate, currentReq, PhaseSkip,
+			c.logPhase(ctx, traceID, gwKeyID, candidate, currentReq, PhaseSkip,
 				fmt.Sprintf("请求上下文约 %d tokens，超出模型上下文 %d（含 %d 容差）因此跳过 %s",
-					estimated, candidate.ContextLength, ContextToleranceTokens, candidateLabel(*candidate)),
+					estimated, candidate.ContextLength, ContextToleranceTokens, candidateLabel(candidate)),
 				retryIndex, nil, nil)
 			remaining = removeCandidate(remaining, candidate)
 			retryIndex++
@@ -469,11 +461,11 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 		slog.Info("流式路由决策", "channel", candidate.ChannelName, "model", candidate.ModelName,
 			"key", candidate.APIKeyName, "retryIndex", retryIndex)
 
-		effort := resolveEffectiveEffort(currentReq, *candidate)
-		c.logPhase(ctx, traceID, gwKeyID, *candidate, currentReq, PhaseStart,
-			"流式路由到 "+candidateLabel(*candidate), retryIndex, effort, nil)
+		effort := resolveEffectiveEffort(currentReq, candidate)
+		c.logPhase(ctx, traceID, gwKeyID, candidate, currentReq, PhaseStart,
+			"流式路由到 "+candidateLabel(candidate), retryIndex, effort, nil)
 
-		provider := c.resolveProvider(*candidate, req.ClientAPIFormat)
+		provider := c.resolveProvider(candidate, req.ClientAPIFormat)
 		if internalClient && sink.OnEvent != nil {
 			sink.OnEvent("", BuildRoutingProgressJSON("trying", candidate.ChannelType,
 				candidate.ChannelName, candidate.APIKeyName, candidate.ModelName, retryIndex, ""))
@@ -482,14 +474,13 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 		// The translator state lives for the whole trace across candidates.
 		state := c.streamTranslate.GetOrCreate(traceID, provider, clientFormat)
 		acc := &streamAccumulator{}
-		firstByte := c.streamCandidateLoop(ctx, traceID, gwKeyID, currentReq, *candidate, provider,
+		firstByte := c.streamCandidateLoop(ctx, traceID, gwKeyID, currentReq, candidate, provider,
 			routingCtx.MaxAttempts, authHeader, internalClient, clientFormat, state, acc, sink, startTime)
 
 		if firstByte.err == nil {
 			elapsed := time.Since(startTime).Milliseconds()
-			balancer.MarkSuccess(candidate)
-			c.markLastUsed(ctx, *candidate, authHeader)
-			c.recordLatency(*candidate, firstByte.firstByteMs, elapsed)
+			c.markLastUsed(ctx, candidate, authHeader)
+			c.recordLatency(candidate, firstByte.firstByteMs, elapsed)
 
 			pt, ct, tt := acc.promptTokens, acc.completionTokens, acc.totalTokens
 			resultMsg := "流式请求成功"
@@ -526,8 +517,8 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 		var nre *NonRetryableProviderError
 		if errors.As(firstByte.err, &nre) {
 			slog.Warn("流式候选返回400，不触发熔断，直接重路由", "channel", candidate.ChannelName)
-			c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
-				"400错误跳过 "+candidateLabel(*candidate)+" 原因: "+firstByte.err.Error(), retryIndex, nil, nil)
+			c.logPhase(ctx, traceID, gwKeyID, candidate, req, PhaseSkip,
+				"400错误跳过 "+candidateLabel(candidate)+" 原因: "+firstByte.err.Error(), retryIndex, nil, nil)
 			remaining = removeCandidate(remaining, candidate)
 			lastErr = firstByte.err
 			retryIndex++
@@ -539,12 +530,11 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 		}
 
 		slog.Warn("流式候选失败（重试耗尽）", "channel", candidate.ChannelName, "error", firstByte.err)
-		c.handleFailure(ctx, currentReq, *candidate)
-		balancer.MarkFailed(candidate)
+		c.handleFailure(ctx, currentReq, candidate)
 		remaining = removeCandidate(remaining, candidate)
 		lastErr = firstByte.err
-		c.logPhase(ctx, traceID, gwKeyID, *candidate, req, PhaseSkip,
-			"重试耗尽跳过 "+candidateLabel(*candidate)+" 原因: "+firstByte.err.Error(), retryIndex, nil, nil)
+		c.logPhase(ctx, traceID, gwKeyID, candidate, req, PhaseSkip,
+			"重试耗尽跳过 "+candidateLabel(candidate)+" 原因: "+firstByte.err.Error(), retryIndex, nil, nil)
 		retryIndex++
 		if internalClient && sink.OnEvent != nil {
 			sink.OnEvent("", BuildRoutingProgressJSON("switching", candidate.ChannelType,
@@ -968,13 +958,14 @@ func validateGatewayKey(ctx context.Context, store DataStore, authHeader string)
 	return 0, ""
 }
 
-func removeCandidate(candidates []RoutingCandidate, c *RoutingCandidate) []RoutingCandidate {
-	for i := range candidates {
-		if &candidates[i] == c {
-			return append(candidates[:i], candidates[i+1:]...)
-		}
+// removeCandidate drops the candidate at the head of the queue. The routing
+// loops always consume candidates[0], so removing by position is exact and
+// cheaper than a pointer scan (and immune to duplicate equal-valued entries).
+func removeCandidate(candidates []RoutingCandidate, _ RoutingCandidate) []RoutingCandidate {
+	if len(candidates) == 0 {
+		return candidates
 	}
-	return candidates
+	return append(candidates[:0], candidates[1:]...)
 }
 
 func buildFailMessage(err error) string {

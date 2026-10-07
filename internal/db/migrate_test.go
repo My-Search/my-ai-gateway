@@ -2,6 +2,7 @@ package db
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -229,5 +230,70 @@ func TestMigrateRepairsStaleV1410(t *testing.T) {
 	}
 	if total != 3 {
 		t.Errorf("after re-runs rows = %d, want 3 (no duplicates)", total)
+	}
+}
+
+// TestMigrateModelGroupSchema verifies the v1.43.0 migration creates the model
+// group tables and constraints, and stays idempotent on a re-run.
+func TestMigrateModelGroupSchema(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "groups.db")
+	conn, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	if err := Migrate(conn); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := Migrate(conn); err != nil {
+		t.Fatalf("second migrate: %v", err)
+	}
+
+	for _, table := range []string{"model_groups", "model_group_members", "model_group_rels"} {
+		var name string
+		if err := conn.QueryRow(
+			"SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name); err != nil {
+			t.Errorf("table %s missing: %v", table, err)
+		}
+	}
+
+	// The strategy default must be random (the group-level balancing default).
+	var def string
+	if err := conn.QueryRow(
+		"SELECT dflt_value FROM pragma_table_info('model_groups') WHERE name='strategy'").Scan(&def); err != nil {
+		t.Fatalf("pragma: %v", err)
+	}
+	if !strings.Contains(def, "random") {
+		t.Errorf("model_groups.strategy default = %s, want random", def)
+	}
+
+	// A duplicate group name would list the group twice; a duplicate member would
+	// double its weight in routing. Both must be rejected by UNIQUE constraints.
+	if _, err := conn.Exec(
+		"INSERT INTO model_groups (name, strategy, sticky, enabled) VALUES ('g', 'random', 0, 1)"); err != nil {
+		t.Fatalf("insert group: %v", err)
+	}
+	if _, err := conn.Exec(
+		"INSERT INTO model_groups (name, strategy, sticky, enabled) VALUES ('g', 'random', 0, 1)"); err == nil {
+		t.Error("duplicate group name was accepted; the UNIQUE(name) constraint is missing")
+	}
+
+	// Members reference channel models, and foreign keys are enforced.
+	if _, err := conn.Exec(
+		"INSERT INTO channels (name, channel_type, base_url) VALUES ('c', 'openai', 'http://x')"); err != nil {
+		t.Fatalf("insert channel: %v", err)
+	}
+	if _, err := conn.Exec(
+		"INSERT INTO channel_models (channel_id, model_name) VALUES (1, 'm')"); err != nil {
+		t.Fatalf("insert channel model: %v", err)
+	}
+	if _, err := conn.Exec(
+		"INSERT INTO model_group_members (group_id, channel_model_id, weight) VALUES (1, 1, 2)"); err != nil {
+		t.Fatalf("insert member: %v", err)
+	}
+	if _, err := conn.Exec(
+		"INSERT INTO model_group_members (group_id, channel_model_id, weight) VALUES (1, 1, 5)"); err == nil {
+		t.Error("duplicate group member was accepted; the UNIQUE(group_id, channel_model_id) constraint is missing")
 	}
 }

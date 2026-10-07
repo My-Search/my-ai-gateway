@@ -24,6 +24,17 @@ const (
 	ProtoResponses = "responses"
 )
 
+// Group strategy constants: how a model group orders its own members.
+//
+// These mirror the values persisted in model_groups.strategy; the relay package
+// keeps its own copy so the routing engine has no dependency on the admin model
+// package. Unknown/blank values fall back to random (see normalizeGroupStrategy).
+const (
+	GroupStrategyFailover   = "failover"
+	GroupStrategyRandom     = "random"
+	GroupStrategyRoundRobin = "round_robin"
+)
+
 // Client protocol slugs recorded on circuit-breaker records so a broken path is
 // later probed with the very protocol that failed, and so the admin UI can show
 // which protocol tripped the breaker. Unlike ProtoOpenAI/ProtoAnthropic (which
@@ -146,7 +157,6 @@ type InternalMessage struct {
 
 // RoutingCandidate describes one possible destination for a request.
 type RoutingCandidate struct {
-	RelID           int64
 	ChannelModelID  int64
 	ChannelID       int64
 	ChannelName     string
@@ -159,12 +169,21 @@ type RoutingCandidate struct {
 	CustomHeaders   string
 	SortOrder       int
 	ReasoningEffort *string
-	// Input is the channel model's supported media types ("text", "text,image", ...),
+	// Input is the channel model's supported media types ("text", "image", ...),
 	// consumed by the media-type routing skip (RequestPreprocessor.skipIfMediaTypeUnsupported).
 	Input string
 	// ContextLength is the channel model's context window in tokens (from our
 	// context rules / the models.dev catalog). 0 means unknown: no context skip.
 	ContextLength int64
+	// Weight is the routing weight in effect for this candidate: the model
+	// relation's weight for direct relations, the group member's weight inside a
+	// model group. It drives weighted random selection and the sticky hash ring;
+	// <=0 is treated as 1.
+	Weight int
+	// GroupMemberID identifies the owning model_group_members row. Multiple API
+	// keys expand one group member into several candidates; group-level selection
+	// and sticky hashing treat that block as one weighted member.
+	GroupMemberID int64
 }
 
 // LatencyTracker provides adaptive timeouts — same logic as Java LatencyTracker.

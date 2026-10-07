@@ -74,6 +74,7 @@ func (a *App) Register(r *gin.Engine) {
 	registerAPIKeyRoutes(admin, d)
 	registerChannelRoutes(admin, d)
 	registerModelRoutes(admin, d)
+	registerModelGroupRoutes(admin, d)
 	registerLogRoutes(admin, d)
 	registerConfigRoutes(admin, d)
 	registerMultiModalRoutes(admin, d)

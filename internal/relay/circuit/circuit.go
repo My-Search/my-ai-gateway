@@ -92,13 +92,24 @@ func (m *ConfigManager) GetConfig(ctx context.Context, modelID int64) *CircuitBr
 }
 
 // GetDurationByChannelModelID reverse-looks-up the break duration via the rel's model.
+//
+// 一个渠道模型可能同时被多个入口模型直连、并被若干小组收录，各入口模型的
+// circuit_break_duration 可能不同。这里取「最长的熔断时长」：熔断是保护上游的手段，
+// 取最大值可避免短时长配置把长时长配置的保护提前打开；同时用 MAX 聚合消除了原先
+// LIMIT 1 的不确定性（同样的数据在多次调用间可能返回不同结果）。
 func (m *ConfigManager) GetDurationByChannelModelID(ctx context.Context, channelModelID int64) int {
 	row, _ := m.Store.QueryOne(ctx,
-		"SELECT cfg.circuit_break_duration FROM model_channel_rels r JOIN circuit_breaker_configs cfg ON cfg.model_id = r.model_id WHERE r.channel_model_id = ? LIMIT 1",
-		channelModelID)
+		`SELECT MAX(cfg.circuit_break_duration) AS d FROM (
+		    SELECT model_id FROM model_channel_rels WHERE channel_model_id = ?
+		    UNION
+		    SELECT rel.model_id FROM model_group_members m
+		      JOIN model_group_rels rel ON rel.group_id = m.group_id
+		     WHERE m.channel_model_id = ?
+		  ) rels
+		  JOIN circuit_breaker_configs cfg ON cfg.model_id = rels.model_id`,
+		channelModelID, channelModelID)
 	if row != nil {
-		d := row.Int("circuit_break_duration", 0)
-		if d > 0 {
+		if d := row.Int("d", 0); d > 0 {
 			return d
 		}
 	}

@@ -140,6 +140,97 @@ type APIKeyProtocol struct {
 	Protocol string `json:"protocol"`
 }
 
+// ModelGroup mirrors model_groups.入口模型可以关联一个小组，小组内部再按自己的
+// 路由方式（strategy）在成员渠道模型之间选择，从而把同一能力的请求分散到多个渠道。
+type ModelGroup struct {
+	ID          int64   `json:"id"`
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	// Strategy 是组内路由方式：failover / random（按权重随机）/ round_robin（按权重轮转）。
+	Strategy *string `json:"strategy"`
+	// Sticky=1 时按请求消息前缀的一致性哈希固定组内成员，命中上游 prompt cache。
+	Sticky    *int    `json:"sticky"`
+	Enabled   *int    `json:"enabled"`
+	CreatedAt APITime `json:"createdAt"`
+	UpdatedAt APITime `json:"updatedAt"`
+	// MemberCount 仅列表接口计算返回。
+	MemberCount *int `json:"memberCount,omitempty"`
+}
+
+// Group strategy constants.
+const (
+	GroupStrategyFailover   = "failover"
+	GroupStrategyRandom     = "random"
+	GroupStrategyRoundRobin = "round_robin"
+)
+
+// ModelGroupMember mirrors model_group_members plus the computed channel/model
+// display fields the admin UI renders.
+type ModelGroupMember struct {
+	ID             int64   `json:"id"`
+	GroupID        *int64  `json:"groupId"`
+	ChannelModelID *int64  `json:"channelModelId"`
+	// Weight 是组内路由权重：strategy=random 的加权抽样、strategy=round_robin 的
+	// 加权轮转起点，以及 sticky 的哈希环虚拟节点数都用它；<=0 视为 1。
+	Weight *int `json:"weight"`
+	ReasoningEffort *string `json:"reasoningEffort"`
+	SortOrder       *int    `json:"sortOrder"`
+	Enabled         *int    `json:"enabled"`
+	CreatedAt       APITime `json:"createdAt"`
+	ChannelModelName *string `json:"channelModelName"`
+	ChannelName      *string `json:"channelName"`
+	ChannelType      *string `json:"channelType"`
+	ChannelID        *int64  `json:"channelId"`
+	ChannelEnabled   *int    `json:"channelEnabled"`
+	APIKeyAvailable  *int    `json:"apiKeyAvailable"`
+	Input            *string `json:"input"`
+	ContextLength    *int64  `json:"contextLength"`
+	// CircuitBroken 等熔断展示字段与入口模型关联一致，按 (渠道, 渠道模型, Key) 判定。
+	CircuitBroken          *int              `json:"circuitBroken"`
+	CircuitBrokenScope     *string           `json:"circuitBrokenScope"`
+	CircuitBrokenExpireAt  APITime           `json:"circuitBrokenExpireAt"`
+	CircuitBrokenProtocols []APIKeyProtocol  `json:"circuitBrokenProtocols"`
+}
+
+// ModelGroupRel mirrors model_group_rels：入口模型 -> 小组的关联，与
+// model_channel_rels 共用同一 sort_order 序号空间，路由时合并成一条候选队列。
+type ModelGroupRel struct {
+	ID        int64   `json:"id"`
+	ModelID   *int64  `json:"modelId"`
+	GroupID   *int64  `json:"groupId"`
+	SortOrder *int    `json:"sortOrder"`
+	Enabled   *int    `json:"enabled"`
+	CreatedAt APITime `json:"createdAt"`
+	// 展示字段
+	GroupName        *string `json:"groupName"`
+	GroupStrategy    *string `json:"groupStrategy"`
+	GroupSticky      *int    `json:"groupSticky"`
+	GroupEnabled     *int    `json:"groupEnabled"`
+	GroupDescription *string `json:"groupDescription"`
+	MemberCount      *int    `json:"memberCount"`
+	AvailableCount   *int    `json:"availableCount"`
+	// 成员聚合摘要（按可路由成员统计：成员启用 + 渠道模型启用 + 渠道启用 + 有可用 Key）。
+	// Input 是可路由成员输入模态并集（text 优先、去重）；MaxContextLength 是其中的
+	// 最大正值上下文，全未知时为 null（前端显示 -）。
+	Input            *string `json:"input"`
+	MaxContextLength *int64  `json:"maxContextLength"`
+	// TTFTMs / OutputSpeed 是可路由成员 24h 性能样本的总体平均（与渠道模型行同
+	// 口径），无样本时为 null。SampleCount 是参与平均的样本数。
+	TTFTMs      *int64   `json:"ttftMs"`
+	SampleCount *int     `json:"sampleCount"`
+	OutputSpeed *float64 `json:"outputSpeed"`
+	// CircuitBroken：1 = 组内可路由成员全部熔断（此时才显示「熔断中」）；
+	// 部分熔断为 0（仍有可用候选，不告警）。
+	CircuitBroken *int `json:"circuitBroken"`
+	// CircuitBrokenScope：全部熔断时聚合出的熔断级别——"model" | "channel" | "both"。
+	// 成员级别不一致时取包含关系最广的一档（both > channel > model），与渠道模型行
+	// 的展示字段同义，供前端渲染「熔断中（模型级 n/m）」。
+	CircuitBrokenScope *string `json:"circuitBrokenScope"`
+	// MemberModelNames 是可路由成员的上游模型名（去重、按成员顺序），
+	// 供入口模型关联列表的小组行在「模型」列逐行展示。
+	MemberModelNames []string `json:"memberModelNames"`
+}
+
 // CircuitBreakerConfig mirrors circuit_breaker_configs.
 type CircuitBreakerConfig struct {
 	ID                   int64   `json:"id"`

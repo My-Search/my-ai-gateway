@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -305,6 +306,7 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		}
 
 		d.Store.Exec(ctx, "DELETE FROM model_channel_rels WHERE model_id = ?", id)
+		d.Store.Exec(ctx, "DELETE FROM model_group_rels WHERE model_id = ?", id)
 		d.Store.Exec(ctx, "DELETE FROM circuit_breaker_configs WHERE model_id = ?", id)
 		d.Store.Exec(ctx, "DELETE FROM prompt_injections WHERE model_id = ?", id)
 		d.Store.Exec(ctx, "DELETE FROM models WHERE id = ?", id)
@@ -375,10 +377,15 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		relStats := computeRelStats(ctx, d.Store, rels)
 		applyRelBrokenMarks(ctx, d.Store, relStats)
 
+		groupRels := resolveModelGroupRels(ctx, d.Store, id, make(map[int64]bool))
+		groups := resolveModelGroups(ctx, d.Store, id)
+
 		httpx.OK(c, httpx.NewOrderedMap().
 			Set("model", model).
 			Set("rels", relStats).
+			Set("groupRels", groupRels).
 			Set("availableModels", availModels).
+			Set("availableGroups", groups).
 			Set("inheritFromModelName", inheritFromName))
 	})
 
@@ -517,6 +524,7 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 
 		var body struct {
 			ChannelModelIDs []int64 `json:"channelModelIds"`
+			GroupIDs        []int64 `json:"groupIds"`
 			SortedRelIDs    string  `json:"sortedRelIds"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -535,11 +543,18 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 
-		// Get next sort order
-		last, _ := d.Store.QueryOne(ctx, "SELECT sort_order FROM model_channel_rels WHERE model_id=? ORDER BY sort_order DESC LIMIT 1", modelID)
+		// Get next sort order. 渠道模型关联与小组关联共用同一序号空间，
+		// 因此下个序号要同时看两张表的最大值，避免新增项插到已有项之间。
+		lastRel, _ := d.Store.QueryOne(ctx, "SELECT sort_order FROM model_channel_rels WHERE model_id=? ORDER BY sort_order DESC LIMIT 1", modelID)
+		lastGroup, _ := d.Store.QueryOne(ctx, "SELECT sort_order FROM model_group_rels WHERE model_id=? ORDER BY sort_order DESC LIMIT 1", modelID)
 		nextSort := int64(0)
-		if last != nil {
-			nextSort = last.I64("sort_order", 0) + 1
+		if lastRel != nil {
+			nextSort = lastRel.I64("sort_order", 0) + 1
+		}
+		if lastGroup != nil {
+			if g := lastGroup.I64("sort_order", 0) + 1; g > nextSort {
+				nextSort = g
+			}
 		}
 
 		now := jtime.FormatApp(time.Now().UTC())
@@ -557,20 +572,27 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 				nextSort++
 			}
 		}
-
-		// Apply sortedRelIds if present (reorder)
-		if body.SortedRelIDs != "" {
-			ids := strings.Split(body.SortedRelIDs, ",")
-			for i, sid := range ids {
-				sid = strings.TrimSpace(sid)
-				if sid == "" {
-					continue
-				}
-				relID, _ := strconv.ParseInt(sid, 10, 64)
-				if relID > 0 {
-					d.Store.Exec(ctx, "UPDATE model_channel_rels SET sort_order=? WHERE id=?", int64(i), relID)
-				}
+		for _, gID := range body.GroupIDs {
+			existing, _ := d.Store.QueryOne(ctx, "SELECT id FROM model_group_rels WHERE model_id=? AND group_id=?", modelID, gID)
+			if existing != nil {
+				continue
 			}
+			if d.Store.QueryOneOrZero(ctx, "SELECT id FROM model_groups WHERE id=?", gID) == nil {
+				continue
+			}
+			_, err := d.Store.Insert(ctx,
+				"INSERT INTO model_group_rels (model_id, group_id, enabled, sort_order, created_at) VALUES (?, ?, 1, ?, ?)",
+				modelID, gID, nextSort, now)
+			if err == nil {
+				added++
+				nextSort++
+			}
+		}
+
+		// Apply sortedRelIds if present (reorder). 序号同时作用于两类关联，
+		// 前端用 "cm:<relId>" / "g:<relId>" 前缀区分，避免两张表的 id 相互覆盖。
+		if body.SortedRelIDs != "" {
+			applyCombinedRelOrder(ctx, d.Store, strings.Split(body.SortedRelIDs, ","))
 		}
 
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("count", added))
@@ -600,6 +622,8 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 	})
 
 	// POST /admin/api/models/rels/batch-delete
+	// relIds 同时接受渠道模型关联与小组关联：前端用 "cm:<id>" / "g:<id>" 前缀区分，
+	// 裸数字按渠道模型关联处理（兼容旧调用）。
 	g.POST("/models/rels/batch-delete", func(c *gin.Context) {
 		ctx := c.Request.Context()
 		var body struct {
@@ -610,25 +634,33 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 
+		deleted := 0
 		for _, rid := range body.RelIDs {
-			var relID int64
-			switch v := rid.(type) {
-			case float64:
-				relID = int64(v)
-			default:
+			kind, relID := parseRelRef(rid)
+			if relID == 0 {
 				continue
 			}
-			relRow, err := d.Store.QueryOne(ctx, "SELECT model_id FROM model_channel_rels WHERE id = ?", relID)
+			var modelID int64
+			var table string
+			if kind == "g" {
+				table = "model_group_rels"
+			} else {
+				table = "model_channel_rels"
+			}
+			relRow, err := d.Store.QueryOne(ctx, "SELECT model_id FROM "+table+" WHERE id = ?", relID)
 			if err != nil {
 				continue
 			}
-			modelRow, _ := d.Store.QueryOne(ctx, "SELECT rel_mode, model_name FROM models WHERE id=?", relRow.I64("model_id", 0))
+			modelID = relRow.I64("model_id", 0)
+			modelRow, _ := d.Store.QueryOne(ctx, "SELECT rel_mode, model_name FROM models WHERE id=?", modelID)
 			if modelRow != nil && modelRow.Str("rel_mode") == "inherit" {
 				continue
 			}
-			d.Store.Exec(ctx, "DELETE FROM model_channel_rels WHERE id = ?", relID)
+			if _, err := d.Store.Exec(ctx, "DELETE FROM "+table+" WHERE id = ?", relID); err == nil {
+				deleted++
+			}
 		}
-		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("count", len(body.RelIDs)))
+		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("count", deleted))
 	})
 
 	// PUT /admin/api/models/rels/{relId}/sort
@@ -648,6 +680,8 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 	})
 
 	// PUT /admin/api/models/rels/sort
+	// sortedRelIds 是两类关联的混合顺序（"cm:<id>" / "g:<id>"），序号统一写入
+	// 各自的 sort_order，路由时再按同一序号空间合并。
 	g.PUT("/models/rels/sort", func(c *gin.Context) {
 		ctx := c.Request.Context()
 		var body struct {
@@ -657,16 +691,15 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 			httpx.OK(c, failureEnvelope("请求参数错误"))
 			return
 		}
-		for i, rid := range body.SortedRelIDs {
-			var relID int64
-			switch v := rid.(type) {
-			case float64:
-				relID = int64(v)
-			default:
+		refs := make([]string, 0, len(body.SortedRelIDs))
+		for _, rid := range body.SortedRelIDs {
+			kind, relID := parseRelRef(rid)
+			if relID == 0 {
 				continue
 			}
-			d.Store.Exec(ctx, "UPDATE model_channel_rels SET sort_order=? WHERE id=?", i, relID)
+			refs = append(refs, kind+":"+strconv.FormatInt(relID, 10))
 		}
+		applyCombinedRelOrder(ctx, d.Store, refs)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
 	})
 
@@ -687,6 +720,44 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		} else {
 			d.Store.Exec(ctx, "UPDATE model_channel_rels SET reasoning_effort=NULL WHERE id=?", relID)
 		}
+		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
+	})
+
+	// DELETE /admin/api/models/group-rels/{relId}
+	g.DELETE("/models/group-rels/:relId", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		relID, ok := pathID(c, "relId")
+		if !ok {
+			httpx.OK(c, failureEnvelope("关联不存在"))
+			return
+		}
+		relRow, err := d.Store.QueryOne(ctx, "SELECT * FROM model_group_rels WHERE id = ?", relID)
+		if err != nil {
+			httpx.OK(c, failureEnvelope("关联不存在"))
+			return
+		}
+		modelRow, _ := d.Store.QueryOne(ctx, "SELECT model_name, rel_mode FROM models WHERE id=?", relRow.I64("model_id", 0))
+		if modelRow != nil && modelRow.Str("rel_mode") == "inherit" {
+			httpx.OK(c, failureEnvelope(fmt.Sprintf("模型「%s」当前为继承模式，无法修改关联", modelRow.Str("model_name"))))
+			return
+		}
+		d.Store.Exec(ctx, "DELETE FROM model_group_rels WHERE id = ?", relID)
+		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
+	})
+
+	// PUT /admin/api/models/group-rels/{relId}/sort
+	g.PUT("/models/group-rels/:relId/sort", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		relID, ok := pathID(c, "relId")
+		if !ok {
+			httpx.OK(c, failureEnvelope("关联不存在"))
+			return
+		}
+		var body struct {
+			SortOrder int `json:"sortOrder"`
+		}
+		_ = c.ShouldBindJSON(&body)
+		d.Store.Exec(ctx, "UPDATE model_group_rels SET sort_order=? WHERE id=?", body.SortOrder, relID)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
 	})
 
@@ -836,6 +907,315 @@ func resolveModelRels(ctx context.Context, st *store.Store, modelID int64, visit
 	return out
 }
 
+// resolveModelGroupRels lists the entry model's group relations (inheritance
+// aware), enriched with the group's name/strategy and member counts. It mirrors
+// resolveModelRels so both relation kinds follow the same inherit semantics.
+func resolveModelGroupRels(ctx context.Context, st *store.Store, modelID int64, visited map[int64]bool) []models.ModelGroupRel {
+	if visited[modelID] {
+		return nil
+	}
+	visited[modelID] = true
+
+	mdl, err := st.QueryOne(ctx, "SELECT * FROM models WHERE id = ?", modelID)
+	if err != nil {
+		return nil
+	}
+	m := store.RowToModel(mdl)
+	if derefStr(m.RelMode, "") == "inherit" && m.InheritFromModelID != nil {
+		return resolveModelGroupRels(ctx, st, *m.InheritFromModelID, visited)
+	}
+
+	rows, _ := st.Query(ctx,
+		`SELECT rel.*, g.name AS group_name, g.strategy AS group_strategy, g.sticky AS group_sticky,
+		        g.enabled AS group_enabled, g.description AS group_description
+		   FROM model_group_rels rel
+		   JOIN model_groups g ON g.id = rel.group_id
+		  WHERE rel.model_id = ?
+		  ORDER BY rel.sort_order ASC, rel.created_at ASC`, modelID)
+	out := make([]models.ModelGroupRel, 0, len(rows))
+	for _, r := range rows {
+		rel := store.RowToModelGroupRel(r)
+		if rel.GroupID == nil {
+			continue
+		}
+		summary := groupMemberSummaryOf(ctx, st, *rel.GroupID)
+		rel.MemberCount = models.Int(summary.total)
+		rel.AvailableCount = models.Int(summary.routable)
+		rel.Input = summary.input
+		rel.MaxContextLength = summary.maxContext
+		rel.TTFTMs = summary.ttftMs
+		rel.SampleCount = summary.sampleCount
+		rel.OutputSpeed = summary.outputSpeed
+		if summary.breakerAggregate == "all" {
+			rel.CircuitBroken = models.Int(1)
+			if summary.breakerScope != "" {
+				rel.CircuitBrokenScope = models.Str(summary.breakerScope)
+			}
+		}
+		rel.MemberModelNames = summary.modelNames
+		out = append(out, rel)
+	}
+	return out
+}
+
+// groupMemberSummary 汇总一个小组的成员能力摘要，供入口模型关联列表展示。
+//
+// total 是启用成员数；routable 是静态可路由成员数，口径与 relay 的
+// expandChannelModel 一致：成员启用 + 渠道模型启用 + 渠道启用 + 有可用 API Key
+// （绑定 Key 需该 Key 启用；未绑定则渠道下至少一枚启用 Key）。不含请求级的
+// 熔断/媒体/上下文跳过——那些依赖请求内容，不能作为无请求上下文的固定统计。
+// input 是可路由成员输入模态并集（Go 内去重、text 优先）；maxContext 是其中的
+// 最大正值上下文，全部未知时为 null。
+type groupMemberSummary struct {
+	total      int
+	routable   int
+	input      *string
+	maxContext *int64
+	// modelNames 是可路由成员的上游模型名（按成员 sort_order 去重），供入口模型
+	// 关联列表的小组行在「模型」列逐行展示。
+	modelNames []string
+	// 成员性能聚合（24h 日志口径，与渠道模型行列一致）：
+	// ttftMs/outputSpeed 是各成员最近样本的总体平均；无样本时为 nil。
+	ttftMs      *int64
+	sampleCount *int
+	outputSpeed *float64
+	// breakerAggregate：routable 全部熔断时为 "all"，部分熔断为 "partial"，
+	// 无可路由成员或全部正常为 ""。
+	breakerAggregate string
+	// breakerScope：全部熔断时成员熔断级别的聚合结果，"model" | "channel" | "both"；
+	// 多级别混合时取最广的一档（both > channel > model）。未全熔断时为空。
+	breakerScope string
+}
+
+func groupMemberSummaryOf(ctx context.Context, st *store.Store, groupID int64) groupMemberSummary {
+	var out groupMemberSummary
+	rows, _ := st.Query(ctx,
+		`SELECT cm.id, cm.channel_id, cm.model_name, cm.input, cm.context_length, c.name AS channel_name,
+		        cm.enabled = 1 AND c.enabled = 1
+		          AND ((cm.channel_api_key_id IS NOT NULL AND EXISTS (
+		                  SELECT 1 FROM channel_api_keys k
+		                   WHERE k.id = cm.channel_api_key_id AND k.enabled = 1))
+		            OR (cm.channel_api_key_id IS NULL AND EXISTS (
+		                  SELECT 1 FROM channel_api_keys k
+		                   WHERE k.channel_id = cm.channel_id AND k.enabled = 1))) AS routable
+		   FROM model_group_members m
+		   LEFT JOIN channel_models cm ON cm.id = m.channel_model_id
+		   LEFT JOIN channels c ON c.id = cm.channel_id
+		  WHERE m.group_id = ? AND m.enabled = 1`, groupID)
+	out.total = len(rows)
+
+	inputSeen := map[string]bool{}
+	seenModelName := map[string]bool{}
+	var maxContext int64
+	var routableMembers []groupMemberRef
+	for _, r := range rows {
+		if r.Int("routable", 0) != 1 {
+			continue
+		}
+		out.routable++
+		routableMembers = append(routableMembers, groupMemberRef{
+			cmID:        r.I64("id", 0),
+			chID:        r.I64("channel_id", 0),
+			channelName: r.Str("channel_name"),
+			modelName:   r.Str("model_name"),
+		})
+		if name := r.Str("model_name"); name != "" && !seenModelName[name] {
+			seenModelName[name] = true
+			out.modelNames = append(out.modelNames, name)
+		}
+		if input := r.Str("input"); input != "" {
+			for _, t := range strings.Split(input, ",") {
+				t = strings.TrimSpace(t)
+				if t != "" && !inputSeen[t] {
+					inputSeen[t] = true
+				}
+			}
+		}
+		if ctxLen := r.I64("context_length", 0); ctxLen > maxContext {
+			maxContext = ctxLen
+		}
+	}
+	if len(inputSeen) > 0 {
+		ordered := orderedInputTypes(inputSeen)
+		out.input = models.Str(strings.Join(ordered, ","))
+	}
+	if maxContext > 0 {
+		out.maxContext = &maxContext
+	}
+
+	// 成员性能聚合：与渠道模型行同口径（computeRelStats 的 24h 日志、每成员最多
+	// 30 个样本），把成员均值再总体平均一次，作为小组整体的参考值。
+	if len(routableMembers) > 0 {
+		out.ttftMs, out.sampleCount, out.outputSpeed = computeMemberPerfStats(ctx, st, routableMembers)
+
+		// 熔断聚合：只有全部可路由成员都熔断时，小组才算「熔断中」；部分熔断时
+		// 组内仍有可用候选，不告警。
+		cmIDs := make([]int64, 0, len(routableMembers))
+		for _, m := range routableMembers {
+			cmIDs = append(cmIDs, m.cmID)
+		}
+		lookup := loadBreakerLookup(ctx, st, cmIDs)
+		brokenCount := 0
+		scopeSet := map[string]bool{}
+		for _, m := range routableMembers {
+			mark := lookup.mark(m.cmID, m.chID)
+			if mark == nil {
+				continue
+			}
+			brokenCount++
+			if mark.Scope != "" {
+				scopeSet[mark.Scope] = true
+			}
+		}
+		if brokenCount == len(routableMembers) {
+			out.breakerAggregate = "all"
+			out.breakerScope = mergeBreakerScopes(scopeSet)
+		} else if brokenCount > 0 {
+			out.breakerAggregate = "partial"
+		}
+	}
+	return out
+}
+
+// mergeBreakerScopes 把组内各成员的熔断级别合并成一个展示级别。
+//
+// 成员的熔断状态按 (渠道, 渠道模型, Key) 独立判定，组内可能混着「模型级」与
+// 「渠道级」。对使用者而言最有用的信息是影响面：只要有一个成员是因为整条渠道
+// 被熔断，小组就不该号称只是模型级。因此取包含关系最广的一档。
+func mergeBreakerScopes(scopes map[string]bool) string {
+	switch {
+	case scopes["both"]:
+		return "both"
+	case scopes["channel"]:
+		return "channel"
+	case scopes["model"]:
+		return "model"
+	default:
+		return ""
+	}
+}
+
+// computeMemberPerfStats 汇总一组渠道模型的 24h 性能样本，口径与 computeRelStats
+// 一致（每成员 TTFT/速度各取最近 30 个样本）。
+//
+// request_logs 只记录「渠道名 + 渠道模型名」，没有 channel_model_id 列，因此这里
+// 与 computeRelStats 一样按名称二元组聚合，而不是按渠道模型 ID。两个成员若指向
+// 同一个「渠道名||模型名」，它们的样本会被合并统计——与渠道模型行的口径保持一致。
+type groupMemberRef struct {
+	cmID, chID int64
+	// channelName / modelName 是 request_logs 的归属键；任一为空表示无法统计。
+	channelName string
+	modelName   string
+}
+
+func computeMemberPerfStats(ctx context.Context, st *store.Store, members []groupMemberRef) (ttftMs *int64, sampleCount *int, outputSpeed *float64) {
+	if len(members) == 0 {
+		return nil, nil, nil
+	}
+	// 先按渠道名收窄扫描范围（channel_name 上有索引），再在 Go 内按名称二元组精确归组。
+	seenKey := map[string]bool{}
+	args := make([]any, 0, len(members))
+	for _, m := range members {
+		if m.channelName == "" || m.modelName == "" {
+			continue
+		}
+		key := m.channelName + "||" + m.modelName
+		if seenKey[key] {
+			continue
+		}
+		seenKey[key] = true
+		args = append(args, m.channelName)
+	}
+	if len(seenKey) == 0 {
+		return nil, nil, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
+	since := jtime.FormatApp(time.Now().UTC().Add(-24 * time.Hour))
+	queryArgs := append(append([]any{}, args...), since)
+	rows, _ := st.Query(ctx,
+		`SELECT channel_name, channel_model_name, first_byte_ms, completion_tokens, response_time_ms
+		   FROM request_logs
+		  WHERE channel_name IN (`+placeholders+`)
+		    AND phase IN ('success','fail')
+		    AND channel_model_name IS NOT NULL AND channel_model_name != ''
+		    AND first_byte_ms IS NOT NULL AND first_byte_ms > 0
+		    AND created_at >= ?
+		  ORDER BY created_at DESC`, queryArgs...)
+
+	// 每成员独立限 30 个样本，与渠道模型行的统计口径一致。
+	fbmCount := make(map[string]int)
+	spdCount := make(map[string]int)
+	var fbmSum int64
+	var fbmTotal int
+	var spdSum float64
+	var spdTotal int
+	for _, r := range rows {
+		key := r.Str("channel_name") + "||" + r.Str("channel_model_name")
+		if !seenKey[key] {
+			continue
+		}
+		if fbmCount[key] < 30 {
+			fbmSum += r.I64("first_byte_ms", 0)
+			fbmCount[key]++
+			fbmTotal++
+		}
+		if spdCount[key] < 30 && r.Int("completion_tokens", 0) > 0 && r.Int("response_time_ms", 0) > 0 {
+			spdSum += float64(r.I64("completion_tokens", 0)) * 1000.0 / float64(r.I64("response_time_ms", 0))
+			spdCount[key]++
+			spdTotal++
+		}
+	}
+	if fbmTotal > 0 {
+		avg := float64(fbmSum) / float64(fbmTotal)
+		ttftMs = int64Ptr(int64(math.Round(avg)))
+		sampleCount = models.Int(fbmTotal)
+	}
+	if spdTotal > 0 {
+		spd := float64(int64(spdSum/float64(spdTotal)*10+0.5)) / 10.0
+		outputSpeed = &spd
+	}
+	return ttftMs, sampleCount, outputSpeed
+}
+
+// orderedInputTypes 把模态集合规范成 text 优先的稳定顺序，其余按固定次序追加，
+// 未知模态按字母序殿后，保证同一集合总是渲染出同一串标签。
+func orderedInputTypes(seen map[string]bool) []string {
+	canonical := []string{"text", "image", "video", "audio"}
+	var rest []string
+	var out []string
+	for _, t := range canonical {
+		if seen[t] {
+			out = append(out, t)
+			delete(seen, t)
+		}
+	}
+	for t := range seen {
+		rest = append(rest, t)
+	}
+	sort.Strings(rest)
+	return append(out, rest...)
+}
+
+// resolveModelGroups lists the groups that can still be added to an entry model,
+// i.e. every enabled group not already related to it.
+func resolveModelGroups(ctx context.Context, st *store.Store, modelID int64) []models.ModelGroup {
+	rows, _ := st.Query(ctx,
+		`SELECT * FROM model_groups g
+		  WHERE g.enabled = 1
+		    AND NOT EXISTS (
+		        SELECT 1 FROM model_group_rels rel
+		         WHERE rel.model_id = ? AND rel.group_id = g.id)
+		  ORDER BY g.name ASC`, modelID)
+	out := make([]models.ModelGroup, 0, len(rows))
+	for _, r := range rows {
+		grp := store.RowToModelGroup(r)
+		summary := groupMemberSummaryOf(ctx, st, grp.ID)
+		grp.MemberCount = models.Int(summary.total)
+		out = append(out, grp)
+	}
+	return out
+}
+
 func computeRelStats(ctx context.Context, st *store.Store, rels []models.ModelChannelRel) []models.ModelChannelRel {
 	if len(rels) == 0 {
 		return rels
@@ -899,102 +1279,162 @@ func applyRelBrokenMarks(ctx context.Context, st *store.Store, rels []models.Mod
 	if len(rels) == 0 {
 		return
 	}
-	channelIDs := make([]string, 0, len(rels))
-	seenCh := map[int64]bool{}
-	cmIDs := make([]string, 0, len(rels))
+	cmIDs := make([]int64, 0, len(rels))
 	seenCM := map[int64]bool{}
 	for _, rel := range rels {
-		if rel.ChannelID != nil && !seenCh[*rel.ChannelID] {
-			seenCh[*rel.ChannelID] = true
-			channelIDs = append(channelIDs, int64Str(*rel.ChannelID))
-		}
 		if rel.ChannelModelID != nil && !seenCM[*rel.ChannelModelID] {
 			seenCM[*rel.ChannelModelID] = true
-			cmIDs = append(cmIDs, int64Str(*rel.ChannelModelID))
+			cmIDs = append(cmIDs, *rel.ChannelModelID)
 		}
 	}
-
-	// Load every open breaker state touching these channels (is_open=1; expiry
-	// is irrelevant — only a successful probe opens the gate).
-	var states []circuit.CircuitBreakerState
-	if len(channelIDs) > 0 {
-		rows, _ := st.Query(ctx,
-			"SELECT * FROM circuit_breaker_states WHERE channel_id IN ("+strings.Join(channelIDs, ",")+") AND is_open = 1")
-		for _, row := range rows {
-			states = append(states, circuitStateFromRow(row))
-		}
-	}
-	_ = cmIDs
-
-	// Channel models (bound key) and enabled keys per channel.
-	cmByID := map[int64]store.Row{}
-	if len(cmIDs) > 0 {
-		rows, _ := st.Query(ctx, "SELECT id, channel_api_key_id FROM channel_models WHERE id IN ("+strings.Join(cmIDs, ",")+")")
-		for _, row := range rows {
-			cmByID[row.I64("id", 0)] = row
-		}
-	}
-	enabledKeysByChannel := map[int64][]circuit.KeyRef{}
-	if len(channelIDs) > 0 {
-		rows, _ := st.Query(ctx, "SELECT id, channel_id, key_name FROM channel_api_keys WHERE channel_id IN ("+strings.Join(channelIDs, ",")+") AND enabled = 1")
-		for _, row := range rows {
-			chID := row.I64("channel_id", 0)
-			enabledKeysByChannel[chID] = append(enabledKeysByChannel[chID], circuit.KeyRef{ID: row.I64("id", 0), Enabled: true, Name: row.Str("key_name")})
-		}
-	}
-	boundKeyIDs := map[int64]circuit.KeyRef{}
-	for _, rel := range rels {
-		if rel.ChannelModelID == nil {
-			continue
-		}
-		cm, ok := cmByID[*rel.ChannelModelID]
-		if !ok {
-			continue
-		}
-		if kID := cm.I64Ptr("channel_api_key_id"); kID != nil {
-			enabled := false
-			name := ""
-			if kRow, err := st.QueryOne(ctx, "SELECT enabled, key_name FROM channel_api_keys WHERE id = ?", *kID); err == nil {
-				enabled = kRow.Int("enabled", 0) == 1
-				name = kRow.Str("key_name")
-			}
-			boundKeyIDs[*kID] = circuit.KeyRef{ID: *kID, Enabled: enabled, Name: name}
-		}
-	}
+	lookup := loadBreakerLookup(ctx, st, cmIDs)
 
 	for i := range rels {
 		rel := &rels[i]
 		if rel.ChannelModelID == nil || rel.ChannelID == nil {
 			continue
 		}
-		var relKeyID *int64
-		if cm, ok := cmByID[*rel.ChannelModelID]; ok {
-			relKeyID = cm.I64Ptr("channel_api_key_id")
+		mark := lookup.mark(*rel.ChannelModelID, *rel.ChannelID)
+		if mark == nil {
+			continue
 		}
-		mark := circuit.EvaluateRelBroken(*rel.ChannelModelID, *rel.ChannelID, relKeyID,
-			states, enabledKeysByChannel[*rel.ChannelID], boundKeyIDs)
-		if mark != nil {
-			rel.CircuitBroken = models.Int(1)
-			rel.CircuitBrokenScope = models.Str(mark.Scope)
-			if mark.ExpireAt != nil {
-				rel.CircuitBrokenExpireAt = jtime.NewAPITime(*mark.ExpireAt)
-			}
-			if mark.LastProbeAt != nil {
-				rel.LastProbeAt = jtime.NewAPITime(*mark.LastProbeAt)
-			}
-			rel.LastProbeStatus = mark.LastProbeStatus
-			rel.LastProbeDetail = mark.LastProbeDetail
-			if len(mark.ProtocolsByKey) > 0 {
-				protocols := make([]models.APIKeyProtocol, 0, len(mark.ProtocolsByKey))
-				for _, kp := range mark.ProtocolsByKey {
-					protocols = append(protocols, models.APIKeyProtocol{
-						KeyID: kp.KeyID, KeyName: kp.KeyName, Protocol: kp.Protocol,
-					})
-				}
-				rel.CircuitBrokenProtocols = protocols
-			}
+		rel.CircuitBroken = models.Int(1)
+		rel.CircuitBrokenScope = models.Str(mark.Scope)
+		if mark.ExpireAt != nil {
+			rel.CircuitBrokenExpireAt = jtime.NewAPITime(*mark.ExpireAt)
+		}
+		if mark.LastProbeAt != nil {
+			rel.LastProbeAt = jtime.NewAPITime(*mark.LastProbeAt)
+		}
+		rel.LastProbeStatus = mark.LastProbeStatus
+		rel.LastProbeDetail = mark.LastProbeDetail
+		rel.CircuitBrokenProtocols = apiKeyProtocols(mark)
+	}
+}
+
+// applyGroupMemberBrokenMarks fills the same breaker display fields on group
+// members. The evaluation is identical to the entry-model relation list: breaker
+// state is keyed by (channel, channel model, API key) and carries no entry-model
+// identity, so a member shows the same status wherever it is referenced.
+func applyGroupMemberBrokenMarks(ctx context.Context, st *store.Store, members []models.ModelGroupMember) {
+	if len(members) == 0 {
+		return
+	}
+	cmIDs := make([]int64, 0, len(members))
+	seenCM := map[int64]bool{}
+	for _, m := range members {
+		if m.ChannelModelID != nil && !seenCM[*m.ChannelModelID] {
+			seenCM[*m.ChannelModelID] = true
+			cmIDs = append(cmIDs, *m.ChannelModelID)
 		}
 	}
+	lookup := loadBreakerLookup(ctx, st, cmIDs)
+
+	for i := range members {
+		m := &members[i]
+		if m.ChannelModelID == nil || m.ChannelID == nil {
+			continue
+		}
+		mark := lookup.mark(*m.ChannelModelID, *m.ChannelID)
+		if mark == nil {
+			continue
+		}
+		m.CircuitBroken = models.Int(1)
+		m.CircuitBrokenScope = models.Str(mark.Scope)
+		if mark.ExpireAt != nil {
+			m.CircuitBrokenExpireAt = jtime.NewAPITime(*mark.ExpireAt)
+		}
+		m.CircuitBrokenProtocols = apiKeyProtocols(mark)
+	}
+}
+
+// apiKeyProtocols converts the breaker mark's per-key protocols for the API shape.
+func apiKeyProtocols(mark *circuit.RelBrokenMark) []models.APIKeyProtocol {
+	if len(mark.ProtocolsByKey) == 0 {
+		return nil
+	}
+	out := make([]models.APIKeyProtocol, 0, len(mark.ProtocolsByKey))
+	for _, kp := range mark.ProtocolsByKey {
+		out = append(out, models.APIKeyProtocol{KeyID: kp.KeyID, KeyName: kp.KeyName, Protocol: kp.Protocol})
+	}
+	return out
+}
+
+// breakerLookup preloads everything needed to evaluate breaker display marks for
+// a set of channel models: open states on their channels, each channel model's
+// bound key, and each channel's enabled keys. Sharing it across the relation list
+// and the group member list keeps both views consistent and avoids the N+1
+// lookups a per-row evaluation would need.
+type breakerLookup struct {
+	states               []circuit.CircuitBreakerState
+	cmByID               map[int64]store.Row
+	enabledKeysByChannel map[int64][]circuit.KeyRef
+	boundKeyIDs          map[int64]circuit.KeyRef
+}
+
+func loadBreakerLookup(ctx context.Context, st *store.Store, cmIDs []int64) *breakerLookup {
+	l := &breakerLookup{
+		cmByID:               map[int64]store.Row{},
+		enabledKeysByChannel: map[int64][]circuit.KeyRef{},
+		boundKeyIDs:          map[int64]circuit.KeyRef{},
+	}
+	if len(cmIDs) == 0 {
+		return l
+	}
+	cmIDStrs := make([]string, 0, len(cmIDs))
+	for _, id := range cmIDs {
+		cmIDStrs = append(cmIDStrs, int64Str(id))
+	}
+	cmInList := strings.Join(cmIDStrs, ",")
+	rows, _ := st.Query(ctx, "SELECT id, channel_id, channel_api_key_id FROM channel_models WHERE id IN ("+cmInList+")")
+	channelIDs := make([]string, 0, len(rows))
+	seenCh := map[int64]bool{}
+	for _, row := range rows {
+		l.cmByID[row.I64("id", 0)] = row
+		if chID := row.I64("channel_id", 0); !seenCh[chID] {
+			seenCh[chID] = true
+			channelIDs = append(channelIDs, int64Str(chID))
+		}
+	}
+	if len(channelIDs) == 0 {
+		return l
+	}
+	chInList := strings.Join(channelIDs, ",")
+
+	// Load every open breaker state touching these channels (is_open=1; expiry is
+	// irrelevant — only a successful probe opens the gate).
+	stateRows, _ := st.Query(ctx, "SELECT * FROM circuit_breaker_states WHERE channel_id IN ("+chInList+") AND is_open = 1")
+	for _, row := range stateRows {
+		l.states = append(l.states, circuitStateFromRow(row))
+	}
+	keyRows, _ := st.Query(ctx, "SELECT id, channel_id, key_name FROM channel_api_keys WHERE channel_id IN ("+chInList+") AND enabled = 1")
+	for _, row := range keyRows {
+		chID := row.I64("channel_id", 0)
+		l.enabledKeysByChannel[chID] = append(l.enabledKeysByChannel[chID],
+			circuit.KeyRef{ID: row.I64("id", 0), Enabled: true, Name: row.Str("key_name")})
+	}
+	for _, row := range rows {
+		if kID := row.I64Ptr("channel_api_key_id"); kID != nil {
+			enabled := false
+			name := ""
+			if kRow, err := st.QueryOne(ctx, "SELECT enabled, key_name FROM channel_api_keys WHERE id = ?", *kID); err == nil {
+				enabled = kRow.Int("enabled", 0) == 1
+				name = kRow.Str("key_name")
+			}
+			l.boundKeyIDs[*kID] = circuit.KeyRef{ID: *kID, Enabled: enabled, Name: name}
+		}
+	}
+	return l
+}
+
+// mark evaluates the breaker display mark for one (channel, channel model) pair.
+func (l *breakerLookup) mark(channelModelID, channelID int64) *circuit.RelBrokenMark {
+	var relKeyID *int64
+	if cm, ok := l.cmByID[channelModelID]; ok {
+		relKeyID = cm.I64Ptr("channel_api_key_id")
+	}
+	return circuit.EvaluateRelBroken(channelModelID, channelID, relKeyID,
+		l.states, l.enabledKeysByChannel[channelID], l.boundKeyIDs)
 }
 
 func int64Str(n int64) string { return strconv.FormatInt(n, 10) }
@@ -1036,4 +1476,55 @@ func findCycleClosing(ctx context.Context, st *store.Store, fromModelID int64, v
 	}
 	visited[next] = true
 	return findCycleClosing(ctx, st, next, visited)
+}
+
+// parseRelRef 解析前端提交的关联引用。两类关联共用一套排序接口，
+// 用前缀区分来源："cm:<id>" = model_channel_rels，"g:<id>" = model_group_rels；
+// 裸数字视为渠道模型关联（兼容旧版前端）。
+func parseRelRef(v any) (kind string, id int64) {
+	switch x := v.(type) {
+	case float64:
+		return "cm", int64(x)
+	case string:
+		raw := strings.TrimSpace(x)
+		if raw == "" {
+			return "", 0
+		}
+		if i := strings.Index(raw, ":"); i > 0 {
+			kind = strings.ToLower(strings.TrimSpace(raw[:i]))
+			n, err := strconv.ParseInt(strings.TrimSpace(raw[i+1:]), 10, 64)
+			if err != nil || n <= 0 {
+				return "", 0
+			}
+			if kind != "g" {
+				kind = "cm"
+			}
+			return kind, n
+		}
+		n, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || n <= 0 {
+			return "", 0
+		}
+		return "cm", n
+	}
+	return "", 0
+}
+
+// applyCombinedRelOrder 按提交顺序给两类关联统一编号：序号写入各自的 sort_order，
+// 路由时再按同一序号空间合并成候选队列，因此入口模型列表里直连关联与小组的
+// 前后顺序就是实际尝试顺序。
+func applyCombinedRelOrder(ctx context.Context, st *store.Store, refs []string) {
+	order := 0
+	for _, ref := range refs {
+		kind, id := parseRelRef(strings.TrimSpace(ref))
+		if id == 0 {
+			continue
+		}
+		if kind == "g" {
+			st.Exec(ctx, "UPDATE model_group_rels SET sort_order=? WHERE id=?", order, id)
+		} else {
+			st.Exec(ctx, "UPDATE model_channel_rels SET sort_order=? WHERE id=?", order, id)
+		}
+		order++
+	}
 }

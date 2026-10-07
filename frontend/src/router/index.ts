@@ -100,6 +100,30 @@ const router = createRouter({
           meta: { title: '模型关系' }
         },
         {
+          path: 'model/group/list',
+          name: 'model-group-list',
+          component: () => import('@/views/model/group/List.vue'),
+          meta: { title: '模型小组' }
+        },
+        {
+          path: 'model/group/form',
+          name: 'model-group-form',
+          component: () => import('@/views/model/group/Form.vue'),
+          meta: { title: '新建小组' }
+        },
+        {
+          path: 'model/group/form/:id',
+          name: 'model-group-edit',
+          component: () => import('@/views/model/group/Form.vue'),
+          meta: { title: '编辑小组' }
+        },
+        {
+          path: 'model/group/:id',
+          name: 'model-group-detail',
+          component: () => import('@/views/model/group/Detail.vue'),
+          meta: { title: '小组成员' }
+        },
+        {
           path: 'model/circuit-breaker/:id',
           name: 'circuit-breaker',
           component: () => import('@/views/model/CircuitBreaker.vue'),

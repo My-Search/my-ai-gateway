@@ -431,3 +431,158 @@ func TestStripSpecialSuffix(t *testing.T) {
 		}
 	}
 }
+
+// TestReplaceAPIModelsPreservesGroupMemberships covers the provider-refresh path:
+// source='api' channel-model rows are deleted and re-inserted with new ids, so any
+// group membership pointing at the old ids must be re-pointed by model name —
+// otherwise one channel refresh would silently empty every model group.
+func TestReplaceAPIModelsPreservesGroupMemberships(t *testing.T) {
+	st := newRuleTestStore(t)
+	ctx := context.Background()
+
+	if _, err := st.Exec(ctx, `CREATE TABLE model_channel_rels (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, model_id INTEGER NOT NULL,
+		channel_model_id INTEGER NOT NULL, weight INTEGER DEFAULT 1,
+		reasoning_effort TEXT, sort_order INTEGER DEFAULT 0,
+		enabled INTEGER DEFAULT 1, created_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Exec(ctx, `CREATE TABLE model_group_members (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL,
+		channel_model_id INTEGER NOT NULL, weight INTEGER DEFAULT 1,
+		reasoning_effort TEXT, sort_order INTEGER DEFAULT 0,
+		enabled INTEGER DEFAULT 1, created_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// An api-sourced channel model that is both directly related and a group member.
+	oldID, err := st.Insert(ctx,
+		"INSERT INTO channel_models (channel_id, model_name, enabled, source, input) VALUES (1, 'gpt-x', 1, 'api', 'text')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Exec(ctx,
+		"INSERT INTO model_channel_rels (model_id, channel_model_id, weight, sort_order) VALUES (5, ?, 3, 2)", oldID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Exec(ctx,
+		"INSERT INTO model_group_members (group_id, channel_model_id, weight, reasoning_effort, sort_order) VALUES (9, ?, 4, 'high', 1)", oldID); err != nil {
+		t.Fatal(err)
+	}
+
+	ReplaceAPIModels(ctx, st, 1, []ModelPair{{Name: "gpt-x", Display: "GPT-X"}})
+
+	// The recreated row must have a new id, and the membership must follow it.
+	newRow := st.QueryOneOrZero(ctx, "SELECT id FROM channel_models WHERE channel_id = 1 AND model_name = 'gpt-x'")
+	if newRow == nil {
+		t.Fatal("replaced channel model missing")
+	}
+	newID := newRow.I64("id", 0)
+	if newID == oldID {
+		t.Fatal("expected the refresh to recreate the row with a new id; test premise is wrong")
+	}
+
+	member := st.QueryOneOrZero(ctx, "SELECT group_id, weight, reasoning_effort, sort_order FROM model_group_members WHERE channel_model_id = ?", newID)
+	if member == nil {
+		t.Fatal("group membership was lost across the channel model refresh")
+	}
+	if member.I64("group_id", 0) != 9 {
+		t.Errorf("membership moved to group %d, want 9", member.I64("group_id", 0))
+	}
+	if member.Int("weight", 0) != 4 {
+		t.Errorf("member weight = %d, want 4 (weight must survive the refresh)", member.Int("weight", 0))
+	}
+	if member.Str("reasoning_effort") != "high" {
+		t.Errorf("member reasoning_effort = %q, want high", member.Str("reasoning_effort"))
+	}
+	if member.Int("sort_order", 0) != 1 {
+		t.Errorf("member sort_order = %d, want 1", member.Int("sort_order", 0))
+	}
+
+	// The direct relation must be preserved too (pre-existing behaviour).
+	if rel := st.QueryOneOrZero(ctx, "SELECT model_id, weight FROM model_channel_rels WHERE channel_model_id = ?", newID); rel == nil {
+		t.Error("direct model relation was lost across the refresh")
+	} else if rel.Int("weight", 0) != 3 {
+		t.Errorf("relation weight = %d, want 3", rel.Int("weight", 0))
+	}
+
+	// The stale row must be gone (no orphans pointing at the deleted id).
+	if stale := st.QueryOneOrZero(ctx, "SELECT id FROM model_group_members WHERE channel_model_id = ?", oldID); stale != nil {
+		t.Error("a membership still points at the deleted channel model id")
+	}
+}
+
+// TestReplaceAPIModelsDropsMembershipForRemovedModel proves a membership whose
+// channel model disappeared upstream is dropped rather than left dangling.
+func TestReplaceAPIModelsDropsMembershipForRemovedModel(t *testing.T) {
+	st := newRuleTestStore(t)
+	ctx := context.Background()
+	if _, err := st.Exec(ctx, `CREATE TABLE model_channel_rels (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, model_id INTEGER NOT NULL,
+		channel_model_id INTEGER NOT NULL, weight INTEGER DEFAULT 1,
+		reasoning_effort TEXT, sort_order INTEGER DEFAULT 0,
+		enabled INTEGER DEFAULT 1, created_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Exec(ctx, `CREATE TABLE model_group_members (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL,
+		channel_model_id INTEGER NOT NULL, weight INTEGER DEFAULT 1,
+		reasoning_effort TEXT, sort_order INTEGER DEFAULT 0,
+		enabled INTEGER DEFAULT 1, created_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	oldID, _ := st.Insert(ctx,
+		"INSERT INTO channel_models (channel_id, model_name, enabled, source, input) VALUES (2, 'gone', 1, 'api', 'text')")
+	if _, err := st.Exec(ctx,
+		"INSERT INTO model_group_members (group_id, channel_model_id) VALUES (9, ?)", oldID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Upstream no longer lists 'gone'.
+	ReplaceAPIModels(ctx, st, 2, []ModelPair{{Name: "still-here"}})
+
+	if n := st.QueryOneOrZero(ctx, "SELECT COUNT(*) c FROM model_group_members"); n.Int("c", 0) != 0 {
+		t.Errorf("%d memberships remain after their channel model disappeared upstream", n.Int("c", 0))
+	}
+}
+
+// TestReplaceAPIModelsSkipsManualModelsForGroups proves a manual channel model
+// (source != 'api') keeps its membership untouched by the refresh path.
+func TestReplaceAPIModelsSkipsManualModelsForGroups(t *testing.T) {
+	st := newRuleTestStore(t)
+	ctx := context.Background()
+	if _, err := st.Exec(ctx, `CREATE TABLE model_channel_rels (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, model_id INTEGER NOT NULL,
+		channel_model_id INTEGER NOT NULL, weight INTEGER DEFAULT 1,
+		reasoning_effort TEXT, sort_order INTEGER DEFAULT 0,
+		enabled INTEGER DEFAULT 1, created_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Exec(ctx, `CREATE TABLE model_group_members (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL,
+		channel_model_id INTEGER NOT NULL, weight INTEGER DEFAULT 1,
+		reasoning_effort TEXT, sort_order INTEGER DEFAULT 0,
+		enabled INTEGER DEFAULT 1, created_at TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	manualID, err := st.Insert(ctx,
+		"INSERT INTO channel_models (channel_id, model_name, enabled, source, input) VALUES (3, 'manual-model', 1, 'manual', 'text')")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Exec(ctx,
+		"INSERT INTO model_group_members (group_id, channel_model_id, weight) VALUES (9, ?, 6)", manualID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Upstream also lists the same name, but the manual row must win and stay put.
+	ReplaceAPIModels(ctx, st, 3, []ModelPair{{Name: "manual-model"}})
+
+	member := st.QueryOneOrZero(ctx, "SELECT weight FROM model_group_members WHERE channel_model_id = ?", manualID)
+	if member == nil {
+		t.Fatal("manual channel model lost its group membership")
+	}
+	if member.Int("weight", 0) != 6 {
+		t.Errorf("manual member weight = %d, want 6", member.Int("weight", 0))
+	}
+}

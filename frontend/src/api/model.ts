@@ -125,7 +125,11 @@ export const modelApi = {
     return http.get<{
       model: CustomModel
       rels: ModelChannelRel[]
+      /** 关联的模型小组（与 rels 共用 sort_order 序号空间） */
+      groupRels?: ModelGroupRel[]
       availableModels: any[]
+      /** 可关联的模型小组（未关联且启用） */
+      availableGroups?: AvailableModelGroup[]
       /** 继承模式下，源模型名（用于展示） */
       inheritFromModelName?: string | null
     }>(`/models/${id}/rels`)
@@ -169,7 +173,8 @@ export const modelApi = {
   updateRelSort(relId: number, sortOrder: number) {
     return http.put<{ success: boolean; error?: string }>(`/models/rels/${relId}/sort`, { sortOrder })
   },
-  batchUpdateSortOrders(sortedRelIds: number[]) {
+  /** sortedRelIds 接受混合引用（"cm:<id>" / "g:<id>"，裸数字按渠道模型关联处理） */
+  batchUpdateSortOrders(sortedRelIds: (number | string)[]) {
     return http.put<{ success: boolean; error?: string }>('/models/rels/sort', { sortedRelIds })
   },
   updateRelReasoningEffort(relId: number, reasoningEffort: string | null) {
@@ -187,4 +192,49 @@ export const modelApi = {
   saveCircuitBreaker(id: number, config: Partial<CircuitBreakerConfig>) {
     return http.put<{ success: boolean }>(`/models/${id}/circuit-breaker`, config)
   }
+}
+
+/** 入口模型关联的模型小组（展示字段由后端补充） */
+export interface ModelGroupRel {
+  id: number
+  modelId: number
+  groupId: number
+  sortOrder: number
+  enabled?: number
+  groupName?: string
+  /** failover | random | round_robin */
+  groupStrategy?: string
+  /** 1 = 会话粘性（按消息前缀哈希固定组内成员） */
+  groupSticky?: number
+  groupEnabled?: number
+  groupDescription?: string
+  memberCount?: number
+  /** 可用成员数（静态可路由：成员启用 + 渠道模型启用 + 渠道启用 + 有可用 Key） */
+  availableCount?: number
+  /** 可路由成员输入模态并集（text 优先、去重，逗号分隔） */
+  input?: string
+  /** 可路由成员的最大正值上下文；全未知为 null（显示 -） */
+  maxContextLength?: number | null
+  /** 可路由成员 24h 性能样本的总体平均；无样本为 null */
+  ttftMs?: number | null
+  /** 参与 TTFT 平均的样本数 */
+  sampleCount?: number | null
+  /** 可路由成员的平均生成速度 (tokens/s)；无样本为 null */
+  outputSpeed?: number | null
+  /** 1 = 组内可路由成员全部熔断（才显示「熔断中」，无解除/详情按钮） */
+  circuitBroken?: number
+  /** 全部熔断时的聚合熔断级别：model=模型级 / channel=渠道级 / both=两者（成员混合取最广一档） */
+  circuitBrokenScope?: 'model' | 'channel' | 'both' | null
+  /** 可路由成员的上游模型名（去重、按成员顺序），模型列逐行展示 */
+  memberModelNames?: string[]
+}
+
+/** 可关联的模型小组（availableGroups 列表项） */
+export interface AvailableModelGroup {
+  id: number
+  name: string
+  description?: string
+  strategy?: string
+  sticky?: number
+  memberCount?: number | null
 }
