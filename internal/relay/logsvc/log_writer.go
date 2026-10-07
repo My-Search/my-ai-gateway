@@ -91,9 +91,11 @@ func (w *LogWriter) WriteStart(ctx context.Context, traceID, modelName string, g
 // WriteCandidatePhase records a candidate-level phase (start / skip / retry),
 // mirroring RelayLogger.logPhase.  apiKeyName is the *channel* API key name.
 // responseTimeMs may be nil (most phases carry no duration).
+// routeSource 标注本行候选的粘性来源（models.RouteSourceSticky /
+// RouteSourceStickyFallback）；非粘性传空串，落库为 NULL。
 func (w *LogWriter) WriteCandidatePhase(ctx context.Context, traceID, apiKeyName, modelName,
 	channelModelName, channelName string, gwKeyID int64,
-	phase, status, msg string, retryIndex int, responseTimeMs *int64, reasoningEffort string) {
+	phase, status, msg string, retryIndex int, responseTimeMs *int64, reasoningEffort, routeSource string) {
 
 	var gwID *int64
 	if gwKeyID > 0 {
@@ -118,6 +120,9 @@ func (w *LogWriter) WriteCandidatePhase(ctx context.Context, traceID, apiKeyName
 		ReasoningEffort:  models.Str(reasoningEffort),
 		CreatedAt:        nowAPITime(),
 	}
+	if routeSource != "" {
+		rec.RouteSource = models.Str(routeSource)
+	}
 	if responseTimeMs != nil {
 		rt := int(*responseTimeMs)
 		rec.ResponseTimeMs = &rt
@@ -130,9 +135,11 @@ func (w *LogWriter) WriteCandidatePhase(ctx context.Context, traceID, apiKeyName
 // apiKeyName is the channel API key name; message is "请求成功" (non-stream) or
 // "流式请求成功" / "流式请求成功（用量为估算值）" (stream).
 // firstByteMs may be nil when no byte was observed.
+// routeSource labels sticky provenance (see WriteCandidatePhase); "" → NULL.
 func (w *LogWriter) WriteSuccess(ctx context.Context, traceID, apiKeyName, modelName,
 	channelModelName, channelName string, gwKeyID int64, msg string,
-	responseTimeMs int64, firstByteMs *int64, retryIndex, promptTokens, completionTokens, totalTokens int) {
+	responseTimeMs int64, firstByteMs *int64, retryIndex, promptTokens, completionTokens, totalTokens int,
+	routeSource string) {
 
 	var gwID *int64
 	if gwKeyID > 0 {
@@ -156,6 +163,9 @@ func (w *LogWriter) WriteSuccess(ctx context.Context, traceID, apiKeyName, model
 		CompletionTokens: models.Int(completionTokens),
 		TotalTokens:      models.Int(totalTokens),
 		CreatedAt:        nowAPITime(),
+	}
+	if routeSource != "" {
+		rec.RouteSource = models.Str(routeSource)
 	}
 	if firstByteMs != nil {
 		fb := int(*firstByteMs)
@@ -223,18 +233,23 @@ func (w *LogWriter) insertAndPublish(ctx context.Context, log *models.RequestLog
 	if log.APIKeyName != nil {
 		apiKeyName = *log.APIKeyName
 	}
+	// route_source 可空：非粘性路由留 NULL，前端据此不显示徽章。
+	var routeSource any
+	if log.RouteSource != nil && *log.RouteSource != "" {
+		routeSource = *log.RouteSource
+	}
 	id, err := w.store.Insert(ctx,
 		`INSERT INTO request_logs
 		(trace_id, api_key_name, gateway_api_key_id, model_name, channel_model_name, channel_name,
 		 phase, status, message, retry_index,
 		 response_time_ms, first_byte_ms,
 		 prompt_tokens, completion_tokens, total_tokens,
-		 reasoning_effort, created_at)
+		 reasoning_effort, route_source, created_at)
 		VALUES (?, ?, ?, ?, ?, ?,
 		        ?, ?, ?, ?,
 		        ?, ?,
 		        ?, ?, ?,
-		        ?, ?)`,
+		        ?, ?, ?)`,
 		log.TraceID,
 		apiKeyName, gwID,
 		models.DerefStr(log.ModelName, ""),
@@ -244,7 +259,7 @@ func (w *LogWriter) insertAndPublish(ctx context.Context, log *models.RequestLog
 		rt, fb,
 		models.DerefInt(log.PromptTokens, 0), models.DerefInt(log.CompletionTokens, 0),
 		models.DerefInt(log.TotalTokens, 0),
-		models.DerefStr(log.ReasoningEffort, ""), now)
+		models.DerefStr(log.ReasoningEffort, ""), routeSource, now)
 
 	if err != nil {
 		slog.Warn("写入请求日志失败", "traceId", log.TraceID, "phase", log.Phase, "error", err)

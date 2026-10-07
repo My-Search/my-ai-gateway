@@ -124,6 +124,12 @@ func (r *RouteResolver) BuildCandidates(ctx context.Context, req *InternalReques
 				stickyKey:  stickyKey,
 				groupID:    e.groupID,
 			})
+			// 小组来源信息只用于请求日志标注（小组名/策略/粘性命中），不参与路由。
+			for i := range ordered {
+				ordered[i].GroupID = e.groupID
+				ordered[i].GroupName = e.groupName
+				ordered[i].GroupStrategy = e.groupStrategy
+			}
 			// 组内排序结果作为「入口模型候选顺序」的一段整体拼接，组内失败会先
 			// 尝试组内下一个成员，再回到入口模型的下一条关联。
 			candidates = append(candidates, ordered...)
@@ -240,6 +246,7 @@ func (r *RouteResolver) expandChannelModel(ctx context.Context, ref channelModel
 type routingEntry struct {
 	isGroup       bool
 	groupID       int64
+	groupName     string
 	groupStrategy string
 	sticky        bool
 	sortOrder     int
@@ -287,7 +294,7 @@ func (r *RouteResolver) resolveRoutingEntries(ctx context.Context, modelID int64
 	}
 
 	groupRows, _ := r.Store.Query(ctx,
-		`SELECT rel.sort_order, g.id, g.strategy, g.sticky, g.enabled
+		`SELECT rel.sort_order, g.id, g.name, g.strategy, g.sticky, g.enabled
 		   FROM model_group_rels rel
 		   JOIN model_groups g ON g.id = rel.group_id
 		  WHERE rel.model_id = ? AND rel.enabled = 1
@@ -299,6 +306,7 @@ func (r *RouteResolver) resolveRoutingEntries(ctx context.Context, modelID int64
 		entries = append(entries, routingEntry{
 			isGroup:       true,
 			groupID:       row.I64("id", 0),
+			groupName:     row.Str("name"),
 			groupStrategy: normalizeGroupStrategy(row.Str("strategy")),
 			sticky:        row.Int("sticky", 0) == 1,
 			sortOrder:     row.Int("sort_order", 0),

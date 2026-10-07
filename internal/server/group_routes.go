@@ -460,7 +460,31 @@ func fillGroupMemberDisplay(ctx context.Context, st *store.Store, members []mode
 		}
 		members[i].APIKeyAvailable = models.Int(boolToInt(available))
 	}
+	applyGroupMemberPerfStats(ctx, st, members)
 	applyGroupMemberBrokenMarks(ctx, st, members)
+}
+
+// applyGroupMemberPerfStats attaches each member's 24h TTFT/speed samples, using
+// the same aggregation the entry-model relation rows use so both pages show
+// identical numbers for the same channel model.
+func applyGroupMemberPerfStats(ctx context.Context, st *store.Store, members []models.ModelGroupMember) {
+	stats := loadRelPerfStats(ctx, st)
+	if len(stats) == 0 {
+		return
+	}
+	for i := range members {
+		if members[i].ChannelName == nil || members[i].ChannelModelName == nil {
+			continue
+		}
+		stat, ok := stats[*members[i].ChannelName+"||"+*members[i].ChannelModelName]
+		if !ok {
+			continue
+		}
+		ttft := stat.ttftMs
+		members[i].TTFTMs = &ttft
+		members[i].SampleCount = models.Int(stat.sampleCount)
+		members[i].OutputSpeed = stat.outputSpeed
+	}
 }
 
 // loadGroupUsage lists the entry models that reference a group.

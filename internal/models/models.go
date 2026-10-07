@@ -185,10 +185,19 @@ type ModelGroupMember struct {
 	APIKeyAvailable  *int    `json:"apiKeyAvailable"`
 	Input            *string `json:"input"`
 	ContextLength    *int64  `json:"contextLength"`
+	// TTFTMs / OutputSpeed 是该成员 24h 性能样本的均值，口径与入口模型关联行
+	// （computeRelStats）一致；无样本时为 null。SampleCount 是参与平均的样本数。
+	TTFTMs      *int64   `json:"ttftMs"`
+	SampleCount *int     `json:"sampleCount"`
+	OutputSpeed *float64 `json:"outputSpeed"`
 	// CircuitBroken 等熔断展示字段与入口模型关联一致，按 (渠道, 渠道模型, Key) 判定。
 	CircuitBroken          *int              `json:"circuitBroken"`
 	CircuitBrokenScope     *string           `json:"circuitBrokenScope"`
 	CircuitBrokenExpireAt  APITime           `json:"circuitBrokenExpireAt"`
+	// 最近一次熔断探测（同入口模型关联行）：探测时间 / HTTP 状态码 / 失败详情。
+	LastProbeAt            APITime           `json:"circuitBrokenLastProbeAt"`
+	LastProbeStatus        *int              `json:"circuitBrokenLastProbeStatus"`
+	LastProbeDetail        *string           `json:"circuitBrokenLastProbeDetail"`
 	CircuitBrokenProtocols []APIKeyProtocol  `json:"circuitBrokenProtocols"`
 }
 
@@ -302,8 +311,19 @@ type RequestLog struct {
 	TotalTokens      *int    `json:"totalTokens"`
 	RequestHeaders   *string `json:"requestHeaders"`
 	RequestBody      *string `json:"requestBody"`
-	CreatedAt        APITime `json:"createdAt"`
+	// RouteSource 标注本次路由的来源：sticky=小组粘性哈希命中的成员，
+	// sticky_fallback=命中成员失败后由组内其他成员承接；非粘性为 NULL。
+	RouteSource *string `json:"routeSource"`
+	CreatedAt   APITime `json:"createdAt"`
 }
+
+// RouteSource 取值（写入 request_logs.route_source）。
+const (
+	// RouteSourceSticky 该候选是小组粘性哈希命中的成员。
+	RouteSourceSticky = "sticky"
+	// RouteSourceStickyFallback 粘性命中成员失败后，实际承接的组内其他成员。
+	RouteSourceStickyFallback = "sticky_fallback"
+)
 
 // AdminConfig mirrors admin_config.
 type AdminConfig struct {

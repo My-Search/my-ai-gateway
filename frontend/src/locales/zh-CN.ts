@@ -557,6 +557,12 @@ export default {
   'log.list.requestDataExpired': '原始请求数据已过期，已被系统清理',
   'log.list.downloadJson': '下载 JSON 文件',
   'log.list.filterSummaryTitle': '当前筛选条件由"使用历史"图表控制',
+  /* 小组粘性路由标记（日志行的来源徽章与详情说明） */
+  'log.list.routeSticky': '粘性',
+  'log.list.routeStickyFallback': '粘性回退',
+  'log.list.routeStickyTitle': '本次请求由会话粘性哈希命中的小组成员承接',
+  'log.list.routeStickyFallbackTitle': '粘性命中的成员失败，已回退到组内其他成员',
+  'log.list.routeLabel': '路由来源',
   /* ========== Log Usage Chart ========== */
   'log.chart.title': '使用历史',
   'log.chart.subtitle': '近期 API 用量与消耗概览',
@@ -813,11 +819,6 @@ export default {
   'group.detail.weight': '权重',
   'group.detail.weightTitle': '组内权重（1-1000）',
   'group.detail.weightInvalid': '权重必须为 1-1000 的整数',
-  'group.detail.inputTypes': '输入类型',
-  'group.detail.contextLength': '上下文',
-  'group.detail.circuitBreaker': '熔断',
-  'group.detail.broken': '熔断中',
-  'group.detail.brokenNone': '正常',
   'group.detail.reasoningEffort': '思考强度',
   'group.detail.effortPlaceholder': '默认思考强度',
   'group.detail.actions': '操作',
@@ -826,6 +827,7 @@ export default {
   'group.detail.removeConfirm': '确认将成员「{name}」移出小组？',
   'group.detail.notFound': '小组不存在或已被删除',
   'group.detail.dragSort': '拖拽排序',
+  'group.detail.recoverConfirm': '确认解除该成员的熔断状态？若该渠道存在熔断将一并解除。',
 
   /* ========== Rels: group rows ========== */
   'model.rels.typeGroup': '小组',

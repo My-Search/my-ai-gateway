@@ -178,4 +178,70 @@ describe('请求日志页 - 性能重构回归', () => {
     expect(entries[1].text()).toContain('88ms')
     expect(entries[1].find('.log-time').text()).not.toBe('')
   })
+  it('粘性命中的成员在日志行显示「粘性」徽章，未标记的行不显示', async () => {
+    listMock.mockResolvedValueOnce(
+      listResponse([
+        makeTrace('t1', [
+          makeLog({ id: 1, traceId: 't1', phase: 'start', channelName: 'ch-a', routeSource: 'sticky' }),
+          makeLog({ id: 2, traceId: 't1', phase: 'success', channelName: 'ch-a', responseTimeMs: 50,
+            createdAt: '2026-09-25T10:00:01Z', routeSource: 'sticky' }),
+          // 未标记的候选（非粘性小组 / 直连关联）不应出现徽章。
+          makeLog({ id: 3, traceId: 't1', phase: 'start', channelName: 'ch-b',
+            createdAt: '2026-09-25T10:00:02Z' }),
+        ]),
+      ]),
+    )
+    const wrapper = await mountPage()
+    await wrapper.find('.log-trace').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    // 命中成员的 start 与 success 两行都带徽章；ch-b 的行不带。
+    const badges = wrapper.findAll('.route-source-badge')
+    expect(badges.length).toBe(2)
+    for (const b of badges) {
+      expect(b.text()).toBe('粘性')
+      expect(b.classes()).toContain('route-source-badge--sticky')
+    }
+    const entries = wrapper.findAll('.log-entry')
+    expect(entries[0].find('.route-source-badge').exists()).toBe(true)
+    expect(entries[entries.length - 1].find('.route-source-badge').exists()).toBe(false)
+  })
+
+  it('粘性回退用不同徽章区分，便于解释为何没命中粘性成员', async () => {
+    listMock.mockResolvedValueOnce(
+      listResponse([
+        makeTrace('t1', [
+          makeLog({ id: 1, traceId: 't1', phase: 'success', channelName: 'ch-b', responseTimeMs: 60,
+            routeSource: 'sticky_fallback' }),
+        ]),
+      ]),
+    )
+    const wrapper = await mountPage()
+    await wrapper.find('.log-trace').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const badge = wrapper.find('.route-source-badge')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe('粘性回退')
+    expect(badge.classes()).toContain('route-source-badge--sticky_fallback')
+  })
+
+  it('详情弹框里说明路由来源（粘性命中）', async () => {
+    listMock.mockResolvedValueOnce(
+      listResponse([
+        makeTrace('t1', [
+          makeLog({ id: 1, traceId: 't1', phase: 'success', channelName: 'ch-a', message: '路由到 ch-a',
+            routeSource: 'sticky' }),
+        ]),
+      ]),
+    )
+    const wrapper = await mountPage()
+    await wrapper.find('.log-trace').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    await wrapper.find('.log-entry').trigger('click')
+    const dialog = document.body.querySelector('.dialog-box')
+    expect(dialog).not.toBeNull()
+    expect(dialog!.textContent).toContain('粘性')
+  })
 })

@@ -9,6 +9,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/my-search/my-ai-gateway/internal/models"
 	"github.com/my-search/my-ai-gateway/internal/store"
 )
 
@@ -53,7 +54,8 @@ func newWriterStore(t *testing.T) *store.Store {
 		request_headers TEXT,
 		request_body TEXT,
 		gateway_api_key_id INTEGER,
-		reasoning_effort TEXT DEFAULT '')`); err != nil {
+		reasoning_effort TEXT DEFAULT '',
+		route_source TEXT)`); err != nil {
 		t.Fatal(err)
 	}
 	return store.New(db, nil)
@@ -130,12 +132,12 @@ func TestFlushPendingRequestDataMatrix(t *testing.T) {
 				w.WriteStart(ctx, trace, "m", 1, "H", "B", "")
 				if sc.retry {
 					w.WriteCandidatePhase(ctx, trace, "k", "m", "cm", "c", 1,
-						"retry", "pending", "第 1 次失败", 0, nil, "")
+						"retry", "pending", "第 1 次失败", 0, nil, "", "")
 				}
 				if sc.fail {
 					w.WriteFail(ctx, trace, "m", 1, "error", "失败", 10, nil, 0)
 				} else {
-					w.WriteSuccess(ctx, trace, "k", "m", "cm", "c", 1, "请求成功", 10, nil, 0, 1, 1, 2)
+					w.WriteSuccess(ctx, trace, "k", "m", "cm", "c", 1, "请求成功", 10, nil, 0, 1, 1, 2, "")
 				}
 
 				body, ok := savedBody(t, st, trace)
@@ -187,8 +189,8 @@ func TestConcurrentTracesDoNotRace(t *testing.T) {
 			trace := fmt.Sprintf("trace-%d", i)
 			w.WriteStart(ctx, trace, "m", 1, "H", "B", "")
 			w.WriteCandidatePhase(ctx, trace, "k", "m", "cm", "c", 1,
-				"retry", "pending", "第 1 次失败", 0, nil, "")
-			w.WriteSuccess(ctx, trace, "k", "m", "cm", "c", 1, "请求成功", 1, nil, 1, 1, 1, 2)
+				"retry", "pending", "第 1 次失败", 0, nil, "", "")
+			w.WriteSuccess(ctx, trace, "k", "m", "cm", "c", 1, "请求成功", 1, nil, 1, 1, 1, 2, "")
 		}(i)
 	}
 	wg.Wait()
@@ -200,5 +202,54 @@ func TestConcurrentTracesDoNotRace(t *testing.T) {
 	}
 	if got := row.I64("c", 0); got != n {
 		t.Errorf("warn with a real retry must save every trace: got %d, want %d", got, n)
+	}
+}
+
+// TestRouteSourceRoundTrip 覆盖 route_source 的落库：带标记的候选行写入后可读回，
+// 未标记的行落库为 NULL（前端据此不显示徽章）。
+func TestRouteSourceRoundTrip(t *testing.T) {
+	st := newWriterStore(t)
+	w := NewLogWriter(st, nil, nil)
+	ctx := context.Background()
+
+	w.WriteStart(ctx, "t-sticky", "m", 1, "H", "B", "")
+	w.WriteCandidatePhase(ctx, "t-sticky", "k", "m", "cm", "c", 1,
+		"start", "pending", "路由到 c/k/cm", 0, nil, "", models.RouteSourceSticky)
+	w.WriteSuccess(ctx, "t-sticky", "k", "m", "cm", "c", 1, "请求成功", 10, nil, 0, 1, 1, 2,
+		models.RouteSourceSticky)
+
+	w.WriteStart(ctx, "t-plain", "m", 1, "H", "B", "")
+	w.WriteCandidatePhase(ctx, "t-plain", "k", "m", "cm", "c", 1,
+		"start", "pending", "路由到 c/k/cm", 0, nil, "", "")
+	w.WriteSuccess(ctx, "t-plain", "k", "m", "cm", "c", 1, "请求成功", 10, nil, 0, 1, 1, 2, "")
+
+	for _, tc := range []struct {
+		trace string
+		phase string
+		want  string
+		null  bool
+	}{
+		{"t-sticky", "start", models.RouteSourceSticky, false},
+		{"t-sticky", "success", models.RouteSourceSticky, false},
+		{"t-plain", "start", "", true},
+		{"t-plain", "success", "", true},
+	} {
+		// channel_name 缩小到候选行：同样是 phase='start' 的还有不带渠道的
+		// trace 起始行（WriteStart），它不属于任何候选，route_source 恒为 NULL。
+		row, err := st.QueryOne(ctx,
+			"SELECT route_source FROM request_logs WHERE trace_id = ? AND phase = ? AND channel_name = 'c'",
+			tc.trace, tc.phase)
+		if err != nil || row == nil {
+			t.Fatalf("%s/%s row missing: %v", tc.trace, tc.phase, err)
+		}
+		if tc.null {
+			if row.StrPtr("route_source") != nil {
+				t.Errorf("%s/%s route_source = %q, want NULL", tc.trace, tc.phase, row.Str("route_source"))
+			}
+			continue
+		}
+		if got := row.Str("route_source"); got != tc.want {
+			t.Errorf("%s/%s route_source = %q, want %q", tc.trace, tc.phase, got, tc.want)
+		}
 	}
 }

@@ -402,19 +402,20 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 			notFound(c, "关联不存在")
 			return
 		}
-		cmRow, _ := d.Store.QueryOne(ctx, "SELECT channel_id, channel_api_key_id FROM channel_models WHERE id = ?", relRow.I64("channel_model_id", 0))
-		var recovered int64
-		if cmRow != nil {
-			chID := cmRow.I64("channel_id", 0)
-			akID := cmRow.IntPtr("channel_api_key_id")
-			if akID != nil {
-				r, _ := d.Store.Exec(ctx, "DELETE FROM circuit_breaker_states WHERE channel_model_id=? AND channel_id=? AND channel_api_key_id=?", relRow.I64("channel_model_id", 0), chID, *akID)
-				recovered = r
-			} else {
-				r, _ := d.Store.Exec(ctx, "DELETE FROM circuit_breaker_states WHERE channel_model_id=? AND channel_id=?", relRow.I64("channel_model_id", 0), chID)
-				recovered = r
-			}
+		recovered := clearChannelModelBreaker(ctx, d.Store, relRow.I64("channel_model_id", 0))
+		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("recovered", recovered))
+	})
+
+	// DELETE /admin/api/channel-models/{cmId}/circuit-breaker — 按渠道模型解除熔断。
+	// 小组页面的成员没有关联行，只能按渠道模型 ID 解除。
+	g.DELETE("/channel-models/:cmId/circuit-breaker", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		cmID, ok := pathID(c, "cmId")
+		if !ok {
+			notFound(c, "渠道模型不存在")
+			return
 		}
+		recovered := clearChannelModelBreaker(ctx, d.Store, cmID)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("recovered", recovered))
 	})
 
@@ -1216,11 +1217,19 @@ func resolveModelGroups(ctx context.Context, st *store.Store, modelID int64) []m
 	return out
 }
 
-func computeRelStats(ctx context.Context, st *store.Store, rels []models.ModelChannelRel) []models.ModelChannelRel {
-	if len(rels) == 0 {
-		return rels
-	}
+// relPerfStat 是一个「渠道名||渠道模型名」的 24h 性能均值。
+type relPerfStat struct {
+	ttftMs      int64
+	sampleCount int
+	outputSpeed *float64
+}
 
+// loadRelPerfStats 聚合 24h 性能样本，键为「渠道名||渠道模型名」。
+//
+// request_logs 没有 channel_model_id 列，样本只能按名称二元组归属，所以入口模型
+// 关联行与小组成员行都从这里取数——两处展示的是同一个渠道模型的同一份统计。
+// 每个键最多取最近 30 条 TTFT 样本（按时间倒序扫描），速度样本单独计数。
+func loadRelPerfStats(ctx context.Context, st *store.Store) map[string]relPerfStat {
 	since := jtime.FormatApp(time.Now().UTC().Add(-24 * time.Hour))
 	logRows, _ := st.Query(ctx,
 		`SELECT channel_name, channel_model_name, first_byte_ms, completion_tokens, response_time_ms
@@ -1256,17 +1265,37 @@ func computeRelStats(ctx context.Context, st *store.Store, rels []models.ModelCh
 		}
 	}
 
+	out := make(map[string]relPerfStat, len(accums))
+	for key, a := range accums {
+		if a.fbmCount == 0 {
+			continue
+		}
+		stat := relPerfStat{
+			ttftMs:      int64(math.Round(float64(a.fbmSum) / float64(a.fbmCount))),
+			sampleCount: a.fbmCount,
+		}
+		if a.spdCount > 0 {
+			spd := float64(int64(a.spdSum/float64(a.spdCount)*10+0.5)) / 10.0
+			stat.outputSpeed = &spd
+		}
+		out[key] = stat
+	}
+	return out
+}
+
+func computeRelStats(ctx context.Context, st *store.Store, rels []models.ModelChannelRel) []models.ModelChannelRel {
+	if len(rels) == 0 {
+		return rels
+	}
+	stats := loadRelPerfStats(ctx, st)
 	result := make([]models.ModelChannelRel, len(rels))
 	for i, rel := range rels {
 		key := derefStr(rel.ChannelName, "") + "||" + derefStr(rel.ChannelModelName, "")
-		if a, ok := accums[key]; ok && a.fbmCount > 0 {
-			avg := float64(a.fbmSum) / float64(a.fbmCount)
-			rel.TTFTMs = int64Ptr(int64(math.Round(avg)))
-			rel.SampleCount = models.Int(a.fbmCount)
-			if a.spdCount > 0 {
-				spd := float64(int64(a.spdSum/float64(a.spdCount)*10+0.5)) / 10.0
-				rel.OutputSpeed = &spd
-			}
+		if stat, ok := stats[key]; ok {
+			ttft := stat.ttftMs
+			rel.TTFTMs = &ttft
+			rel.SampleCount = models.Int(stat.sampleCount)
+			rel.OutputSpeed = stat.outputSpeed
 		}
 		result[i] = rel
 	}
@@ -1344,6 +1373,11 @@ func applyGroupMemberBrokenMarks(ctx context.Context, st *store.Store, members [
 		if mark.ExpireAt != nil {
 			m.CircuitBrokenExpireAt = jtime.NewAPITime(*mark.ExpireAt)
 		}
+		if mark.LastProbeAt != nil {
+			m.LastProbeAt = jtime.NewAPITime(*mark.LastProbeAt)
+		}
+		m.LastProbeStatus = mark.LastProbeStatus
+		m.LastProbeDetail = mark.LastProbeDetail
 		m.CircuitBrokenProtocols = apiKeyProtocols(mark)
 	}
 }
@@ -1435,6 +1469,23 @@ func (l *breakerLookup) mark(channelModelID, channelID int64) *circuit.RelBroken
 	}
 	return circuit.EvaluateRelBroken(channelModelID, channelID, relKeyID,
 		l.states, l.enabledKeysByChannel[channelID], l.boundKeyIDs)
+}
+
+// clearChannelModelBreaker reopens a channel model's breaker paths by deleting its
+// circuit_breaker_states rows. A channel model bound to a key is judged per key,
+// otherwise every open state on the channel model is cleared. Returns rows removed.
+func clearChannelModelBreaker(ctx context.Context, st *store.Store, cmID int64) int64 {
+	cmRow, _ := st.QueryOne(ctx, "SELECT channel_id, channel_api_key_id FROM channel_models WHERE id = ?", cmID)
+	if cmRow == nil {
+		return 0
+	}
+	chID := cmRow.I64("channel_id", 0)
+	if akID := cmRow.IntPtr("channel_api_key_id"); akID != nil {
+		r, _ := st.Exec(ctx, "DELETE FROM circuit_breaker_states WHERE channel_model_id=? AND channel_id=? AND channel_api_key_id=?", cmID, chID, *akID)
+		return r
+	}
+	r, _ := st.Exec(ctx, "DELETE FROM circuit_breaker_states WHERE channel_model_id=? AND channel_id=?", cmID, chID)
+	return r
 }
 
 func int64Str(n int64) string { return strconv.FormatInt(n, 10) }

@@ -557,6 +557,12 @@ export default {
   'log.list.requestDataExpired': 'Raw request data has expired and been cleaned up',
   'log.list.downloadJson': 'Download JSON file',
   'log.list.filterSummaryTitle': 'Current filters are controlled by the Usage History chart',
+  /* Model-group sticky routing markers (log row badge + detail line) */
+  'log.list.routeSticky': 'Sticky',
+  'log.list.routeStickyFallback': 'Sticky fallback',
+  'log.list.routeStickyTitle': 'Served by the group member this conversation hashes to',
+  'log.list.routeStickyFallbackTitle': 'The sticky-pinned member failed; another group member took over',
+  'log.list.routeLabel': 'Route source',
   /* ========== Log Usage Chart ========== */
   'log.chart.title': 'Usage History',
   'log.chart.subtitle': 'Recent API usage and consumption overview',
@@ -813,11 +819,6 @@ export default {
   'group.detail.weight': 'Weight',
   'group.detail.weightTitle': 'Group weight (1-1000)',
   'group.detail.weightInvalid': 'Weight must be an integer between 1 and 1000',
-  'group.detail.inputTypes': 'Input',
-  'group.detail.contextLength': 'Context',
-  'group.detail.circuitBreaker': 'Circuit',
-  'group.detail.broken': 'Broken',
-  'group.detail.brokenNone': 'OK',
   'group.detail.reasoningEffort': 'Reasoning Effort',
   'group.detail.effortPlaceholder': 'Default effort',
   'group.detail.actions': 'Actions',
@@ -826,6 +827,7 @@ export default {
   'group.detail.removeConfirm': 'Remove member "{name}" from this group?',
   'group.detail.notFound': 'Group not found or deleted',
   'group.detail.dragSort': 'Drag to sort',
+  'group.detail.recoverConfirm': 'Recover this member\'s circuit breaker? A channel-level breaker (if any) will be recovered too.',
 
   /* ========== Rels: group rows ========== */
   'model.rels.typeGroup': 'Group',

@@ -3,6 +3,8 @@ package relay
 import (
 	"testing"
 	"time"
+
+	"github.com/my-search/my-ai-gateway/internal/models"
 )
 
 // groupTestCandidate builds a candidate with the identity fields the ordering and
@@ -594,5 +596,90 @@ func TestNormalizeWeightTreatsNonPositiveAsOne(t *testing.T) {
 	}
 	if got := normalizeWeight(7); got != 7 {
 		t.Errorf("normalizeWeight(7) = %d, want 7", got)
+	}
+}
+
+// TestOrderGroupMarksStickyWinner 覆盖请求日志来源标记：粘性生效时，哈希命中的
+// 成员（排在组内首位）的每个候选都带 sticky 标记，其余成员保持未标记。
+func TestOrderGroupMarksStickyWinner(t *testing.T) {
+	candidates := []RoutingCandidate{
+		groupTestCandidate(1, 1, "a"), groupTestCandidate(2, 1, "b"), groupTestCandidate(3, 1, "c"),
+	}
+	for _, strategy := range []string{GroupStrategyFailover, GroupStrategyRandom, GroupStrategyRoundRobin} {
+		got := orderGroupCandidates(groupOrdering{
+			candidates: candidates, weights: []int{1, 1, 1},
+			strategy: strategy, sticky: true, stickyKey: "session-1", groupID: 7,
+		})
+		if len(got) != 3 {
+			t.Fatalf("%s: ordered %d candidates, want 3", strategy, len(got))
+		}
+		if got[0].RouteSource != models.RouteSourceSticky {
+			t.Errorf("%s: leading member RouteSource = %q, want %q",
+				strategy, got[0].RouteSource, models.RouteSourceSticky)
+		}
+		for _, c := range got[1:] {
+			if c.RouteSource != "" {
+				t.Errorf("%s: non-pinned member %s carries RouteSource %q; only the pinned member is marked",
+					strategy, c.ModelName, c.RouteSource)
+			}
+		}
+	}
+}
+
+// TestOrderGroupNoStickyMarkWhenInactive 覆盖不标记的情形：未开启粘性、会话前缀
+// 无法计算（stickyKey 为空），都不应把成员说成「粘性命中」。
+func TestOrderGroupNoStickyMarkWhenInactive(t *testing.T) {
+	candidates := []RoutingCandidate{
+		groupTestCandidate(1, 1, "a"), groupTestCandidate(2, 1, "b"), groupTestCandidate(3, 1, "c"),
+	}
+	cases := []struct {
+		name   string
+		sticky bool
+		key    string
+	}{
+		{"sticky disabled", false, "session-1"},
+		{"no sticky key", true, ""},
+	}
+	for _, tc := range cases {
+		got := orderGroupCandidates(groupOrdering{
+			candidates: candidates, weights: []int{1, 1, 1},
+			strategy: GroupStrategyFailover, sticky: tc.sticky, stickyKey: tc.key, groupID: 7,
+		})
+		for _, c := range got {
+			if c.RouteSource != "" {
+				t.Errorf("%s: member %s carries RouteSource %q, want empty",
+					tc.name, c.ModelName, c.RouteSource)
+			}
+		}
+	}
+}
+
+// TestMarkStickyFallback 覆盖粘性回退标记：命中成员让位后，同组的下一个成员被标为
+// 回退；跨组（直连关联或另一个小组）不标记，回退链也继续向后传递。
+func TestMarkStickyFallback(t *testing.T) {
+	pinned := RoutingCandidate{GroupID: 3, ModelName: "pinned", RouteSource: models.RouteSourceSticky}
+	sameGroupOther := RoutingCandidate{GroupID: 3, ModelName: "other"}
+
+	if got := markStickyFallback(pinned, sameGroupOther); got.RouteSource != models.RouteSourceStickyFallback {
+		t.Errorf("same-group takeover RouteSource = %q, want %q", got.RouteSource, models.RouteSourceStickyFallback)
+	}
+
+	// 回退成员再次让位时，标记继续传给组内下一个成员。
+	fallback := markStickyFallback(pinned, sameGroupOther)
+	if got := markStickyFallback(fallback, RoutingCandidate{GroupID: 3, ModelName: "third"}); got.RouteSource != models.RouteSourceStickyFallback {
+		t.Errorf("chained takeover RouteSource = %q, want %q", got.RouteSource, models.RouteSourceStickyFallback)
+	}
+
+	// 跨组 / 直连不标记。
+	if got := markStickyFallback(pinned, RoutingCandidate{GroupID: 9, ModelName: "other-group"}); got.RouteSource != "" {
+		t.Errorf("cross-group RouteSource = %q, want empty", got.RouteSource)
+	}
+	if got := markStickyFallback(pinned, RoutingCandidate{ModelName: "direct"}); got.RouteSource != "" {
+		t.Errorf("direct-rel RouteSource = %q, want empty", got.RouteSource)
+	}
+
+	// 非粘性成员让位不产生回退标记。
+	if got := markStickyFallback(RoutingCandidate{GroupID: 3, ModelName: "plain"}, sameGroupOther); got.RouteSource != "" {
+		t.Errorf("non-sticky failed member produced RouteSource %q, want empty", got.RouteSource)
 	}
 }

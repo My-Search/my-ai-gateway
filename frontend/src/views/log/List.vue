@@ -167,6 +167,12 @@
             <template v-if="group.logs[0].apiKeyName">{{ group.logs[0].apiKeyName }}/</template>
             <template v-if="group.logs[0].channelModelName">{{ group.logs[0].channelModelName }}</template>
             <template v-else-if="group.logs[0].modelName">{{ group.logs[0].modelName }}</template><span v-if="group.logs[0].reasoningEffort" class="reasoning-effort">({{ group.logs[0].reasoningEffort }})</span>{{ ' ' }}
+            <span
+              v-if="group.routeSource"
+              class="route-source-badge"
+              :class="'route-source-badge--' + group.routeSource"
+              :title="routeSourceTitle(group.routeSource)"
+            >{{ routeSourceLabel(group.routeSource) }}</span>
             {{ group.durationText }}
             <span v-if="group.logs[0].message" class="log-message" :class="{ 'log-message-error': group.logs[0].phase === 'fail' }"> — {{ group.logs[0].message }}</span>
           </span>
@@ -235,7 +241,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, reactive, shallowRef, triggerRef, watch } from 'vue'
-import { logApi, subscribeLogStream, type LogTrace, type RequestLog, type LogSseSubscription, type LogUsageChart } from '@/api/log'
+import { logApi, subscribeLogStream, type LogTrace, type RequestLog, type LogSseSubscription, type LogUsageChart, type RouteSource } from '@/api/log'
 import { modelApi, type CustomModel } from '@/api/model'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { systemApi } from '@/api/system'
@@ -686,6 +692,11 @@ function openLogDetail(group: LogGroup) {
   else if (first.modelName) modelParts.push(first.modelName)
   if (modelParts.length) parts.push(`路由: ${modelParts.join(' / ')}`)
 
+  // 小组粘性来源：说明本次是命中了会话粘性成员，还是命中失败后回退。
+  if (group.routeSource) {
+    parts.push(`${t('log.list.routeLabel')}: ${routeSourceLabel(group.routeSource)}（${routeSourceTitle(group.routeSource)}）`)
+  }
+
   // 构建完整消息内容
   let detailText = ''
   for (const log of group.logs) {
@@ -757,6 +768,8 @@ interface LogGroup {
   durationText: string
   timeText: string
   hasMessage: boolean
+  /** 组内首个带粘性标记的 routeSource（同组连续行标记一致，取首个即可） */
+  routeSource?: RouteSource
 }
 
 /** 将日志插入已按 createdAt 排序的数组：绝大多数 SSE 日志按序到达，走末尾追加快路径 */
@@ -893,8 +906,24 @@ function groupLogs(logs: RequestLog[]): LogGroup[] {
     g.durationText = computeDurationText(g.logs)
     g.timeText = formatLocalFullTime(g.logs[g.logs.length - 1].createdAt)
     g.hasMessage = g.logs.some(l => l.message)
+    // 粘性标记取组内首个非空值：合并行属于同一候选，标记一致。
+    g.routeSource = g.logs.find(l => l.routeSource)?.routeSource ?? undefined
   }
   return groups
+}
+
+/** 粘性标记的展示文案（无标记返回空串，模板据 falsy 隐藏徽章）。 */
+function routeSourceLabel(source?: RouteSource): string {
+  if (source === 'sticky') return t('log.list.routeSticky')
+  if (source === 'sticky_fallback') return t('log.list.routeStickyFallback')
+  return ''
+}
+
+/** 粘性标记的悬浮说明。 */
+function routeSourceTitle(source?: RouteSource): string {
+  if (source === 'sticky') return t('log.list.routeStickyTitle')
+  if (source === 'sticky_fallback') return t('log.list.routeStickyFallbackTitle')
+  return ''
 }
 
 /**
@@ -1137,6 +1166,26 @@ onUnmounted(() => {
 .log-message { color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; flex-shrink: 1; }
 .log-message-error { color: var(--accent-red); }
 .reasoning-effort { color: var(--accent-purple); font-size: 11px; white-space: nowrap; margin-left: 2px; }
+/* 小组粘性来源徽章：命中（绿）与回退（黄）区分开，一眼看出为何没命中粘性成员 */
+.route-source-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 0 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.route-source-badge--sticky {
+  background: color-mix(in srgb, var(--accent-green) 15%, transparent);
+  color: var(--accent-green);
+}
+.route-source-badge--sticky_fallback {
+  background: color-mix(in srgb, var(--accent-yellow) 18%, transparent);
+  color: var(--accent-yellow);
+}
 
 .dialog-pre {
   margin: 0;

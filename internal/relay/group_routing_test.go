@@ -8,14 +8,29 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/my-search/my-ai-gateway/internal/models"
+	"github.com/my-search/my-ai-gateway/internal/relay/logsvc"
 )
 
 // newGroupTestStore builds the schema the group routing path touches, on top of
-// the minimal relay schema. The group tables mirror the v1.43.0 migration.
+// the minimal relay schema. The group tables mirror the v1.43.0 migration, and
+// request_logs mirrors the columns LogWriter writes (incl. route_source) so the
+// end-to-end tests can assert on the rows the routing loop produces.
 func newGroupTestStore(t *testing.T) DataStore {
 	t.Helper()
 	st := newRelayTestStore(t)
 	for _, stmt := range []string{
+		`CREATE TABLE request_logs (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, trace_id TEXT NOT NULL,
+			api_key_name TEXT, gateway_api_key_id INTEGER, model_name TEXT DEFAULT '',
+			channel_model_name TEXT DEFAULT '', channel_name TEXT DEFAULT '',
+			phase TEXT NOT NULL, status TEXT DEFAULT 'pending', message TEXT DEFAULT '',
+			retry_index INTEGER DEFAULT 0, response_time_ms INTEGER, first_byte_ms INTEGER,
+			prompt_tokens INTEGER DEFAULT 0, completion_tokens INTEGER DEFAULT 0,
+			total_tokens INTEGER DEFAULT 0, reasoning_effort TEXT DEFAULT '',
+			request_headers TEXT, request_body TEXT,
+			route_source TEXT, created_at TEXT)`,
 		`CREATE TABLE model_groups (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
 			description TEXT DEFAULT '', strategy TEXT DEFAULT 'random',
@@ -48,6 +63,9 @@ type groupFixture struct {
 	modelIDs map[string]int64 // upstream model name -> channel_models.id
 	groupID  int64
 	entryID  int64
+	// failing holds upstream model names the test wants rejected with 500, so a
+	// failure inside a group can be exercised without touching circuit state.
+	failing map[string]bool
 }
 
 func setupGroupFixture(t *testing.T, strategy string, sticky bool, weights map[string]int) *groupFixture {
@@ -56,6 +74,10 @@ func setupGroupFixture(t *testing.T, strategy string, sticky bool, weights map[s
 	core := NewRelayCore(nil)
 	core.Store = st
 	core.RouteResolver = NewRouteResolver(st)
+	// A real LogWriter on the fixture store: the routing loop's route_source
+	// markings are only observable through the log rows it writes.
+	core.LogWriter = logsvc.NewLogWriter(st, nil, nil)
+	fixture := &groupFixture{failing: map[string]bool{}}
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
@@ -63,6 +85,11 @@ func setupGroupFixture(t *testing.T, strategy string, sticky bool, weights map[s
 			Model string `json:"model"`
 		}
 		_ = json.Unmarshal(raw, &parsed)
+		if fixture.failing[parsed.Model] {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"upstream exploded"}`))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"1","choices":[{"message":{"role":"assistant","content":"served-by:` +
 			parsed.Model + `"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`))
@@ -121,7 +148,9 @@ func setupGroupFixture(t *testing.T, strategy string, sticky bool, weights map[s
 		modelIDs[name] = cmID
 		sort++
 	}
-	return &groupFixture{core: core, store: st, upstream: upstream, modelIDs: modelIDs, groupID: groupID, entryID: entryID}
+	fixture.core, fixture.store, fixture.upstream = core, st, upstream
+	fixture.modelIDs, fixture.groupID, fixture.entryID = modelIDs, groupID, entryID
+	return fixture
 }
 
 func boolToIntTest(b bool) int {
@@ -531,4 +560,171 @@ func TestStickyMemberIdentityIgnoresAPIKeyCount(t *testing.T) {
 			t.Fatalf("API key count changed sticky member from %q to %q", before, got)
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 请求日志的粘性来源标记（route_source）
+// ---------------------------------------------------------------------------
+
+// serveWithResult runs one non-stream request and returns the raw result without
+// asserting success, so failure-fallback paths can be observed.
+func (f *groupFixture) serveWithResult(t *testing.T, content string) RelayResult {
+	t.Helper()
+	body := `{"model":"entry","messages":[{"role":"user","content":` + jsonString(content) + `}]}`
+	req, err := ParseRequest(body, ProtoOpenAI)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	return f.core.RelayNonStream(context.Background(), req, "Bearer gw-key", "", body)
+}
+
+// logRows returns the trace's log rows ordered by insertion, with route_source.
+func (f *groupFixture) logRows(t *testing.T) []struct{ Phase, Channel, Model, RouteSource string } {
+	t.Helper()
+	rows, err := f.store.Query(context.Background(),
+		`SELECT phase, channel_name, channel_model_name, route_source
+		   FROM request_logs ORDER BY id ASC`)
+	if err != nil {
+		t.Fatalf("query request_logs: %v", err)
+	}
+	out := make([]struct{ Phase, Channel, Model, RouteSource string }, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, struct{ Phase, Channel, Model, RouteSource string }{
+			Phase:       r.Str("phase"),
+			Channel:     r.Str("channel_name"),
+			Model:       r.Str("channel_model_name"),
+			RouteSource: r.Str("route_source"),
+		})
+	}
+	return out
+}
+
+// routeSourceByPhase reports the route_source recorded for the first candidate
+// row (one carrying a channel name — the trace-start row has none) with the given
+// phase, plus whether such a row exists.
+func (f *groupFixture) routeSourceByPhase(t *testing.T, phase string) (string, bool) {
+	t.Helper()
+	for _, r := range f.logRows(t) {
+		if r.Phase == phase && r.Channel != "" {
+			return r.RouteSource, true
+		}
+	}
+	return "", false
+}
+
+// TestStickyHitMarksRequestLog 覆盖请求日志的粘性命中标记：开启粘性的小组里，
+// 哈希命中的成员被路由到时，其日志行（start 与 success）带 route_source=sticky。
+func TestStickyHitMarksRequestLog(t *testing.T) {
+	f := setupGroupFixture(t, GroupStrategyFailover, true, nil)
+
+	if got := f.serveOnce(t, "same-session-prefix"); got == "" {
+		t.Fatal("no member served the request")
+	}
+
+	source, ok := f.routeSourceByPhase(t, PhaseSuccess)
+	if !ok {
+		t.Fatalf("no success row written; rows: %+v", f.logRows(t))
+	}
+	if source != models.RouteSourceSticky {
+		t.Errorf("success row route_source = %q, want %q", source, models.RouteSourceSticky)
+	}
+	if startSource, ok := f.routeSourceByPhase(t, PhaseStart); !ok || startSource != models.RouteSourceSticky {
+		t.Errorf("start row route_source = %q (present=%v), want %q", startSource, ok, models.RouteSourceSticky)
+	}
+}
+
+// TestNonStickyGroupLeavesRouteSourceEmpty 覆盖未开启粘性时不误标：普通小组的日志行
+// route_source 必须为空（落库为 NULL），否则前端会给所有请求都挂上「粘性」徽章。
+func TestNonStickyGroupLeavesRouteSourceEmpty(t *testing.T) {
+	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f.serveOnce(t, "same-session-prefix")
+
+	if source, ok := f.routeSourceByPhase(t, PhaseSuccess); !ok || source != "" {
+		t.Errorf("success route_source = %q (present=%v), want empty for a non-sticky group", source, ok)
+	}
+}
+
+// TestStickyPinnedFailureMarksFallback 覆盖粘性回退标记：粘性命中的成员失败后，
+// 组内承接请求的成员在日志里标为 sticky_fallback，便于解释「为何没命中粘性成员」。
+//
+// 同时锁定小组的失败回退语义：命中成员失败不会让整个小组只路由一次，组内其他成员
+// 仍会按策略顺序继续尝试。
+func TestStickyPinnedFailureMarksFallback(t *testing.T) {
+	f := setupGroupFixture(t, GroupStrategyFailover, true, nil)
+	// 命中哪个成员由哈希决定，先把「最先尝试」的那个打挂，再取其组内后继验证回退。
+	first := f.serveOnce(t, "sticky-fallback-session")
+	f.resetLogs(t)
+
+	f.failing[first] = true
+	res := f.serveWithResult(t, "sticky-fallback-session")
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d body %s: the group did not fall back to another member", res.StatusCode, res.Body)
+	}
+	served := servedBy(t, res.Body)
+	if served == first {
+		t.Fatalf("served by %q, which was configured to fail", served)
+	}
+
+	source, ok := f.routeSourceByPhase(t, PhaseSuccess)
+	if !ok {
+		t.Fatalf("no success row; rows: %+v", f.logRows(t))
+	}
+	if source != models.RouteSourceStickyFallback {
+		t.Errorf("fallback success route_source = %q, want %q", source, models.RouteSourceStickyFallback)
+	}
+
+	// 失败的粘性命中成员自己仍标 sticky（它是哈希命中的那个）。
+	var sawStickyHit bool
+	for _, r := range f.logRows(t) {
+		if r.Phase == PhaseStart && r.RouteSource == models.RouteSourceSticky {
+			sawStickyHit = true
+		}
+	}
+	if !sawStickyHit {
+		t.Errorf("no sticky-marked start row for the pinned member; rows: %+v", f.logRows(t))
+	}
+}
+
+// TestGroupFallsBackToNextMemberOnUpstreamError 锁定「小组不是只路由一次」：
+// 组内第一个成员上游报错时，后续成员照样被尝试，最终由组内其他成员服务成功。
+// 三种策略只影响顺序，不影响这条回退语义。
+func TestGroupFallsBackToNextMemberOnUpstreamError(t *testing.T) {
+	for _, strategy := range []string{GroupStrategyFailover, GroupStrategyRandom, GroupStrategyRoundRobin} {
+		f := setupGroupFixture(t, strategy, false, nil)
+		// 逐个打挂成员，直到只剩一个能用；每次都要求成功，证明组内会被走穿。
+		names := []string{"m-a", "m-b", "m-c"}
+		for _, broken := range names[:len(names)-1] {
+			f.failing[broken] = true
+			res := f.serveWithResult(t, "fallback-"+broken+"-"+strategy)
+			if res.StatusCode != 200 {
+				t.Fatalf("%s: status %d body %s after failing %v", strategy, res.StatusCode, res.Body, broken)
+			}
+			if got := servedBy(t, res.Body); f.failing[got] {
+				t.Fatalf("%s: served by failing member %q", strategy, got)
+			}
+		}
+	}
+}
+
+// resetLogs clears request_logs so a follow-up request can be inspected alone.
+func (f *groupFixture) resetLogs(t *testing.T) {
+	t.Helper()
+	if _, err := f.store.Exec(context.Background(), "DELETE FROM request_logs"); err != nil {
+		t.Fatalf("clear request_logs: %v", err)
+	}
+}
+
+// servedBy extracts the upstream model name from the echo response body.
+func servedBy(t *testing.T, body string) string {
+	t.Helper()
+	const marker = "served-by:"
+	i := strings.Index(body, marker)
+	if i < 0 {
+		t.Fatalf("no marker in body: %s", body)
+	}
+	rest := body[i+len(marker):]
+	if j := strings.IndexAny(rest, `"\`); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
 }

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/my-search/my-ai-gateway/internal/models"
 	"github.com/my-search/my-ai-gateway/internal/relay/logsvc"
 )
 
@@ -245,7 +246,7 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 		if c.LogWriter != nil {
 			c.LogWriter.WriteSuccess(ctx, traceID, candidate.APIKeyName, req.Model,
 				candidate.ModelName, candidate.ChannelName, gwKeyID,
-				"请求成功", elapsed, firstByteMs, retryIndex, pt, ct, tt)
+				"请求成功", elapsed, firstByteMs, retryIndex, pt, ct, tt, candidate.RouteSource)
 		}
 		return RelayResult{Body: transformed, StatusCode: 200, ClientFormat: clientFormat}
 	}
@@ -494,7 +495,7 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 			if c.LogWriter != nil {
 				c.LogWriter.WriteSuccess(ctx, traceID, candidate.APIKeyName, currentReq.Model,
 					candidate.ModelName, candidate.ChannelName, gwKeyID,
-					resultMsg, elapsed, firstByte.firstByteMs, retryIndex, pt, ct, tt)
+					resultMsg, elapsed, firstByte.firstByteMs, retryIndex, pt, ct, tt, candidate.RouteSource)
 			}
 			if c.MetricsFn != nil {
 				c.MetricsFn(currentReq.Model, candidate.ChannelName, "success", elapsed)
@@ -886,6 +887,8 @@ func (c *RelayCore) recordLatency(candidate RoutingCandidate, firstByteMs *int64
 }
 
 // logPhase writes one candidate-phase log row (Java RelayLogger.logPhase).
+// The candidate's own RouteSource is carried through so sticky hits and sticky
+// fallbacks are labelled in the request log.
 func (c *RelayCore) logPhase(ctx context.Context, traceID string, gwKeyID int64, candidate RoutingCandidate,
 	req *InternalRequest, phase, message string, retryIndex int, effort *string, attemptMs *int64) {
 	if c.LogWriter == nil {
@@ -897,7 +900,29 @@ func (c *RelayCore) logPhase(ctx context.Context, traceID string, gwKeyID int64,
 	}
 	c.LogWriter.WriteCandidatePhase(ctx, traceID, candidate.APIKeyName, req.Model,
 		candidate.ModelName, candidate.ChannelName, gwKeyID,
-		phase, StatusPending, message, retryIndex, attemptMs, effortStr)
+		phase, StatusPending, message, retryIndex, attemptMs, effortStr, candidate.RouteSource)
+}
+
+// markStickyFallback relabels the next candidate to be attempted when a
+// sticky-pinned member has just been given up on: the takeover member is within
+// the same group, so it is marked as the sticky fallback.
+//
+// 粘性命中的成员排在组内首位；一旦它因为失败/熔断/跳过而让出位置，组内后面的成员
+// 就是「粘性回退」的实际承接者。链式场景（回退成员也失败）会继续向后传递标记，
+// 直到走出该小组；换到另一条关联（直连或其他小组）时不标记，避免把无关候选
+// 说成粘性回退。命中成员自己的其余候选仍带 sticky 标记，不会被误标为回退。
+func markStickyFallback(failed, next RoutingCandidate) RoutingCandidate {
+	if failed.GroupID == 0 {
+		return next
+	}
+	if failed.RouteSource != models.RouteSourceSticky && failed.RouteSource != models.RouteSourceStickyFallback {
+		return next
+	}
+	if next.GroupID != failed.GroupID || next.RouteSource != "" {
+		return next
+	}
+	next.RouteSource = models.RouteSourceStickyFallback
+	return next
 }
 
 // LogTraceStart writes the "start" row carrying the raw request.
@@ -961,11 +986,20 @@ func validateGatewayKey(ctx context.Context, store DataStore, authHeader string)
 // removeCandidate drops the candidate at the head of the queue. The routing
 // loops always consume candidates[0], so removing by position is exact and
 // cheaper than a pointer scan (and immune to duplicate equal-valued entries).
-func removeCandidate(candidates []RoutingCandidate, _ RoutingCandidate) []RoutingCandidate {
+//
+// It also labels the candidate that moves to the head: when the removed head was
+// a sticky-pinned member of a group, the group member taking over is marked as
+// the sticky fallback, so the request log shows why the pinned member did not
+// serve.
+func removeCandidate(candidates []RoutingCandidate, failed RoutingCandidate) []RoutingCandidate {
 	if len(candidates) == 0 {
 		return candidates
 	}
-	return append(candidates[:0], candidates[1:]...)
+	out := append(candidates[:0], candidates[1:]...)
+	if len(out) > 0 {
+		out[0] = markStickyFallback(failed, out[0])
+	}
+	return out
 }
 
 func buildFailMessage(err error) string {

@@ -61,9 +61,11 @@
             <th>{{ t('group.detail.channel') }}</th>
             <th>{{ t('group.detail.model') }}</th>
             <th>{{ t('group.detail.weight') }}</th>
-            <th>{{ t('group.detail.inputTypes') }}</th>
-            <th>{{ t('group.detail.contextLength') }}</th>
-            <th>{{ t('group.detail.circuitBreaker') }}</th>
+            <th>{{ t('model.rels.inputTypes') }}</th>
+            <th>{{ t('model.rels.contextLength') }}</th>
+            <th>{{ t('model.rels.responseTime') }}</th>
+            <th>{{ t('model.rels.outputSpeed') }}</th>
+            <th>{{ t('model.rels.circuitBreaker') }}</th>
             <th>{{ t('group.detail.reasoningEffort') }}</th>
             <th>{{ t('group.detail.actions') }}</th>
           </tr>
@@ -104,8 +106,34 @@
               <span v-else class="text-muted">-</span>
             </td>
             <td>
-              <span v-if="member.circuitBroken === 1" class="badge badge-broken">{{ t('group.detail.broken') }}</span>
-              <span v-else class="text-muted">{{ t('group.detail.brokenNone') }}</span>
+              <span v-if="member.ttftMs != null" class="resp-time">
+                {{ formatRespTime(member.ttftMs) }}
+                <span v-if="member.sampleCount != null" class="sample-count">({{ member.sampleCount }})</span>
+              </span>
+              <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
+            </td>
+            <td>
+              <span v-if="member.outputSpeed != null" class="resp-time">
+                {{ member.outputSpeed.toFixed(1) }} <span class="sample-count">tokens/s</span>
+              </span>
+              <span v-else class="resp-time-none">{{ t('model.rels.noData') }}</span>
+            </td>
+            <td>
+              <span v-if="member.circuitBroken === 1" class="cb-broken">
+                <span class="badge badge-broken">
+                  {{ t('model.rels.broken') }}
+                  <template v-if="member.circuitBrokenScope === 'channel'">（{{ t('model.rels.brokenChannel') }}）</template>
+                  <template v-else-if="member.circuitBrokenScope === 'model'">（{{ t('model.rels.brokenModel') }}）</template>
+                  <template v-else-if="member.circuitBrokenScope === 'both'">（{{ t('model.rels.brokenBoth') }}）</template>
+                </span>
+                <span class="cb-hint" @click="toggleProbeHint($event, member)">
+                  <SvgIcon name="question" :size="12" class="cb-hint-icon" />
+                </span>
+                <button class="btn btn-sm btn-secondary cb-recover-btn" @click="recoverMember(member)">
+                  <SvgIcon name="check" :size="12" /> {{ t('model.rels.recover') }}
+                </button>
+              </span>
+              <span v-else class="text-muted">{{ t('model.rels.brokenNone') }}</span>
             </td>
             <td>
               <input
@@ -124,7 +152,7 @@
             </td>
           </tr>
           <tr v-if="!members.length">
-            <td colspan="9" class="empty-cell">{{ t('group.detail.noMembers') }}</td>
+            <td colspan="11" class="empty-cell">{{ t('group.detail.noMembers') }}</td>
           </tr>
         </tbody>
       </table>
@@ -133,6 +161,59 @@
       <option v-for="e in EFFORT_PRESETS" :key="e" :value="e" />
     </datalist>
   </div>
+
+  <!-- Common Dialog -->
+  <Dialog
+    v-model="dialogVisible"
+    :title="dialogTitle"
+    :type="dialogType"
+    :confirm-class="dialogConfirmClass"
+    @confirm="onDialogConfirm"
+  >
+    {{ dialogMessage }}
+  </Dialog>
+
+  <!-- 探测机制说明气泡：点击问号图标切换显示；含该成员最近一次探测时间与结果 -->
+  <Teleport to="body">
+    <div
+      v-if="probeHintVisible"
+      ref="probeHintRef"
+      class="probe-hint-pop"
+      :class="{ below: probeHintPos.below }"
+      :style="{ left: probeHintPos.x + 'px', top: probeHintPos.y + 'px' }"
+      @click.stop
+    >
+      <div>{{ t('model.rels.brokenProbeHint') }}</div>
+      <div class="probe-hint-probe">
+        <template v-if="probeHintMember?.circuitBrokenLastProbeAt">
+          <div class="probe-hint-title">{{ t('model.rels.lastProbeTitle') }}</div>
+          <div class="probe-hint-row">
+            <span class="probe-hint-label">{{ t('model.rels.lastProbeTime') }}</span>
+            <span>{{ formatLocalDateTimeFull(probeHintMember.circuitBrokenLastProbeAt) }}</span>
+          </div>
+          <div v-if="probeHintMember.circuitBrokenLastProbeStatus != null" class="probe-hint-row">
+            <span class="probe-hint-label">{{ t('model.rels.lastProbeStatus') }}</span>
+            <span>{{ probeHintMember.circuitBrokenLastProbeStatus }}</span>
+          </div>
+          <template v-if="probeHintMember.circuitBrokenLastProbeDetail">
+            <div class="probe-hint-detail-label">{{ t('model.rels.lastProbeDetail') }}</div>
+            <pre class="probe-hint-detail">{{ probeHintMember.circuitBrokenLastProbeDetail }}</pre>
+          </template>
+        </template>
+        <div v-else class="probe-hint-empty">{{ t('model.rels.lastProbeNone') }}</div>
+      </div>
+      <div class="probe-hint-probe">
+        <div class="probe-hint-title">{{ t('model.rels.protocolTitle') }}</div>
+        <template v-if="probeHintMember?.circuitBrokenProtocols?.length">
+          <div v-for="kp in probeHintMember.circuitBrokenProtocols" :key="kp.keyId" class="probe-hint-row">
+            <span class="probe-hint-label">{{ kp.keyName || ('#' + kp.keyId) }}</span>
+            <span>{{ protocolLabel(kp.protocol) }}</span>
+          </div>
+        </template>
+        <div v-else class="probe-hint-empty">{{ t('model.rels.protocolNone') }}</div>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -143,14 +224,16 @@ import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import { groupApi, type ModelGroup, type ModelGroupMember } from '@/api/group'
 import type { CustomModel } from '@/api/model'
+import { formatLocalDateTimeFull } from '@/utils/date'
 import { formatTokens } from '@/utils/format'
 import SearchableSelect from '@/components/common/SearchableSelect.vue'
+import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Sortable from 'sortablejs'
 
 const { t } = useI18n()
 const route = useRoute()
-const { open } = useDialog()
+const { visible: dialogVisible, title: dialogTitle, message: dialogMessage, type: dialogType, confirmClass: dialogConfirmClass, onConfirm: onDialogConfirm, open: openDialog } = useDialog()
 const { showToast } = useToast()
 
 const group = ref<ModelGroup | null>(null)
@@ -187,6 +270,10 @@ const selectOptions = computed(() => {
 
 function isMemberUnavailable(m: ModelGroupMember): boolean {
   return m.channelEnabled !== 1 || m.apiKeyAvailable === 0
+}
+
+function formatRespTime(ms: number): string {
+  return (ms / 1000).toFixed(2) + 's'
 }
 
 async function loadData() {
@@ -227,7 +314,7 @@ async function addMembers() {
 }
 
 function removeMember(member: ModelGroupMember) {
-  open({
+  openDialog({
     title: t('common.confirmDelete'),
     message: t('group.detail.removeConfirm').replace('{name}', member.channelModelName || ''),
     type: 'confirm',
@@ -244,6 +331,93 @@ function removeMember(member: ModelGroupMember) {
         }
       } catch (e: any) {
         showToast(e.message || t('error.unknown'), { type: 'error' })
+      }
+    }
+  })
+}
+
+/** 熔断协议 slug → 展示文案（未知值原样回退显示） */
+const PROTOCOL_LABEL_KEYS: Record<string, string> = {
+  'openai-chat': 'model.rels.protocolOpenaiChat',
+  'anthropic-messages': 'model.rels.protocolAnthropicMessages',
+  'openai-responses': 'model.rels.protocolOpenaiResponses',
+  'embeddings': 'model.rels.protocolEmbeddings'
+}
+
+function protocolLabel(protocol: string): string {
+  const key = PROTOCOL_LABEL_KEYS[protocol]
+  return key ? t(key) : protocol
+}
+
+/** 探测说明气泡状态：visible 是否显示；pos 为 fixed 定位坐标（基于图标位置计算）及方位 */
+const probeHintVisible = ref(false)
+const probeHintPos = ref({ x: 0, y: 0, below: true })
+/** 气泡内展示的成员（最近一次探测信息来自该行） */
+const probeHintMember = ref<ModelGroupMember | null>(null)
+/** 气泡根元素：用于区分「气泡内滚动」与「页面滚动」，避免内部滚动误关闭气泡 */
+const probeHintRef = ref<HTMLElement | null>(null)
+
+/**
+ * 点击问号图标切换探测说明气泡。
+ * 主流程：若气泡已显示则关闭；否则记录该行成员（气泡内展示其最近一次探测信息）并取图标位置，
+ * 顶部空间不足时显示在下方，然后打开气泡。
+ */
+function toggleProbeHint(e: MouseEvent, member: ModelGroupMember) {
+  e.stopPropagation()
+  if (probeHintVisible.value) {
+    probeHintVisible.value = false
+    return
+  }
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const below = rect.top < 64
+  probeHintPos.value = {
+    x: rect.left + rect.width / 2,
+    y: below ? rect.bottom + 8 : rect.top - 8,
+    below
+  }
+  probeHintMember.value = member
+  probeHintVisible.value = true
+}
+
+/** 关闭气泡（点击气泡外任意位置 / 滚动 / 窗口缩放时触发；气泡内部滚动不关闭） */
+function closeProbeHint(e?: Event) {
+  if (e && e.type === 'scroll' && e.target instanceof Node && probeHintRef.value?.contains(e.target)) {
+    return
+  }
+  probeHintVisible.value = false
+}
+
+// 气泡打开期间挂载全局关闭监听，关闭后移除；组件卸载时确保监听清理。
+watch(probeHintVisible, (visible) => {
+  if (visible) {
+    document.addEventListener('click', closeProbeHint)
+    document.addEventListener('scroll', closeProbeHint, true)
+    window.addEventListener('resize', closeProbeHint)
+  } else {
+    document.removeEventListener('click', closeProbeHint)
+    document.removeEventListener('scroll', closeProbeHint, true)
+    window.removeEventListener('resize', closeProbeHint)
+  }
+})
+
+function recoverMember(member: ModelGroupMember) {
+  const cmID = member.channelModelId
+  if (!cmID) return
+  openDialog({
+    title: t('model.rels.recoverTitle'),
+    message: t('group.detail.recoverConfirm'),
+    type: 'confirm',
+    confirmClass: 'btn-warning',
+    onConfirm: async () => {
+      try {
+        const res = await groupApi.clearChannelModelCircuitBreaker(cmID)
+        if (res.data.success) {
+          await loadData()
+        } else {
+          openDialog({ title: t('model.rels.recoverFailed'), message: res.data.error || t('error.unknown') })
+        }
+      } catch (e: any) {
+        openDialog({ title: t('model.rels.recoverFailed'), message: e.message })
       }
     }
   })
@@ -356,6 +530,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   sortableInstance?.destroy()
   sortableInstance = null
+  closeProbeHint()
 })
 </script>
 
@@ -431,12 +606,108 @@ table td { vertical-align: middle; }
 .badge-disabled { background: var(--text-muted); color: var(--bg-primary); }
 .badge-no-key { background: color-mix(in srgb, var(--accent-yellow) 20%, transparent); color: var(--accent-yellow); }
 .badge-broken {
+  display: inline-flex;
+  align-items: center;
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 4px;
+  font-weight: 500;
   background: rgba(248, 81, 73, 0.12);
   color: #f85149;
   border: 1px solid rgba(248, 81, 73, 0.3);
+}
+/* 熔断态：徽章 + 探测气泡入口 + 解除按钮横向排列 */
+.cb-broken {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cb-hint {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.cb-hint-icon {
+  transition: opacity 0.15s ease;
+  opacity: 0.7;
+}
+.cb-hint:hover .cb-hint-icon { opacity: 1; }
+.cb-recover-btn {
+  padding: 1px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+/* 性能列：TTFT / 生成速度（与入口模型关联页同款读法） */
+.resp-time {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.resp-time-none {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.sample-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-left: 2px;
+}
+
+/* 探测说明气泡：fixed 定位挂载到 body，z-index 高于页面层级 */
+.probe-hint-pop {
+  position: fixed;
+  z-index: 3000;
+  max-width: 280px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: rgba(30, 30, 35, 0.95);
+  color: #f0f0f0;
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  transform: translate(-50%, -100%);
+  pointer-events: auto;
+  white-space: normal;
+}
+.probe-hint-pop.below { transform: translate(-50%, 0); }
+.probe-hint-probe {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+.probe-hint-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.probe-hint-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+.probe-hint-label,
+.probe-hint-detail-label {
+  flex: none;
+  color: #a3a3ab;
+}
+.probe-hint-detail-label { margin-top: 4px; }
+.probe-hint-detail {
+  margin: 2px 0 0;
+  padding: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1.45;
+}
+.probe-hint-empty {
+  margin-top: 4px;
+  color: #a3a3ab;
 }
 .weight-input {
   width: 76px;

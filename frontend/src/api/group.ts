@@ -38,8 +38,15 @@ export interface ModelGroupMember {
   apiKeyAvailable?: number
   input?: string
   contextLength?: number | null
+  /** 该成员 24h 性能样本均值（与入口模型关联行同口径） */
+  ttftMs?: number | null
+  sampleCount?: number | null
+  outputSpeed?: number | null
   circuitBroken?: number
   circuitBrokenScope?: 'model' | 'channel' | 'both' | null
+  circuitBrokenLastProbeAt?: string | null
+  circuitBrokenLastProbeStatus?: number | null
+  circuitBrokenLastProbeDetail?: string | null
   circuitBrokenProtocols?: { keyId: number; keyName: string; protocol: string }[] | null
 }
 
@@ -114,6 +121,13 @@ export const groupApi = {
   /** 更新成员权重 / 思考强度 / 启用状态 */
   updateMember(memberId: number, data: { weight?: number; reasoningEffort?: string | null; enabled?: number }) {
     return http.put<{ success: boolean; error?: string }>(`/model-groups/members/${memberId}`, data)
+  },
+  /**
+   * 解除某个渠道模型的熔断状态。
+   * 小组成员没有自己的关联行，熔断按 (渠道, 渠道模型, Key) 记录，因此按渠道模型解除。
+   */
+  clearChannelModelCircuitBreaker(channelModelId: number) {
+    return http.delete<{ success: boolean; recovered?: number; error?: string }>(`/channel-models/${channelModelId}/circuit-breaker`)
   },
   /**
    * 入口模型关联小组 / 解除关联（与渠道模型关联共用 sort_order 序号空间）

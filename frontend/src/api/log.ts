@@ -1,5 +1,8 @@
 import http from './index'
 
+/** 本次路由的来源：粘性命中 / 粘性回退；非粘性为 null */
+export type RouteSource = 'sticky' | 'sticky_fallback'
+
 export interface RequestLog {
   id: number
   traceId: string
@@ -16,6 +19,11 @@ export interface RequestLog {
   responseTimeMs?: number
   requestHeaders?: string
   requestBody?: string
+  /**
+   * 小组粘性来源标记：sticky=哈希命中的成员，sticky_fallback=命中成员失败后
+   * 由组内其他成员承接。仅小组路由会产生该值，其余为 null/undefined。
+   */
+  routeSource?: RouteSource | null
   createdAt: string
 }
 

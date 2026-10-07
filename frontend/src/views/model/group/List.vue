@@ -79,6 +79,17 @@
       </table>
     </div>
   </div>
+
+  <!-- Common Dialog -->
+  <Dialog
+    v-model="dialogVisible"
+    :title="dialogTitle"
+    :type="dialogType"
+    :confirm-class="dialogConfirmClass"
+    @confirm="onDialogConfirm"
+  >
+    {{ dialogMessage }}
+  </Dialog>
 </template>
 
 <script setup lang="ts">
@@ -88,12 +99,13 @@ import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
 import { groupApi, type ModelGroup } from '@/api/group'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 
 defineOptions({ name: 'ModelGroupList' })
 
 const { t } = useI18n()
-const { open } = useDialog()
+const { visible: dialogVisible, title: dialogTitle, message: dialogMessage, type: dialogType, confirmClass: dialogConfirmClass, onConfirm: onDialogConfirm, open } = useDialog()
 const { showToast } = useToast()
 
 const groups = ref<ModelGroup[]>([])

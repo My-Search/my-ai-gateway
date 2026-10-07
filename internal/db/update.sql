@@ -726,3 +726,20 @@ CREATE INDEX IF NOT EXISTS idx_model_group_members_group_id ON model_group_membe
 CREATE INDEX IF NOT EXISTS idx_model_group_members_channel_model_id ON model_group_members(channel_model_id);
 CREATE INDEX IF NOT EXISTS idx_model_group_rels_model_id ON model_group_rels(model_id);
 CREATE INDEX IF NOT EXISTS idx_model_group_rels_group_id ON model_group_rels(group_id);
+
+-- ========================================
+-- VERSION:v1.44.0
+-- 请求日志记录本次路由的来源标记（route_source），用于标注「小组粘性命中」。
+--
+-- 背景：开启会话粘性的模型小组会对请求的消息前缀做一致性哈希，把同一会话稳定
+--   映射到组内同一成员（命中上游 prompt cache）。排障时需要看出某次请求究竟是不是
+--   由粘性命中的，以及命中成员失败后是否回退到了组内其他成员。
+--
+-- 取值（NULL = 非粘性：直连关联、未开启粘性、或请求无法计算会话前缀）：
+--   sticky           本次由粘性哈希命中的成员承接（该成员排在组内首位）
+--   sticky_fallback  粘性命中成员失败后，由组内其他成员承接
+--
+-- 仅作展示与筛选用途，不参与路由决策。
+-- ========================================
+
+ALTER TABLE request_logs ADD COLUMN route_source TEXT;

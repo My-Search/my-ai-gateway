@@ -543,6 +543,7 @@ func RowToRequestLog(r Row) models.RequestLog {
 		TotalTokens:      r.IntPtr("total_tokens"),
 		RequestHeaders:   r.StrPtr("request_headers"),
 		RequestBody:      r.StrPtr("request_body"),
+		RouteSource:      r.StrPtr("route_source"),
 		CreatedAt:        r.TimePtr("created_at"),
 	}
 }

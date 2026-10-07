@@ -184,6 +184,17 @@ type RoutingCandidate struct {
 	// keys expand one group member into several candidates; group-level selection
 	// and sticky hashing treat that block as one weighted member.
 	GroupMemberID int64
+	// GroupID / GroupName / GroupStrategy describe the model group this candidate
+	// came from; zero/empty for a direct channel-model relation. They exist for
+	// display (request-log provenance), never for routing decisions.
+	GroupID       int64
+	GroupName     string
+	GroupStrategy string
+	// RouteSource labels how this candidate was selected, written to the request
+	// log: sticky = the group's session hash pinned this member,
+	// sticky_fallback = the pinned member failed and this member took over.
+	// Empty for non-sticky routing.
+	RouteSource string
 }
 
 // LatencyTracker provides adaptive timeouts — same logic as Java LatencyTracker.

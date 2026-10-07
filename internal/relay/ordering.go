@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+
+	"github.com/my-search/my-ai-gateway/internal/models"
 )
 
 // 小组内部的路由：把一个候选集合按小组自己的策略排成一条尝试顺序。
@@ -32,6 +34,10 @@ type groupOrdering struct {
 }
 
 // orderGroupCandidates 返回按小组策略排好序的候选（新切片，不改动入参）。
+//
+// 粘性生效时，哈希命中的成员被排到组内首位；该成员的所有候选会被标记
+// RouteSourceSticky，供请求日志标注「本次由粘性命中」。调用方（转发循环）在
+// 该成员失败后会把它后面的同组候选标为 RouteSourceStickyFallback。
 func orderGroupCandidates(o groupOrdering) []RoutingCandidate {
 	members := groupCandidateBlocks(o)
 	if len(members) <= 1 {
@@ -61,6 +67,14 @@ func orderGroupCandidates(o groupOrdering) []RoutingCandidate {
 			ordered = stickyBlocks(members, o.groupID, "fail", o.stickyKey)
 		} else {
 			ordered = members
+		}
+	}
+
+	// 三个 sticky 分支都把命中成员排在第 0 块，因此「粘性命中」等价于首块。
+	// 标记写在这份副本上，调用方拿到的展平结果即携带标记。
+	if sticky && len(ordered) > 0 {
+		for i := range ordered[0] {
+			ordered[0][i].RouteSource = models.RouteSourceSticky
 		}
 	}
 	return flattenCandidateBlocks(ordered)
