@@ -211,6 +211,8 @@ export interface ModelGroupRel {
   memberCount?: number
   /** 可用成员数（静态可路由：成员启用 + 渠道模型启用 + 渠道启用 + 有可用 Key） */
   availableCount?: number
+  /** 熔断成员数（可路由成员中处于熔断状态的个数），熔断列展示 n/m 用 */
+  brokenCount?: number
   /** 可路由成员输入模态并集（text 优先、去重，逗号分隔） */
   input?: string
   /** 可路由成员的最大正值上下文；全未知为 null（显示 -） */

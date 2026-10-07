@@ -9,7 +9,7 @@ import type { ModelChannelRel, ModelGroupRel } from '@/api/model'
  * 小组行必须与渠道模型行保持相同列式布局：
  *  - 渠道列 = 小组徽章（禁用时附加禁用徽章）；
  *  - 模型列 = 成员模型名逐行 + 右侧堆叠的粘性徽章 / 策略文字；
- *  - 熔断列 = 状态与可路由成员数合并为「状态（n/m）」；
+ *  - 熔断列 = 状态与熔断成员占比合并为「状态（n/m）」，n = 熔断成员数、m = 成员总数；
  *  - 输入列 = 可路由成员聚合模态；上下文列 = 最大正值上下文；
  *  - TTFT/速度/思考强度 = --（小组没有对应数据）；
  *  - 操作列 = 删除（继承模式为 --）。
@@ -67,6 +67,7 @@ function makeGroupRel(over: Partial<ModelGroupRel> & { id: number; groupId: numb
     groupEnabled: 1,
     memberCount: 2,
     availableCount: 2,
+    brokenCount: 0,
     input: 'text,image',
     maxContextLength: 2000000,
     memberModelNames: ['model-a', 'model-b'],
@@ -137,9 +138,9 @@ describe('入口模型关联页 - 小组行渲染', () => {
     expect(tds[4].text()).toContain('image')
     // 上下文列：最大正值上下文
     expect(tds[5].text()).toContain('2.0M')
-    // 熔断列：状态与可路由成员数合并展示
+    // 熔断列：状态与熔断成员占比合并展示（0 个熔断成员 → 正常（0/2））
     expect(tds[8].text()).toContain('正常')
-    expect(tds[8].text()).toContain('（2/2）')
+    expect(tds[8].text()).toContain('（0/2）')
     // 思考强度：--（小组思考强度在成员上，不在关联上）
     expect(tds[9].text()).toBe('--')
     // 操作列：仅删除（管理入口移到渠道列的组名链接上）
@@ -156,13 +157,13 @@ describe('入口模型关联页 - 小组行渲染', () => {
     const wrapper = await mountRels(
       [],
       [makeGroupRel({
-        id: 3, groupId: 8, groupEnabled: 0, availableCount: 0,
+        id: 3, groupId: 8, groupEnabled: 0, availableCount: 0, brokenCount: 0,
         input: undefined, maxContextLength: null, memberModelNames: [],
       })]
     )
     const tds = groupRow(wrapper).findAll('td')
     expect(tds[2].text()).toContain('禁用')
-    // 无可路由成员 → 模型列 -- 占位；可路由成员数随熔断列展示
+    // 无可路由成员 → 模型列 -- 占位；熔断成员数随熔断列展示
     expect(tds[3].text()).toContain('--')
     expect(tds[8].text()).toContain('（0/2）')
     // 聚合输入为空 → --
@@ -178,7 +179,7 @@ describe('入口模型关联页 - 小组行渲染', () => {
   it('可路由成员全部熔断时小组行显示熔断中（n/m）（无解除/详情按钮）', async () => {
     const wrapper = await mountRels(
       [],
-      [makeGroupRel({ id: 5, groupId: 10, circuitBroken: 1 })]
+      [makeGroupRel({ id: 5, groupId: 10, circuitBroken: 1, brokenCount: 2 })]
     )
     const tds = groupRow(wrapper).findAll('td')
     expect(tds[8].text()).toContain('熔断中（2/2）')
@@ -196,7 +197,7 @@ describe('入口模型关联页 - 小组行渲染', () => {
     for (const c of cases) {
       const wrapper = await mountRels(
         [],
-        [makeGroupRel({ id: 7, groupId: 12, circuitBroken: 1, circuitBrokenScope: c.scope, availableCount: 2, memberCount: 2 })]
+        [makeGroupRel({ id: 7, groupId: 12, circuitBroken: 1, circuitBrokenScope: c.scope, brokenCount: 2, memberCount: 2 })]
       )
       const tds = groupRow(wrapper).findAll('td')
       expect(tds[8].text()).toContain(c.want)

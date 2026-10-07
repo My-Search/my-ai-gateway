@@ -228,6 +228,9 @@ type ModelGroupRel struct {
 	TTFTMs      *int64   `json:"ttftMs"`
 	SampleCount *int     `json:"sampleCount"`
 	OutputSpeed *float64 `json:"outputSpeed"`
+	// BrokenCount 是可路由成员中处于熔断状态的个数（与 CircuitBroken 的判定同源），
+	// 供入口模型关联列表的小组行展示「熔断成员数/成员总数」。
+	BrokenCount *int `json:"brokenCount"`
 	// CircuitBroken：1 = 组内可路由成员全部熔断（此时才显示「熔断中」）；
 	// 部分熔断为 0（仍有可用候选，不告警）。
 	CircuitBroken *int `json:"circuitBroken"`

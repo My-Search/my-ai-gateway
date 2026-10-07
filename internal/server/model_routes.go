@@ -942,6 +942,7 @@ func resolveModelGroupRels(ctx context.Context, st *store.Store, modelID int64, 
 		summary := groupMemberSummaryOf(ctx, st, *rel.GroupID)
 		rel.MemberCount = models.Int(summary.total)
 		rel.AvailableCount = models.Int(summary.routable)
+		rel.BrokenCount = models.Int(summary.brokenCount)
 		rel.Input = summary.input
 		rel.MaxContextLength = summary.maxContext
 		rel.TTFTMs = summary.ttftMs
@@ -983,6 +984,9 @@ type groupMemberSummary struct {
 	// breakerAggregate：routable 全部熔断时为 "all"，部分熔断为 "partial"，
 	// 无可路由成员或全部正常为 ""。
 	breakerAggregate string
+	// brokenCount 是可路由成员中处于熔断状态的个数，随 AvailableCount 一起返回，
+	// 供小组行展示「熔断成员数/成员总数」。
+	brokenCount int
 	// breakerScope：全部熔断时成员熔断级别的聚合结果，"model" | "channel" | "both"；
 	// 多级别混合时取最广的一档（both > channel > model）。未全熔断时为空。
 	breakerScope string
@@ -1068,6 +1072,7 @@ func groupMemberSummaryOf(ctx context.Context, st *store.Store, groupID int64) g
 				scopeSet[mark.Scope] = true
 			}
 		}
+		out.brokenCount = brokenCount
 		if brokenCount == len(routableMembers) {
 			out.breakerAggregate = "all"
 			out.breakerScope = mergeBreakerScopes(scopeSet)

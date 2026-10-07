@@ -240,13 +240,13 @@
                 <span class="group-circuit">
                   <span v-if="gOf(entry).circuitBroken === 1" class="badge badge-broken">{{ groupBrokenLabel(gOf(entry)) }}</span>
                   <span v-else class="text-muted">{{ t('model.rels.brokenNone') }}</span>
-                  <!-- 正常态：状态词 + 可路由成员数，读法与模型行的「熔断中（渠道级）」一致。 -->
+                  <!-- 正常态：状态词 + 熔断成员数/成员总数，读法与模型行的「熔断中（渠道级）」一致。 -->
                   <span
                     v-if="gOf(entry).circuitBroken !== 1"
                     class="badge-avail"
                     :class="{ 'badge-avail--empty': (gOf(entry).availableCount ?? 0) === 0 }"
                     :title="(gOf(entry).availableCount ?? 0) === 0 ? t('model.rels.groupEmptyHint') : undefined"
-                  >（{{ gOf(entry).availableCount ?? 0 }}/{{ gOf(entry).memberCount ?? 0 }}）</span>
+                  >（{{ gOf(entry).brokenCount ?? 0 }}/{{ gOf(entry).memberCount ?? 0 }}）</span>
                 </span>
               </td>
               <td><span class="text-muted">--</span></td>
@@ -769,14 +769,14 @@ function groupStrategyLabel(s?: string): string {
 
 /**
  * 小组全部熔断时的徽章文案：「熔断中（模型级 2/2）」。
- * 级别取组内成员聚合结果（两者 > 渠道级 > 模型级），n/m 是可路由成员数与总数，
+ * 级别取组内成员聚合结果（两者 > 渠道级 > 模型级），n/m 是熔断成员数与成员总数，
  * 与渠道模型行的「熔断中（渠道级）」保持同一读法。
  */
 function groupBrokenLabel(g: ModelGroupRel): string {
-  const ratio = `（${g.availableCount ?? 0}/${g.memberCount ?? 0}）`
+  const ratio = `（${g.brokenCount ?? 0}/${g.memberCount ?? 0}）`
   const scopeKey = ({ model: 'model.rels.brokenModel', channel: 'model.rels.brokenChannel', both: 'model.rels.brokenBoth' } as Record<string, string>)[g.circuitBrokenScope || '']
   if (!scopeKey) return `${t('model.rels.broken')}${ratio}`
-  return `${t('model.rels.broken')}（${t(scopeKey)} ${g.availableCount ?? 0}/${g.memberCount ?? 0}）`
+  return `${t('model.rels.broken')}（${t(scopeKey)} ${g.brokenCount ?? 0}/${g.memberCount ?? 0}）`
 }
 
 /**
@@ -1734,7 +1734,7 @@ a.group-name.group-name-link:hover {
   background: rgba(63, 185, 80, 0.15);
   color: #3fb950;
 }
-/* 可路由成员数：常态为绿色，全部不可用转红。 */
+/* 熔断成员数/成员总数：常态为绿色（0 熔断），无可路由成员转红。 */
 .badge-avail {
   flex: none;
   font-size: 11px;

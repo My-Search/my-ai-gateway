@@ -204,7 +204,7 @@ func TestGroupMemberSummaryEmptyGroup(t *testing.T) {
 	groupID, _ := st.Insert(ctx, "INSERT INTO model_groups (name, strategy) VALUES ('empty', 'random')")
 
 	s := groupMemberSummaryOf(ctx, st, groupID)
-	if s.total != 0 || s.routable != 0 || s.input != nil || s.maxContext != nil {
+	if s.total != 0 || s.routable != 0 || s.brokenCount != 0 || s.input != nil || s.maxContext != nil {
 		t.Errorf("empty group summary = %+v, want zero values", s)
 	}
 }
@@ -313,8 +313,12 @@ func TestGroupMemberSummaryBreakerAggregate(t *testing.T) {
 		 VALUES (?, ?, 1, 3)`, ch1.I64("id", 0), cms[0]); err != nil {
 		t.Fatal(err)
 	}
-	if s := groupMemberSummaryOf(ctx, st, groupID); s.breakerAggregate != "partial" {
+	s := groupMemberSummaryOf(ctx, st, groupID)
+	if s.breakerAggregate != "partial" {
 		t.Errorf("breakerAggregate = %q, want partial when only some members are broken", s.breakerAggregate)
+	}
+	if s.brokenCount != 1 {
+		t.Errorf("brokenCount = %d, want 1 (one of the two routable members is broken)", s.brokenCount)
 	}
 
 	// 全部熔断 → "all"；两个成员都是模型级熔断（state 带 channel_model_id），
@@ -325,9 +329,12 @@ func TestGroupMemberSummaryBreakerAggregate(t *testing.T) {
 		 VALUES (?, ?, 1, 3)`, ch2.I64("id", 0), cms[1]); err != nil {
 		t.Fatal(err)
 	}
-	s := groupMemberSummaryOf(ctx, st, groupID)
+	s = groupMemberSummaryOf(ctx, st, groupID)
 	if s.breakerAggregate != "all" {
 		t.Errorf("breakerAggregate = %q, want all when every routable member is broken", s.breakerAggregate)
+	}
+	if s.brokenCount != 2 {
+		t.Errorf("brokenCount = %d, want 2 (both routable members are broken)", s.brokenCount)
 	}
 	if s.breakerScope != "model" {
 		t.Errorf("breakerScope = %q, want model for model-level member breakers", s.breakerScope)
@@ -380,6 +387,9 @@ func TestGroupMemberSummaryBreakerScopeMerge(t *testing.T) {
 	s := groupMemberSummaryOf(ctx, st, groupID)
 	if s.breakerAggregate != "all" {
 		t.Fatalf("breakerAggregate = %q, want all", s.breakerAggregate)
+	}
+	if s.brokenCount != 2 {
+		t.Errorf("brokenCount = %d, want 2", s.brokenCount)
 	}
 	if s.breakerScope != "channel" {
 		t.Errorf("breakerScope = %q, want channel (widest scope wins over model)", s.breakerScope)
@@ -434,6 +444,9 @@ func TestGroupMemberSummaryNoLogsStaysEmpty(t *testing.T) {
 	}
 	if s.breakerAggregate != "" {
 		t.Errorf("breakerAggregate = %q, want empty when nothing is broken", s.breakerAggregate)
+	}
+	if s.brokenCount != 0 {
+		t.Errorf("brokenCount = %d, want 0 when nothing is broken", s.brokenCount)
 	}
 }
 
