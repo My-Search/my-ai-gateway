@@ -44,6 +44,7 @@ func newGroupTestStore(t *testing.T) DataStore {
 		`CREATE TABLE model_group_rels (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, model_id INTEGER NOT NULL,
 			group_id INTEGER NOT NULL, sort_order INTEGER DEFAULT 0,
+			reasoning_effort TEXT,
 			enabled INTEGER DEFAULT 1, created_at TEXT)`,
 	} {
 		if _, err := st.Exec(context.Background(), stmt); err != nil {
@@ -66,6 +67,9 @@ type groupFixture struct {
 	// failing holds upstream model names the test wants rejected with 500, so a
 	// failure inside a group can be exercised without touching circuit state.
 	failing map[string]bool
+	// lastEffort is the reasoning_effort the upstream most recently received,
+	// so a test can assert which default (group rel vs member) took effect.
+	lastEffort string
 }
 
 func setupGroupFixture(t *testing.T, strategy string, sticky bool, weights map[string]int) *groupFixture {
@@ -82,9 +86,11 @@ func setupGroupFixture(t *testing.T, strategy string, sticky bool, weights map[s
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		var parsed struct {
-			Model string `json:"model"`
+			Model           string `json:"model"`
+			ReasoningEffort string `json:"reasoning_effort"`
 		}
 		_ = json.Unmarshal(raw, &parsed)
+		fixture.lastEffort = parsed.ReasoningEffort
 		if fixture.failing[parsed.Model] {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write([]byte(`{"error":"upstream exploded"}`))
@@ -727,4 +733,75 @@ func servedBy(t *testing.T, body string) string {
 		rest = rest[:j]
 	}
 	return rest
+}
+
+// setGroupRelEffort stores the entry-model -> group relation's default effort,
+// mirroring what the admin endpoint writes.
+func (f *groupFixture) setGroupRelEffort(t *testing.T, effort string) {
+	t.Helper()
+	if _, err := f.store.Exec(context.Background(),
+		"UPDATE model_group_rels SET reasoning_effort = ? WHERE model_id = ? AND group_id = ?",
+		effort, f.entryID, f.groupID); err != nil {
+		t.Fatalf("set group rel effort: %v", err)
+	}
+}
+
+// setMemberEffort stores one group member's own reasoning_effort.
+func (f *groupFixture) setMemberEffort(t *testing.T, model string, effort string) {
+	t.Helper()
+	cmID, ok := f.modelIDs[model]
+	if !ok {
+		t.Fatalf("unknown model %q", model)
+	}
+	if _, err := f.store.Exec(context.Background(),
+		"UPDATE model_group_members SET reasoning_effort = ? WHERE group_id = ? AND channel_model_id = ?",
+		effort, f.groupID, cmID); err != nil {
+		t.Fatalf("set member effort: %v", err)
+	}
+}
+
+// TestGroupRelEffortAppliesWhenMemberUnset proves the group relation's default
+// effort reaches upstream when the serving member has no effort of its own.
+func TestGroupRelEffortAppliesWhenMemberUnset(t *testing.T) {
+	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f.setGroupRelEffort(t, "high")
+	if got := f.serveOnce(t, "hello"); got != "m-a" {
+		t.Fatalf("served by %q, want m-a", got)
+	}
+	if f.lastEffort != "high" {
+		t.Errorf("upstream reasoning_effort = %q, want %q (group rel default)", f.lastEffort, "high")
+	}
+}
+
+// TestMemberEffortOverridesGroupRelEffort proves the group member's own effort
+// wins over the relation-level default: the group is a fallback, not an override.
+func TestMemberEffortOverridesGroupRelEffort(t *testing.T) {
+	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f.setGroupRelEffort(t, "high")
+	f.setMemberEffort(t, "m-a", "low")
+	if got := f.serveOnce(t, "hello"); got != "m-a" {
+		t.Fatalf("served by %q, want m-a", got)
+	}
+	if f.lastEffort != "low" {
+		t.Errorf("upstream reasoning_effort = %q, want %q (member effort wins)", f.lastEffort, "low")
+	}
+}
+
+// TestClientEffortOverridesGroupRelEffort proves an explicit client value still
+// outranks the relation-level default, preserving the existing precedence.
+func TestClientEffortOverridesGroupRelEffort(t *testing.T) {
+	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f.setGroupRelEffort(t, "high")
+	body := `{"model":"entry","reasoning_effort":"max","messages":[{"role":"user","content":"hi"}]}`
+	req, err := ParseRequest(body, ProtoOpenAI)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	res := f.core.RelayNonStream(context.Background(), req, "Bearer gw-key", "", body)
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d body %s", res.StatusCode, res.Body)
+	}
+	if f.lastEffort != "max" {
+		t.Errorf("upstream reasoning_effort = %q, want %q (client value wins)", f.lastEffort, "max")
+	}
 }

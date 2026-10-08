@@ -16,6 +16,7 @@ import type { ModelChannelRel, ModelGroupRel } from '@/api/model'
  */
 
 const getRelsMock = vi.fn()
+const updateGroupRelEffortMock = vi.fn()
 
 vi.mock('@/api/model', () => ({
   modelApi: {
@@ -25,6 +26,7 @@ vi.mock('@/api/model', () => ({
     batchRemoveRels: vi.fn().mockResolvedValue({ data: { success: true } }),
     removeRel: vi.fn().mockResolvedValue({ data: { success: true } }),
     updateRelReasoningEffort: vi.fn().mockResolvedValue({ data: { success: true } }),
+    updateGroupRelReasoningEffort: (...a: unknown[]) => updateGroupRelEffortMock(...a),
     clearRelCircuitBreaker: vi.fn().mockResolvedValue({ data: { success: true } }),
   },
 }))
@@ -112,6 +114,8 @@ describe('入口模型关联页 - 小组行渲染', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     getRelsMock.mockReset()
+    updateGroupRelEffortMock.mockReset()
+    updateGroupRelEffortMock.mockResolvedValue({ data: { success: true } })
   })
 
   it('小组行与渠道模型行同为 9 个数据列，且聚合值落在正确的列', async () => {
@@ -141,8 +145,10 @@ describe('入口模型关联页 - 小组行渲染', () => {
     // 熔断列：状态与熔断成员占比合并展示（0 个熔断成员 → 正常（0/2））
     expect(tds[8].text()).toContain('正常')
     expect(tds[8].text()).toContain('（0/2）')
-    // 思考强度：--（小组思考强度在成员上，不在关联上）
-    expect(tds[9].text()).toBe('--')
+    // 思考强度：重新可编辑（小组关联默认值，成员未配置时生效），空值渲染为空输入框
+    const effortInput = tds[9].find('.effort-select')
+    expect(effortInput.exists()).toBe(true)
+    expect((effortInput.element as HTMLInputElement).value).toBe('')
     // 操作列：仅删除（管理入口移到渠道列的组名链接上）
     expect(tds[10].text()).toContain('删除')
     expect(tds[10].text()).not.toContain('管理成员')
@@ -252,5 +258,45 @@ describe('入口模型关联页 - 小组行渲染', () => {
     expect(row.exists()).toBe(true)
     const tds = row.findAll('td')
     expect(tds[10].text()).toBe('--')
+  })
+
+  it('小组行思考强度可编辑：已有值回填，修改后调用接口并回写', async () => {
+    const groupRel = makeGroupRel({ id: 20, groupId: 30, reasoningEffort: 'high' })
+    const wrapper = await mountRels([], [groupRel])
+    const input = groupRow(wrapper).findAll('td')[9].find('.effort-select')
+    expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).value).toBe('high')
+
+    await input.setValue('xhigh')
+    await input.trigger('change')
+    await flushPromises()
+    expect(updateGroupRelEffortMock).toHaveBeenCalledWith(20, 'xhigh')
+    // 成功后本地回写（无需重新加载）
+    expect(groupRel.reasoningEffort).toBe('xhigh')
+  })
+
+  it('小组行思考强度清空时提交 null', async () => {
+    const groupRel = makeGroupRel({ id: 21, groupId: 31, reasoningEffort: 'high' })
+    const wrapper = await mountRels([], [groupRel])
+    const input = groupRow(wrapper).findAll('td')[9].find('.effort-select')
+    await input.setValue('   ')
+    await input.trigger('change')
+    await flushPromises()
+    expect(updateGroupRelEffortMock).toHaveBeenCalledWith(21, null)
+    expect(groupRel.reasoningEffort).toBeNull()
+  })
+
+  it('继承模式下小组行思考强度为只读展示（有值显示值，无值 --）', async () => {
+    getRelsMock.mockResolvedValue(relsPayload([], [
+      makeGroupRel({ id: 5, groupId: 10, reasoningEffort: 'medium' }),
+      makeGroupRel({ id: 6, groupId: 11 }),
+    ], 'inherit'))
+    getRelsPreset = true
+    const wrapper = await mountRels([], [])
+    const rows = wrapper.findAll('tr.row-group')
+    expect(rows.length).toBe(2)
+    expect(rows[0].find('.effort-select').exists()).toBe(false)
+    expect(rows[0].findAll('td')[9].text()).toBe('medium')
+    expect(rows[1].findAll('td')[9].text()).toBe('--')
   })
 })

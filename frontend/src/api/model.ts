@@ -180,6 +180,10 @@ export const modelApi = {
   updateRelReasoningEffort(relId: number, reasoningEffort: string | null) {
     return http.put<{ success: boolean; error?: string }>(`/models/rels/${relId}/reasoning-effort`, { reasoningEffort })
   },
+  /** 入口模型 -> 小组 关联的默认思考强度（成员未单独配置时生效，成员配置优先） */
+  updateGroupRelReasoningEffort(relId: number, reasoningEffort: string | null) {
+    return http.put<{ success: boolean; error?: string }>(`/models/group-rels/${relId}/reasoning-effort`, { reasoningEffort })
+  },
   /**
    * 手动解除关联的熔断状态（若渠道级熔断存在则一并解除）
    */
@@ -201,6 +205,8 @@ export interface ModelGroupRel {
   groupId: number
   sortOrder: number
   enabled?: number
+  /** 该入口模型关联此小组时的默认思考强度：仅当组内成员未单独配置时对其生效（成员配置优先） */
+  reasoningEffort?: string | null
   groupName?: string
   /** failover | random | round_robin */
   groupStrategy?: string

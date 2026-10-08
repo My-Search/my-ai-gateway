@@ -250,7 +250,21 @@
                   >（<span class="ratio-n" :class="{ 'ratio-n--broken': (gOf(entry).brokenCount ?? 0) > 0 }">{{ gOf(entry).brokenCount ?? 0 }}</span>/<span class="ratio-m">{{ gOf(entry).memberCount ?? 0 }}</span>）</span>
                 </span>
               </td>
-              <td><span class="text-muted">--</span></td>
+              <td>
+                <input
+                  v-if="currentMode === 'self_add'"
+                  class="form-control effort-select"
+                  type="text"
+                  :value="gOf(entry).reasoningEffort ?? ''"
+                  :list="effortDatalistId"
+                  :placeholder="t('model.rels.effortCustomPlaceholder')"
+                  :title="t('model.rels.groupEffortHint')"
+                  @change="updateGroupRelEffort(gOf(entry), ($event.target as HTMLInputElement).value)"
+                />
+                <span v-else class="text-muted">
+                  {{ gOf(entry).reasoningEffort ? effortLabel(gOf(entry).reasoningEffort!) : '--' }}
+                </span>
+              </td>
               <td>
                 <div class="group-actions">
                   <button
@@ -923,6 +937,25 @@ async function updateEffort(rel: ModelChannelRel, value: string) {
   const effort = value.trim() || null
   try {
     const res = await modelApi.updateRelReasoningEffort(rel.id, effort)
+    if (res.data.success) {
+      rel.reasoningEffort = effort
+    } else {
+      openDialog({ title: t('error.updateFailed'), message: res.data.error || t('error.unknown') })
+    }
+  } catch (e: any) {
+    openDialog({ title: t('error.updateFailed'), message: e.message })
+  }
+}
+
+/**
+ * 保存「入口模型 -> 小组」关联的默认思考强度（支持自定义输入值）。
+ * 与渠道模型关联同款：trim 后为空则清除（存 null），否则原样保存。
+ * 该值是组内成员未单独配置思考强度时的回退默认值，成员配置优先。
+ */
+async function updateGroupRelEffort(rel: ModelGroupRel, value: string) {
+  const effort = value.trim() || null
+  try {
+    const res = await modelApi.updateGroupRelReasoningEffort(rel.id, effort)
     if (res.data.success) {
       rel.reasoningEffort = effort
     } else {

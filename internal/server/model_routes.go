@@ -762,6 +762,27 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
 	})
 
+	// PUT /admin/api/models/group-rels/{relId}/reasoning-effort
+	// 入口模型 -> 小组 关联的默认思考强度：仅当组内成员未单独配置时对其生效。
+	g.PUT("/models/group-rels/:relId/reasoning-effort", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		relID, ok := pathID(c, "relId")
+		if !ok {
+			httpx.OK(c, failureEnvelope("关联不存在"))
+			return
+		}
+		var body struct {
+			ReasoningEffort *string `json:"reasoningEffort"`
+		}
+		_ = c.ShouldBindJSON(&body)
+		if body.ReasoningEffort != nil {
+			d.Store.Exec(ctx, "UPDATE model_group_rels SET reasoning_effort=? WHERE id=?", strings.TrimSpace(*body.ReasoningEffort), relID)
+		} else {
+			d.Store.Exec(ctx, "UPDATE model_group_rels SET reasoning_effort=NULL WHERE id=?", relID)
+		}
+		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
+	})
+
 	// GET /admin/api/models/{id}/circuit-breaker
 	g.GET("/models/:id/circuit-breaker", func(c *gin.Context) {
 		ctx := c.Request.Context()

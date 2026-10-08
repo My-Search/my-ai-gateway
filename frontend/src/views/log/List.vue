@@ -149,7 +149,7 @@
           <span class="trace-stats">
             <span v-if="trace.failCount > 0" class="badge badge-danger">{{ t('log.list.fail') }}</span>
             <span v-else-if="trace.successCount > 0" class="badge badge-success">{{ t('log.list.success') }}</span>
-            <span v-else-if="trace.interruptedCount" class="badge badge-info">{{ t('log.phase.interrupted') }}</span>
+            <span v-else-if="trace.interruptedCount" class="badge badge-danger">{{ t('log.phase.interrupted') }}</span>
             <span v-if="trace.retryCount > 0" class="badge badge-warning">{{ t('log.list.retry', { count: trace.retryCount }) }}</span>
           </span>
           <span class="trace-time">{{ trace.displayTime }}</span>
@@ -1172,8 +1172,8 @@ onUnmounted(() => {
 .log-time { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 .log-message { color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; flex-shrink: 1; }
 .log-message-error { color: var(--accent-red); }
-/* 中断不是上游故障，用青色与真实失败的红色区分 */
-.log-message-interrupted { color: var(--accent-cyan); }
+/* 中断与失败同为「未成功终结」，统一用红色 */
+.log-message-interrupted { color: var(--accent-red); }
 .reasoning-effort { color: var(--accent-purple); font-size: 11px; white-space: nowrap; margin-left: 2px; }
 /* 小组粘性来源徽章：命中（绿）与回退（黄）区分开，一眼看出为何没命中粘性成员 */
 .route-source-badge {

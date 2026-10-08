@@ -57,6 +57,8 @@ export interface ModelGroupRel {
   groupId: number
   sortOrder: number
   enabled?: number
+  /** 该入口模型关联此小组时的默认思考强度：仅当组内成员未单独配置时对其生效（成员配置优先） */
+  reasoningEffort?: string | null
   groupName?: string
   groupStrategy?: GroupStrategy
   groupSticky?: number

@@ -368,6 +368,7 @@ export default {
   'model.rels.reasoningEffort': '思考强度',
   'model.rels.effortCustomPlaceholder': '留空不设置',
   'model.rels.effortCustomHint': '支持预设（low/medium/high/xhigh/max）或输入自定义思考强度值，留空表示不设置',
+  'model.rels.groupEffortHint': '小组关联的思考强度作为默认值：组内成员未单独配置时对其生效；成员已配置的思考强度优先。留空表示不设置。',
   'model.rels.noData': '暂无数据',
   'model.rels.noApiKey': '无可用密钥',
   'model.rels.modeSelfAdd': '自添加',

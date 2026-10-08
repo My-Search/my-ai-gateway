@@ -470,6 +470,7 @@ func RowToModelGroupRel(r Row) models.ModelGroupRel {
 		ModelID:          r.I64Ptr("model_id"),
 		GroupID:          r.I64Ptr("group_id"),
 		SortOrder:        r.IntPtr("sort_order"),
+		ReasoningEffort:  r.StrPtr("reasoning_effort"),
 		Enabled:          r.IntPtr("enabled"),
 		CreatedAt:        r.TimePtr("created_at"),
 		GroupName:        r.StrPtr("group_name"),

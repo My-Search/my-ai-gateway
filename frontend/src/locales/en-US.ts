@@ -368,6 +368,7 @@ export default {
   'model.rels.reasoningEffort': 'Reasoning',
   'model.rels.effortCustomPlaceholder': 'Leave empty for none',
   'model.rels.effortCustomHint': 'Pick a preset (low/medium/high/xhigh/max) or type a custom reasoning effort value; leave empty for none',
+  'model.rels.groupEffortHint': 'The group link’s reasoning effort is a default: it applies to members that have no effort of their own; a member’s own effort takes precedence. Leave empty for none.',
   'model.rels.noData': 'No data',
   'model.rels.noApiKey': 'No usable API key',
   'model.rels.modeSelfAdd': 'Self-Add',

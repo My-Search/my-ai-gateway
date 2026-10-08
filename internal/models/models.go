@@ -208,8 +208,11 @@ type ModelGroupRel struct {
 	ModelID   *int64  `json:"modelId"`
 	GroupID   *int64  `json:"groupId"`
 	SortOrder *int    `json:"sortOrder"`
-	Enabled   *int    `json:"enabled"`
-	CreatedAt APITime `json:"createdAt"`
+	// ReasoningEffort 是该入口模型关联这个小组时的默认思考强度：仅当组内成员
+	// 未单独配置思考强度时对其生效（成员设置优先）。NULL 表示不设置。
+	ReasoningEffort *string `json:"reasoningEffort"`
+	Enabled         *int    `json:"enabled"`
+	CreatedAt       APITime `json:"createdAt"`
 	// 展示字段
 	GroupName        *string `json:"groupName"`
 	GroupStrategy    *string `json:"groupStrategy"`

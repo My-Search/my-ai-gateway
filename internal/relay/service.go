@@ -125,10 +125,16 @@ func (r *RouteResolver) BuildCandidates(ctx context.Context, req *InternalReques
 				groupID:    e.groupID,
 			})
 			// 小组来源信息只用于请求日志标注（小组名/策略/粘性命中），不参与路由。
+			// 小组关联的默认思考强度只回填到「自身未设置」的候选上：成员单独配置的
+			// reasoning_effort 优先级更高，因此天然不被覆盖。
 			for i := range ordered {
 				ordered[i].GroupID = e.groupID
 				ordered[i].GroupName = e.groupName
 				ordered[i].GroupStrategy = e.groupStrategy
+				if e.groupReasoningEffort != nil &&
+					(ordered[i].ReasoningEffort == nil || *ordered[i].ReasoningEffort == "") {
+					ordered[i].ReasoningEffort = e.groupReasoningEffort
+				}
 			}
 			// 组内排序结果作为「入口模型候选顺序」的一段整体拼接，组内失败会先
 			// 尝试组内下一个成员，再回到入口模型的下一条关联。
@@ -249,8 +255,11 @@ type routingEntry struct {
 	groupName     string
 	groupStrategy string
 	sticky        bool
-	sortOrder     int
-	candidates    []RoutingCandidate
+	// groupReasoningEffort 是这条「入口模型 -> 小组」关联配置的默认思考强度，
+	// 仅回填到组内未单独配置思考强度的成员候选上（成员配置优先）。
+	groupReasoningEffort *string
+	sortOrder            int
+	candidates           []RoutingCandidate
 }
 
 // resolveRoutingEntries merges model_channel_rels and model_group_rels of one
@@ -294,7 +303,7 @@ func (r *RouteResolver) resolveRoutingEntries(ctx context.Context, modelID int64
 	}
 
 	groupRows, _ := r.Store.Query(ctx,
-		`SELECT rel.sort_order, g.id, g.name, g.strategy, g.sticky, g.enabled
+		`SELECT rel.sort_order, rel.reasoning_effort, g.id, g.name, g.strategy, g.sticky, g.enabled
 		   FROM model_group_rels rel
 		   JOIN model_groups g ON g.id = rel.group_id
 		  WHERE rel.model_id = ? AND rel.enabled = 1
@@ -304,12 +313,13 @@ func (r *RouteResolver) resolveRoutingEntries(ctx context.Context, modelID int64
 			continue
 		}
 		entries = append(entries, routingEntry{
-			isGroup:       true,
-			groupID:       row.I64("id", 0),
-			groupName:     row.Str("name"),
-			groupStrategy: normalizeGroupStrategy(row.Str("strategy")),
-			sticky:        row.Int("sticky", 0) == 1,
-			sortOrder:     row.Int("sort_order", 0),
+			isGroup:              true,
+			groupID:              row.I64("id", 0),
+			groupName:            row.Str("name"),
+			groupStrategy:        normalizeGroupStrategy(row.Str("strategy")),
+			sticky:               row.Int("sticky", 0) == 1,
+			groupReasoningEffort: row.StrPtr("reasoning_effort"),
+			sortOrder:            row.Int("sort_order", 0),
 		})
 	}
 

@@ -76,10 +76,10 @@ const label = computed(() => props.label || t(`log.phase.${props.phase}`) || pro
   color: var(--text-muted);
 }
 
-/* 中断：调用方/连接消失导致请求取消，非上游故障，故用中性的青色而非红色 */
+/* 中断：与失败同为「未成功终结」，统一用红色提示 */
 .phase-interrupted {
-  background: color-mix(in srgb, var(--accent-cyan) 20%, transparent);
-  color: var(--accent-cyan);
+  background: color-mix(in srgb, var(--accent-red) 20%, transparent);
+  color: var(--accent-red);
 }
 
 .retry-count {

@@ -743,3 +743,21 @@ CREATE INDEX IF NOT EXISTS idx_model_group_rels_group_id ON model_group_rels(gro
 -- ========================================
 
 ALTER TABLE request_logs ADD COLUMN route_source TEXT;
+
+-- ========================================
+-- VERSION:v1.45.0
+-- 入口模型 -> 小组 关联支持默认思考强度（reasoning_effort）。
+--
+-- 背景：小组把「同一能力的多个渠道模型」聚合成一层子路由，入口模型通过
+--   model_group_rels 关联小组。此前思考强度只能在小组内每个成员上单独配置，
+--   若一个小组下多数成员使用同一强度，需要在每个成员上重复填写。
+--
+-- 新增 model_group_rels.reasoning_effort 作为「该入口模型关联这个小组」时的默认值，
+-- 优先级从高到低为：
+--   1) 客户端请求中显式携带的 reasoning_effort（沿用既有逻辑）
+--   2) 小组成员的 reasoning_effort（model_group_members.reasoning_effort）
+--   3) 小组关联的默认值（本列）；为空表示不设置
+-- 这条默认值只对该入口模型的这条关联生效，同一小组被其他入口模型关联时可各自配置。
+-- ========================================
+
+ALTER TABLE model_group_rels ADD COLUMN reasoning_effort TEXT;

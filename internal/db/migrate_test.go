@@ -258,6 +258,17 @@ func TestMigrateModelGroupSchema(t *testing.T) {
 		}
 	}
 
+	// v1.45.0 adds the entry-model -> group relation's default reasoning effort;
+	// the group row's effort must be a real column for it to round-trip.
+	var hasEffortCol int
+	if err := conn.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('model_group_rels') WHERE name='reasoning_effort'").Scan(&hasEffortCol); err != nil {
+		t.Fatalf("pragma model_group_rels: %v", err)
+	}
+	if hasEffortCol != 1 {
+		t.Errorf("model_group_rels.reasoning_effort missing")
+	}
+
 	// The strategy default must be random (the group-level balancing default).
 	var def string
 	if err := conn.QueryRow(
