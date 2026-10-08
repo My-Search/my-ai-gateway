@@ -533,6 +533,7 @@ export default {
   'log.phase.success': '成功',
   'log.phase.fail': '失败',
   'log.phase.skip': '跳过',
+  'log.phase.interrupted': '中断',
 
   /* ========== Log List ========== */
   'log.list.title': '请求日志',

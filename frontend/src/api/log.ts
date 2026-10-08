@@ -33,6 +33,8 @@ export interface LogTrace {
   retryCount: number
   successCount: number
   failCount: number
+  /** 被中断（调用方/连接消失导致取消）的终态行数，不计入 failCount */
+  interruptedCount?: number
   modelName: string
   totalTimeMs: number
   startTime?: string

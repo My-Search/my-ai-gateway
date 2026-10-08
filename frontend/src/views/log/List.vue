@@ -137,7 +137,7 @@
     <template v-for="trace in traces" :key="trace.traceId" v-memo="[
       localeStore.locale,
       trace.startTime, trace.endTime, trace.modelName,
-      trace.retryCount, trace.successCount, trace.failCount, trace.totalTimeMs,
+      trace.retryCount, trace.successCount, trace.failCount, trace.interruptedCount, trace.totalTimeMs,
       trace.hasRequestData, trace.logs.length, expandedTraces.has(trace.traceId),
     ]">
       <div class="log-trace" @click="toggleTrace(trace.traceId)">
@@ -149,6 +149,7 @@
           <span class="trace-stats">
             <span v-if="trace.failCount > 0" class="badge badge-danger">{{ t('log.list.fail') }}</span>
             <span v-else-if="trace.successCount > 0" class="badge badge-success">{{ t('log.list.success') }}</span>
+            <span v-else-if="trace.interruptedCount" class="badge badge-info">{{ t('log.phase.interrupted') }}</span>
             <span v-if="trace.retryCount > 0" class="badge badge-warning">{{ t('log.list.retry', { count: trace.retryCount }) }}</span>
           </span>
           <span class="trace-time">{{ trace.displayTime }}</span>
@@ -174,7 +175,10 @@
               :title="routeSourceTitle(group.routeSource)"
             >{{ routeSourceLabel(group.routeSource) }}</span>
             {{ group.durationText }}
-            <span v-if="group.logs[0].message" class="log-message" :class="{ 'log-message-error': group.logs[0].phase === 'fail' }"> — {{ group.logs[0].message }}</span>
+            <span v-if="group.logs[0].message" class="log-message" :class="{
+              'log-message-error': group.logs[0].phase === 'fail',
+              'log-message-interrupted': group.logs[0].phase === 'interrupted',
+            }"> — {{ group.logs[0].message }}</span>
           </span>
           <span class="log-time">{{ group.timeText }}</span>
         </div>
@@ -756,9 +760,9 @@ function stopSse() {
   eventSource = null
 }
 
-/** 判断 trace 是否还在进行中（尚未成功/失败终结） */
+/** 判断 trace 是否还在进行中（尚未以成功/失败/中断终结） */
 function isTraceInProgress(trace: LogTrace): boolean {
-  return !trace.logs.some(l => l.phase === 'success' || l.phase === 'fail')
+  return !trace.logs.some(l => l.phase === 'success' || l.phase === 'fail' || l.phase === 'interrupted')
 }
 
 /** SSE 推送日志的分组缓存条目（展示字段在构建时一次性预计算，模板只插值） */
@@ -813,6 +817,7 @@ function upsertTraceFromSse(log: RequestLog) {
       retryCount: 0,
       successCount: 0,
       failCount: 0,
+      interruptedCount: 0,
       modelName: log.modelName || '',
       totalTimeMs: 0,
       hasRequestData: !!(log.requestHeaders || log.requestBody),
@@ -832,8 +837,9 @@ function recalcTrace(trace: LogTrace) {
   trace.retryCount = trace.logs.filter(l => l.phase === 'retry').length
   trace.successCount = trace.logs.filter(l => l.phase === 'success').length
   trace.failCount = trace.logs.filter(l => l.phase === 'fail').length
+  trace.interruptedCount = trace.logs.filter(l => l.phase === 'interrupted').length
   trace.totalTimeMs = trace.logs
-    .filter(l => (l.phase === 'success' || l.phase === 'fail') && l.responseTimeMs != null)
+    .filter(l => (l.phase === 'success' || l.phase === 'fail' || l.phase === 'interrupted') && l.responseTimeMs != null)
     .reduce((sum, l) => sum + (l.responseTimeMs || 0), 0)
   const first = trace.logs[0]
   const last = trace.logs[trace.logs.length - 1]
@@ -854,7 +860,8 @@ function recalcTrace(trace: LogTrace) {
   if (!isTraceInProgress(trace)) {
     const level = requestDataSaveLevel.value
     const retried = trace.retryCount > 0
-    const failed = trace.failCount > 0
+    // 中断与失败同属「未成功终结」，后端 flushPendingRequestData 也按同样口径保留数据
+    const failed = trace.failCount > 0 || (trace.interruptedCount ?? 0) > 0
     const kept =
       level === 'info' ? true
       : level === 'none' ? false
@@ -1165,6 +1172,8 @@ onUnmounted(() => {
 .log-time { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 .log-message { color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; flex-shrink: 1; }
 .log-message-error { color: var(--accent-red); }
+/* 中断不是上游故障，用青色与真实失败的红色区分 */
+.log-message-interrupted { color: var(--accent-cyan); }
 .reasoning-effort { color: var(--accent-purple); font-size: 11px; white-space: nowrap; margin-left: 2px; }
 /* 小组粘性来源徽章：命中（绿）与回退（黄）区分开，一眼看出为何没命中粘性成员 */
 .route-source-badge {

@@ -33,6 +33,21 @@ func (e *TimeoutError) Error() string {
 
 func (e *TimeoutError) Unwrap() error { return e.Wrapped }
 
+// isCanceledError reports whether err is a cancellation of the request's parent
+// context: whoever carried the connection went away (the caller, or a proxy /
+// tunnel in between), or the process is shutting down. It is not an upstream
+// fault, so it must never be logged or counted as a candidate failure.
+//
+// Only context.Canceled qualifies. An attempt-scoped timeout surfaces as
+// context.DeadlineExceeded and stays a real timeout, while a reset upstream
+// connection surfaces as EOF — neither wraps context.Canceled.
+func isCanceledError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, context.Canceled)
+}
+
 // isTimeoutError returns true when err is (or wraps) a TimeoutError, or is
 // a context deadline exceeded / cancelled from a timeout-derived context.
 // It is the single decision point so call sites never need strings.Contains.

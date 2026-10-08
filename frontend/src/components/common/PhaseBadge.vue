@@ -20,7 +20,7 @@
 import { computed } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 
-type Phase = 'start' | 'retry' | 'reroute' | 'success' | 'fail' | 'skip'
+type Phase = 'start' | 'retry' | 'reroute' | 'success' | 'fail' | 'skip' | 'interrupted'
 
 interface Props {
   phase: Phase
@@ -74,6 +74,12 @@ const label = computed(() => props.label || t(`log.phase.${props.phase}`) || pro
 .phase-skip {
   background: color-mix(in srgb, var(--text-muted) 20%, transparent);
   color: var(--text-muted);
+}
+
+/* 中断：调用方/连接消失导致请求取消，非上游故障，故用中性的青色而非红色 */
+.phase-interrupted {
+  background: color-mix(in srgb, var(--accent-cyan) 20%, transparent);
+  color: var(--accent-cyan);
 }
 
 .retry-count {

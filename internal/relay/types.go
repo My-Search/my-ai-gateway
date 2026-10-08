@@ -81,6 +81,20 @@ const (
 	StatusTimeout     = "timeout"
 )
 
+// PhaseInterrupted is the terminal phase for a request whose parent context was
+// canceled mid-flight (caller/connection gone, or the process shutting down).
+// It is deliberately distinct from PhaseFail: no candidate proved faulty, so the
+// trace must not read as "every member failed".
+const PhaseInterrupted = "interrupted"
+
+// StatusClientClosedRequest (nginx's 499) reports an interrupted request. Nobody
+// reads the code once the connection is gone; it exists so the gateway's own
+// logs and metrics never confuse an interruption with a real upstream failure.
+const StatusClientClosedRequest = 499
+
+// InterruptedMessage explains a canceled request without blaming a candidate.
+const InterruptedMessage = "客户端已断开或请求已取消"
+
 // Timeout constants.
 const (
 	NonStreamMinTimeoutMs = 30000

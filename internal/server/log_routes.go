@@ -155,7 +155,7 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 				// value is the empty string (AdminLogController.java:147-149).
 				var modelName string
 				haveModel := false
-				var retryCount, successCount, failCount int
+				var retryCount, successCount, failCount, interruptedCount int
 				var totalTimeMs int64
 				for _, lr := range parsed {
 					// List API excludes the large request data columns (loaded on demand),
@@ -172,13 +172,15 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 						successCount++
 					case "fail":
 						failCount++
+					case "interrupted":
+						interruptedCount++
 					}
 					if !haveModel && lr.ModelName != nil {
 						modelName = *lr.ModelName
 						haveModel = true
 					}
 					// Java only accumulates response time for terminal phases
-					if (lr.Phase == "success" || lr.Phase == "fail") && lr.ResponseTimeMs != nil {
+					if (lr.Phase == "success" || lr.Phase == "fail" || lr.Phase == "interrupted") && lr.ResponseTimeMs != nil {
 						totalTimeMs += int64(*lr.ResponseTimeMs)
 					}
 				}
@@ -186,16 +188,17 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 				// Java AdminLogController.java:161-164 formats both bounds with DT_FMT
 				// from the first/last log of the chronologically sorted slice.
 				trees = append(trees, logTree{
-					TraceID:        tid,
-					Logs:           logItems,
-					RetryCount:     retryCount,
-					SuccessCount:   successCount,
-					FailCount:      failCount,
-					ModelName:      modelName,
-					TotalTimeMs:    totalTimeMs,
-					StartTime:      dtFmt(parsed[0].CreatedAt.T),
-					EndTime:        dtFmt(parsed[len(parsed)-1].CreatedAt.T),
-					HasRequestData: hasData[tid],
+					TraceID:          tid,
+					Logs:             logItems,
+					RetryCount:       retryCount,
+					SuccessCount:     successCount,
+					FailCount:        failCount,
+					InterruptedCount: interruptedCount,
+					ModelName:        modelName,
+					TotalTimeMs:      totalTimeMs,
+					StartTime:        dtFmt(parsed[0].CreatedAt.T),
+					EndTime:          dtFmt(parsed[len(parsed)-1].CreatedAt.T),
+					HasRequestData:   hasData[tid],
 				})
 			}
 
@@ -538,14 +541,17 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 // Field order matches AdminLogController.java:131-164 (hasRequestData is added
 // last, after the endTime sort).
 type logTree struct {
-	TraceID        string `json:"traceId"`
-	Logs           []any  `json:"logs"`
-	RetryCount     int    `json:"retryCount"`
-	SuccessCount   int    `json:"successCount"`
-	FailCount      int    `json:"failCount"`
-	ModelName      string `json:"modelName"`
-	TotalTimeMs    int64  `json:"totalTimeMs"`
-	StartTime      string `json:"startTime"`
-	EndTime        string `json:"endTime"`
-	HasRequestData bool   `json:"hasRequestData"`
+	TraceID      string `json:"traceId"`
+	Logs         []any  `json:"logs"`
+	RetryCount   int    `json:"retryCount"`
+	SuccessCount int    `json:"successCount"`
+	FailCount    int    `json:"failCount"`
+	// InterruptedCount keeps an aborted request (caller/proxy went away) out of
+	// FailCount, so the UI does not present it as an upstream failure.
+	InterruptedCount int    `json:"interruptedCount"`
+	ModelName        string `json:"modelName"`
+	TotalTimeMs      int64  `json:"totalTimeMs"`
+	StartTime        string `json:"startTime"`
+	EndTime          string `json:"endTime"`
+	HasRequestData   bool   `json:"hasRequestData"`
 }

@@ -205,6 +205,34 @@ func (w *LogWriter) WriteFail(ctx context.Context, traceID, modelName string, gw
 	w.flushPendingRequestData(ctx, traceID, "fail")
 }
 
+// WriteInterrupted records the terminal entry for a request whose parent context
+// was canceled before any candidate could fault: the caller (or a proxy carrying
+// the connection) went away, or the process is shutting down. It is written as
+// its own phase so the trace is not mistaken for "every candidate failed".
+func (w *LogWriter) WriteInterrupted(ctx context.Context, traceID, modelName string, gwKeyID int64,
+	msg string, responseTimeMs int64, retryIndex int) {
+
+	var gwID *int64
+	if gwKeyID > 0 {
+		gwID = &gwKeyID
+	}
+
+	rt := int(responseTimeMs)
+	rec := &models.RequestLog{
+		TraceID:         traceID,
+		ModelName:       models.Str(modelName),
+		GatewayAPIKeyID: gwID,
+		Phase:           "interrupted",
+		Status:          models.Str("interrupted"),
+		Message:         models.Str(msg),
+		RetryIndex:      models.Int(retryIndex),
+		ResponseTimeMs:  models.Int(rt),
+		CreatedAt:       nowAPITime(),
+	}
+	w.insertAndPublish(ctx, rec)
+	w.flushPendingRequestData(ctx, traceID, "interrupted")
+}
+
 // ---------------------------------------------------------------------------
 // internal helpers
 // ---------------------------------------------------------------------------
@@ -309,7 +337,9 @@ func (w *LogWriter) flushPendingRequestData(ctx context.Context, traceID, finalP
 		level = parseSaveLevel(w.configSvc.GetValue(ctx, "request_data_save_level", "info"))
 	}
 
-	failed := finalPhase == "fail"
+	// An interrupted request never succeeded either, so the "warn" save level
+	// keeps its raw data for diagnosis just like a final failure.
+	failed := finalPhase == "fail" || finalPhase == "interrupted"
 	shouldKeep := false
 	switch level {
 	case saveLevelNone:

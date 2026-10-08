@@ -533,6 +533,7 @@ export default {
   'log.phase.success': 'Success',
   'log.phase.fail': 'Failed',
   'log.phase.skip': 'Skipped',
+  'log.phase.interrupted': 'Interrupted',
 
   /* ========== Log List ========== */
   'log.list.title': 'Request Logs',

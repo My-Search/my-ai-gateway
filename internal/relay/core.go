@@ -165,9 +165,21 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 	// 从剩余候选中挑选」的语义，且不会打散小组。
 	retryIndex := 0
 	var lastErr error
+	interrupted := false
 	remaining := append([]RoutingCandidate(nil), candidates...)
 
 	for len(remaining) > 0 {
+		// Stop before dispatching another candidate once the parent context is
+		// done: every further attempt would fail instantly with the same error,
+		// turning one interrupted request into a trace that reads as "all
+		// candidates failed". A cancellation is reported as an interruption; the
+		// global 600s ceiling stays a plain timeout.
+		if err := ctx.Err(); err != nil {
+			lastErr = err
+			interrupted = isCanceledError(err)
+			break
+		}
+
 		candidate := remaining[0]
 
 		if scope := c.circuitBreakScope(ctx, candidate); scope != "" {
@@ -224,6 +236,16 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 				retryIndex++
 				continue
 			}
+			// Cancellation is not a candidate fault: break out immediately and
+			// report an interruption instead of tripping the breaker, logging a
+			// "retries exhausted" skip, and cascading to the remaining members.
+			if isCanceledError(err) {
+				slog.Info("请求上下文已取消，终止候选循环", "channel", candidate.ChannelName,
+					"retryIndex", retryIndex, "remaining", len(remaining))
+				lastErr = err
+				interrupted = true
+				break
+			}
 			slog.Warn("候选失败（重试耗尽）", "channel", candidate.ChannelName, "error", err)
 			c.handleFailure(ctx, req, candidate)
 			remaining = removeCandidate(remaining, candidate)
@@ -251,8 +273,25 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 		return RelayResult{Body: transformed, StatusCode: 200, ClientFormat: clientFormat}
 	}
 
-	failMsg := buildFailMessage(lastErr)
 	elapsed := time.Since(startTime).Milliseconds()
+	if interrupted {
+		if c.LogWriter != nil {
+			c.LogWriter.WriteInterrupted(ctx, traceID, req.Model, gwKeyID, InterruptedMessage, elapsed, retryIndex)
+		}
+		if c.MetricsFn != nil {
+			c.MetricsFn(req.Model, "", "interrupted", elapsed)
+		}
+		// The caller is gone, so nobody reads this body; returning it keeps the
+		// HTTP layer's status honest instead of dressing the cancel up as a 503.
+		return RelayResult{
+			Body:         BuildErrorBody(clientFormat, InterruptedMessage, "api_error", StatusClientClosedRequest),
+			StatusCode:   StatusClientClosedRequest,
+			Interrupted:  true,
+			ClientFormat: clientFormat,
+		}
+	}
+
+	failMsg := buildFailMessage(lastErr)
 	if c.LogWriter != nil {
 		c.LogWriter.WriteFail(ctx, traceID, req.Model, gwKeyID, "error", failMsg, elapsed, nil, retryIndex)
 	}
@@ -292,6 +331,17 @@ func (c *RelayCore) invokeCandidateWithRetries(ctx context.Context, traceID stri
 
 		_ = status
 		attemptDuration := time.Since(attemptStart).Milliseconds()
+
+		// A canceled parent context is not an upstream fault: the candidate never
+		// got a chance to answer. Retrying is pointless (every attempt would fail
+		// instantly), and recording the configured timeout as a first-byte sample
+		// would poison the adaptive timeout with fake 30-60s latencies.
+		if isCanceledError(err) {
+			slog.Info("请求上下文已取消，中止候选重试", "channel", candidate.ChannelName,
+				"model", candidate.ModelName, "attempt", attempt, "elapsedMs", attemptDuration)
+			return "", nil, err
+		}
+
 		c.LatencyTracker.RecordTimeout(candidate.ChannelID, candidate.ChannelModelID, timeoutMs)
 		slog.Warn("候选尝试失败", "attempt", attempt, "maxAttempts", maxAttempts,
 			"channel", candidate.ChannelName, "key", candidate.APIKeyName,
@@ -421,11 +471,20 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 	// 候选顺序已由 BuildCandidates 排定（小组保持连续），按序尝试即可。
 	retryIndex := 0
 	var lastErr error
+	interrupted := false
 	remaining := append([]RoutingCandidate(nil), candidates...)
 	currentReq := req
 	finalLogged := false
 
 	for len(remaining) > 0 {
+		// Same guard as the non-stream loop: once the parent context is done,
+		// dispatching more members only manufactures identical instant failures.
+		if err := ctx.Err(); err != nil {
+			lastErr = err
+			interrupted = isCanceledError(err)
+			break
+		}
+
 		candidate := remaining[0]
 
 		if scope := c.circuitBreakScope(ctx, candidate); scope != "" {
@@ -530,6 +589,15 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 			continue
 		}
 
+		// Cancellation is not a candidate fault (see the non-stream loop).
+		if isCanceledError(firstByte.err) {
+			slog.Info("请求上下文已取消，终止流式候选循环", "channel", candidate.ChannelName,
+				"retryIndex", retryIndex, "remaining", len(remaining))
+			lastErr = firstByte.err
+			interrupted = true
+			break
+		}
+
 		slog.Warn("流式候选失败（重试耗尽）", "channel", candidate.ChannelName, "error", firstByte.err)
 		c.handleFailure(ctx, currentReq, candidate)
 		remaining = removeCandidate(remaining, candidate)
@@ -543,15 +611,29 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 		}
 	}
 
-	failMsg := buildFailMessage(lastErr)
 	c.ContentMgr.Clear(traceID)
 	c.streamTranslate.Clear(traceID)
+	elapsed := time.Since(startTime).Milliseconds()
+
+	if interrupted {
+		if c.LogWriter != nil {
+			c.LogWriter.WriteInterrupted(ctx, traceID, req.Model, gwKeyID, InterruptedMessage, elapsed, retryIndex)
+		}
+		if c.MetricsFn != nil {
+			c.MetricsFn(req.Model, "", "interrupted", elapsed)
+		}
+		// The stream is already dead on the client side; the sink's error event
+		// goes nowhere, so it is only attempted for non-interrupted failures.
+		return
+	}
+
+	failMsg := buildFailMessage(lastErr)
 	if c.LogWriter != nil {
 		c.LogWriter.WriteFail(ctx, traceID, req.Model, gwKeyID, "error", failMsg,
-			time.Since(startTime).Milliseconds(), nil, retryIndex)
+			elapsed, nil, retryIndex)
 	}
 	if c.MetricsFn != nil {
-		c.MetricsFn(req.Model, "", "fail", time.Since(startTime).Milliseconds())
+		c.MetricsFn(req.Model, "", "fail", elapsed)
 	}
 	if !finalLogged && sink.OnError != nil {
 		sink.OnError(errors.New(failMsg))
@@ -601,6 +683,16 @@ func (c *RelayCore) streamCandidateLoop(ctx context.Context, traceID string, gwK
 			return streamResult{err: err, firstByteMs: firstByteMs}
 		}
 		attemptDuration := time.Since(attemptStart).Milliseconds()
+
+		// A canceled parent context is not an upstream fault: stop retrying
+		// (each attempt would fail instantly) and keep the adaptive timeout
+		// window free of fake samples.
+		if isCanceledError(err) {
+			slog.Info("请求上下文已取消，中止流式候选重试", "channel", candidate.ChannelName,
+				"model", candidate.ModelName, "attempt", attempt, "elapsedMs", attemptDuration)
+			return streamResult{err: err, firstByteMs: firstByteMs}
+		}
+
 		c.LatencyTracker.RecordTimeout(candidate.ChannelID, candidate.ChannelModelID, timeoutMs)
 		if attempt < maxAttempts {
 			retryReq := currentReq
