@@ -75,6 +75,7 @@
           <div class="card-top">
             <div class="card-icon-wrap" :style="{ background: iconGradient(card.model.modelName) }">
               <span class="card-icon-letter">{{ card.model.modelName.charAt(0).toUpperCase() }}</span>
+              <span class="icon-corner-tag">{{ t('model.list.cornerTag') }}</span>
             </div>
             <div class="card-name-area">
               <div class="card-name-row">
@@ -586,6 +587,8 @@ onUnmounted(() => {
 }
 
 .card-icon-wrap {
+  position: relative;
+  overflow: hidden;
   width: 40px;
   height: 40px;
   border-radius: 10px;
@@ -601,6 +604,29 @@ onUnmounted(() => {
   color: #fff;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
   line-height: 1;
+  user-select: none;
+}
+
+/* 图标右下角斜置「模型」角标：与模型小组页的「小组」角标同款，
+   横条中心对准右下角斜切线中点 (30,30)，-45° 旋转后与底边中点→右边中点
+   的斜线平行，两端由外层 overflow:hidden 裁切成标准 corner ribbon。
+   深色缎面 + 白字，在任意挡色渐变上都可读。 */
+.icon-corner-tag {
+  position: absolute;
+  top: 30px;
+  left: 30px;
+  width: 60px;
+  padding: 1px 0;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.3;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+  transform: translate(-50%, -50%) rotate(-45deg);
+  pointer-events: none;
+  white-space: nowrap;
   user-select: none;
 }
 

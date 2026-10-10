@@ -39,10 +39,15 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 		out := make([]models.ModelGroup, 0, len(rows))
 		for _, r := range rows {
 			grp := store.RowToModelGroup(r)
-			cnt := d.Store.QueryOneOrZero(ctx, "SELECT COUNT(*) cnt FROM model_group_members WHERE group_id = ? AND enabled = 1", grp.ID)
-			if cnt != nil {
-				grp.MemberCount = models.Int(cnt.Int("cnt", 0))
-			}
+			// 摘要统一走 groupMemberSummaryOf，与入口模型关联页的小组行同口径；
+			// 小组数量级小，逐组聚合可接受（详情页已按同模式取数）。
+			summary := groupMemberSummaryOf(ctx, d.Store, grp.ID)
+			grp.MemberCount = models.Int(summary.total)
+			grp.AvailableCount = models.Int(summary.routable)
+			grp.BrokenCount = models.Int(summary.brokenCount)
+			grp.TTFTMs = summary.ttftMs
+			grp.SampleCount = summary.sampleCount
+			grp.OutputSpeed = summary.outputSpeed
 			out = append(out, grp)
 		}
 		httpx.OK(c, out)

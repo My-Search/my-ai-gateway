@@ -155,6 +155,13 @@ type ModelGroup struct {
 	UpdatedAt APITime `json:"updatedAt"`
 	// MemberCount 仅列表接口计算返回。
 	MemberCount *int `json:"memberCount,omitempty"`
+	// 以下摘要字段仅列表接口计算返回，口径与入口模型关联页的小组行一致
+	// （groupMemberSummaryOf，按可路由成员统计；性能样本为 24h 日志聚合）。
+	AvailableCount *int     `json:"availableCount,omitempty"`
+	BrokenCount    *int     `json:"brokenCount,omitempty"`
+	TTFTMs         *int64   `json:"ttftMs,omitempty"`
+	SampleCount    *int     `json:"sampleCount,omitempty"`
+	OutputSpeed    *float64 `json:"outputSpeed,omitempty"`
 }
 
 // Group strategy constants.

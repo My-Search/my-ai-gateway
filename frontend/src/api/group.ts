@@ -18,6 +18,14 @@ export interface ModelGroup {
   updatedAt?: string
   /** 成员数（列表接口返回） */
   memberCount?: number | null
+  /** 可路由成员数（列表接口返回，口径同入口模型关联页小组行：成员启用 + 渠道模型启用 + 渠道启用 + 有可用 Key） */
+  availableCount?: number | null
+  /** 熔断成员数（可路由成员中处于熔断状态的个数，列表接口返回） */
+  brokenCount?: number | null
+  /** 可路由成员 24h 性能样本聚合（列表接口返回，与渠道模型行同口径）；无样本为 null */
+  ttftMs?: number | null
+  sampleCount?: number | null
+  outputSpeed?: number | null
 }
 
 /** 小组成员：一个渠道模型及其组内权重 / 默认思考强度 */

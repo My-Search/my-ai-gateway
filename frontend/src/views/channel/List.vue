@@ -31,7 +31,11 @@
         </thead>
         <tbody>
           <tr v-for="ch in channels" :key="ch.id">
-            <td><strong>{{ ch.name }}</strong></td>
+            <td>
+              <strong>
+                <router-link :to="`/admin/channel/models/${ch.id}`" class="channel-name-link">{{ ch.name }}</router-link>
+              </strong>
+            </td>
             <td><span class="badge badge-info">{{ protocolLabel(ch.channelType) }}</span></td>
             <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text-muted);">
               {{ ch.baseUrl }}
@@ -86,7 +90,9 @@
     <div class="mobile-card-list">
       <div v-for="ch in channels" :key="'m-' + ch.id" class="mobile-card">
         <div class="mobile-card-header">
-          <strong class="mobile-card-title">{{ ch.name }}</strong>
+          <strong class="mobile-card-title">
+            <router-link :to="`/admin/channel/models/${ch.id}`" class="channel-name-link">{{ ch.name }}</router-link>
+          </strong>
           <ToggleSwitch
             :model-value="ch.enabled === 1"
             :active-label="t('common.enabled')"
@@ -705,5 +711,17 @@ onActivated(() => {
   opacity: 0.5;
   cursor: not-allowed;
   transform: none;
+}
+/* 渠道名称可点击跳详情：下划线样式与关联页小组名链接（group-name-link）一致 */
+.channel-name-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--text-secondary) 55%, transparent);
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+.channel-name-link:hover {
+  color: var(--accent-blue, #58a6ff);
+  text-decoration-color: currentColor;
 }
 </style>

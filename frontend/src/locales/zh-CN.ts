@@ -310,6 +310,7 @@ export default {
   'model.list.toggleSuccess': '状态切换成功',
   'model.list.clickToEnable': '点击启用',
   'model.list.clickToDisable': '点击禁用',
+  'model.list.cornerTag': '模型',
 
   /* ========== Model Form ========== */
   'model.form.editTitle': '编辑模型',
@@ -780,9 +781,12 @@ export default {
 
   /* ========== Model Group List ========== */
   'group.list.title': '模型小组',
+  'group.list.subtitle': '按能力聚合渠道模型，组内独立路由；支持策略、会话粘性与性能监控',
   'group.list.add': '新建小组',
   'group.list.searchPlaceholder': '搜索小组名称…',
   'group.list.allStatus': '全部状态',
+  'group.list.allTypes': '全部策略',
+  'group.list.cornerTag': '小组',
   'group.list.name': '小组名称',
   'group.list.strategy': '路由方式',
   'group.list.sticky': '会话粘性',
@@ -791,6 +795,16 @@ export default {
   'group.list.enabled': '启用',
   'group.list.actions': '操作',
   'group.list.manageMembers': '管理成员',
+  'group.list.statMembers': '成员',
+  'group.list.statRoutable': '可路由',
+  'group.list.statBroken': '熔断成员',
+  'group.list.statAvgResponse': '首字节平均时间',
+  'group.list.statAvgOutputSpeed': '生成速度',
+  'group.list.toggleTitle': '切换状态',
+  'group.list.toggleMessage': '确定{action}小组「{name}」吗？',
+  'group.list.enableConfirm': '启用',
+  'group.list.disableConfirm': '禁用',
+  'group.list.toggleSuccess': '状态切换成功',
   'group.list.deleteConfirm': '确认删除小组「{name}」？小组内成员配置将一并删除。',
   'group.list.deleted': '小组已删除',
   'group.list.empty': '还没有模型小组，点击「新建小组」创建一个。',

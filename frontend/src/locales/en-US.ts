@@ -310,6 +310,7 @@ export default {
   'model.list.toggleSuccess': 'Status toggled successfully',
   'model.list.clickToEnable': 'Click to enable',
   'model.list.clickToDisable': 'Click to disable',
+  'model.list.cornerTag': 'Model',
 
   /* ========== Model Form ========== */
   'model.form.editTitle': 'Edit Model',
@@ -780,9 +781,12 @@ export default {
 
   /* ========== Model Group List ========== */
   'group.list.title': 'Model Groups',
+  'group.list.subtitle': 'Channel models grouped by capability with independent in-group routing: strategy, session sticky and performance stats',
   'group.list.add': 'New Group',
   'group.list.searchPlaceholder': 'Search groups…',
   'group.list.allStatus': 'All',
+  'group.list.allTypes': 'All Strategies',
+  'group.list.cornerTag': 'Group',
   'group.list.name': 'Name',
   'group.list.strategy': 'Strategy',
   'group.list.sticky': 'Session Sticky',
@@ -791,6 +795,16 @@ export default {
   'group.list.enabled': 'Enabled',
   'group.list.actions': 'Actions',
   'group.list.manageMembers': 'Members',
+  'group.list.statMembers': 'Members',
+  'group.list.statRoutable': 'Routable',
+  'group.list.statBroken': 'Broken members',
+  'group.list.statAvgResponse': 'Avg First Byte',
+  'group.list.statAvgOutputSpeed': 'Output Speed',
+  'group.list.toggleTitle': 'Toggle Status',
+  'group.list.toggleMessage': '{action} group "{name}"?',
+  'group.list.enableConfirm': 'Enable',
+  'group.list.disableConfirm': 'Disable',
+  'group.list.toggleSuccess': 'Status updated',
   'group.list.deleteConfirm': 'Delete group "{name}"? Its member configuration will be removed too.',
   'group.list.deleted': 'Group deleted',
   'group.list.empty': 'No model groups yet. Click "New Group" to create one.',
