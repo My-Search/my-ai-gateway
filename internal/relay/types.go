@@ -125,6 +125,21 @@ func NewNonRetryableError(status int, body string) *NonRetryableProviderError {
 	}
 }
 
+// isRequestFaultStatus reports whether an upstream status blames the request,
+// not the model service. Such a candidate gets exactly one attempt — no retry
+// and no breaker trip — because the model is healthy and a faultless request
+// would succeed; tripping the breaker would take it down for every tenant.
+// Note 401/403/404 are deliberately absent: a wrong key or model name fails
+// every request until we fix the configuration, so they must trip the breaker.
+func isRequestFaultStatus(status int) bool {
+	switch status {
+	case 400, 413, 422:
+		return true
+	default:
+		return false
+	}
+}
+
 // InternalRequest is the unified internal request representation.
 type InternalRequest struct {
 	Model              string

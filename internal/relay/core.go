@@ -228,9 +228,10 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 		if err != nil {
 			var nre *NonRetryableProviderError
 			if errors.As(err, &nre) {
-				slog.Warn("候选返回400，不触发熔断，直接重路由", "channel", candidate.ChannelName)
+				slog.Warn("候选返回请求级错误，不触发熔断，直接重路由", "channel", candidate.ChannelName,
+					"status", nre.HTTPStatus)
 				c.logPhase(ctx, traceID, gwKeyID, candidate, req, PhaseSkip,
-					"400错误跳过 "+candidateLabel(candidate)+" 原因: "+err.Error(), retryIndex, nil, nil)
+					"请求级错误跳过 "+candidateLabel(candidate)+" 原因: "+err.Error(), retryIndex, nil, nil)
 				remaining = removeCandidate(remaining, candidate)
 				lastErr = err
 				retryIndex++
@@ -410,8 +411,8 @@ func (c *RelayCore) callProvider(ctx context.Context, attemptCtx context.Context
 		}
 	}
 
-	if resp.StatusCode == 400 {
-		return "", resp.StatusCode, firstByte, NewNonRetryableError(400, string(buf))
+	if isRequestFaultStatus(resp.StatusCode) {
+		return "", resp.StatusCode, firstByte, NewNonRetryableError(resp.StatusCode, string(buf))
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return string(buf), resp.StatusCode, firstByte, nil
@@ -576,9 +577,10 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 
 		var nre *NonRetryableProviderError
 		if errors.As(firstByte.err, &nre) {
-			slog.Warn("流式候选返回400，不触发熔断，直接重路由", "channel", candidate.ChannelName)
+			slog.Warn("流式候选返回请求级错误，不触发熔断，直接重路由", "channel", candidate.ChannelName,
+				"status", nre.HTTPStatus)
 			c.logPhase(ctx, traceID, gwKeyID, candidate, req, PhaseSkip,
-				"400错误跳过 "+candidateLabel(candidate)+" 原因: "+firstByte.err.Error(), retryIndex, nil, nil)
+				"请求级错误跳过 "+candidateLabel(candidate)+" 原因: "+firstByte.err.Error(), retryIndex, nil, nil)
 			remaining = removeCandidate(remaining, candidate)
 			lastErr = firstByte.err
 			retryIndex++
@@ -738,9 +740,9 @@ func (c *RelayCore) callProviderStream(ctx context.Context, req *InternalRequest
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 400 {
+	if isRequestFaultStatus(resp.StatusCode) {
 		body, _ := io.ReadAll(resp.Body)
-		return NewNonRetryableError(400, string(body)), nil
+		return NewNonRetryableError(resp.StatusCode, string(body)), nil
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
