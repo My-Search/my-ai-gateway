@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-<img width="2560" height="1187" alt="image" src="https://github.com/user-attachments/assets/c80b1224-b8b7-496b-bf6f-ef8083903cf1" />
+<img width="2560" height="1187" alt="image" src="https://github.com/user-attachments/assets/b9e97f74-13a7-41b1-bc04-49be7353d510" />
 
 个人统一 AI 网关，提供多渠道聚合、模型路由、负载均衡、熔断保护与 API Key 管理能力。对外暴露 OpenAI / Anthropic 兼容接口，将多个 AI 供应商统一为单一入口。
 
