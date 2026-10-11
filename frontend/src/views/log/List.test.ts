@@ -242,7 +242,7 @@ describe('请求日志页 - 性能重构回归', () => {
     const badge = wrapper.find('.route-source-badge')
     expect(badge.exists()).toBe(true)
     expect(badge.text()).toBe('粘性回退')
-    expect(badge.classes()).toContain('route-source-badge--sticky_fallback-skip')
+    expect(badge.classes()).toContain('route-source-badge--skip')
   })
 
   it('「请求开始」的候选最终被熔断跳过时，粘性回退徽章同样降为灰色', async () => {
@@ -263,7 +263,29 @@ describe('请求日志页 - 性能重构回归', () => {
 
     const badges = wrapper.findAll('.route-source-badge')
     expect(badges.length).toBe(2)
-    expect(badges[1].classes()).toContain('route-source-badge--sticky_fallback-skip')
+    // start 行仍是「正在回退」的活跃态：保持原色，不加 skip 修饰类。
+    expect(badges[0].classes()).not.toContain('route-source-badge--skip')
+    // 最终 skip 行降为灰色，与「跳过」PhaseBadge 同视觉优先级。
+    expect(badges[1].classes()).toContain('route-source-badge--skip')
+  })
+
+  it('粘性命中的候选被熔断跳过时，徽章同样降为灰色', async () => {
+    listMock.mockResolvedValueOnce(
+      listResponse([
+        makeTrace('t1', [
+          // 粘性命中的成员自己未承接成功，最终整行以 skip 终结。
+          makeLog({ id: 1, traceId: 't1', phase: 'skip', channelName: 'ch-a',
+            message: '模型级熔断跳过 ch-a', routeSource: 'sticky' }),
+        ]),
+      ]),
+    )
+    const wrapper = await mountPage()
+    await wrapper.vm.$nextTick()
+
+    const badge = wrapper.find('.route-source-badge')
+    expect(badge.text()).toBe('粘性')
+    expect(badge.classes()).toContain('route-source-badge--sticky')
+    expect(badge.classes()).toContain('route-source-badge--skip')
   })
 
   it('详情弹框里说明路由来源（粘性命中）', async () => {

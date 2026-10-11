@@ -941,15 +941,11 @@ function routeSourceLabel(source?: RouteSource): string {
   return ''
 }
 
-/**
- * 徽章配色跟随行的最终状态：候选已以「跳过」终结时与 skip 徽章同样降为灰色，
- * 避免最终被跳过的行仍用黄色强调色误导为「正在回退/重试」。
- */
 function routeSourceBadgeClass(group: LogGroup): string {
-  if (group.routeSource === 'sticky_fallback' && group.logs[0].phase === 'skip') {
-    return 'route-source-badge--sticky_fallback-skip'
-  }
-  return 'route-source-badge--' + group.routeSource
+  const base = 'route-source-badge--' + group.routeSource
+  // 徽章配色跟随行的最终状态：候选已以「跳过」终结时追加 --skip 修饰类降为灰色，
+  // 避免已终结的跳过行仍用绿/黄强调色误导为「正在回退」。
+  return group.logs[0].phase === 'skip' ? `${base} route-source-badge--skip` : base
 }
 
 /** 粘性标记的悬浮说明。 */
@@ -1234,7 +1230,8 @@ onUnmounted(() => {
   color: var(--accent-blue);
 }
 /* 小组粘性来源徽章：命中（绿）与回退（黄）区分开，一眼看出为何没命中粘性成员。
-   回退的候选若已以「跳过」终结，则与 skip 徽章同色（灰），弱化为已终结状态。 */
+   --skip 修饰类必须排在最后（同特异性靠后者胜出）：候选已以「跳过」终结时
+   覆盖上面的强调色，与 skip 徽章同色（灰），把已终结状态降为低视觉优先级。 */
 .route-source-badge {
   display: inline-flex;
   align-items: center;
@@ -1254,7 +1251,7 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--accent-yellow) 18%, transparent);
   color: var(--accent-yellow);
 }
-.route-source-badge--sticky_fallback-skip {
+.route-source-badge--skip {
   background: color-mix(in srgb, var(--text-muted) 20%, transparent);
   color: var(--text-muted);
 }
