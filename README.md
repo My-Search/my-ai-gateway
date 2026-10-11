@@ -176,20 +176,26 @@ docker compose down
 
 The SQLite database file is mounted at `./data/gateway.db`; container rebuilds will not lose data.
 
-### Database Maintenance (Reclaim Disk Space)
+### Database Maintenance (Disk Space Is Reclaimed Automatically)
 
-Log cleanup only issues `DELETE`, and SQLite is configured with `auto_vacuum=NONE`. Freed pages stay inside the
-database file and are never returned to the OS, so the file grows and does not shrink on its own. To reclaim that
-space, run `VACUUM` while the backend is stopped (it needs exclusive access):
+SQLite never returns freed pages to the OS unless the database is built in an auto-vacuum mode. The gateway now
+switches the database to `auto_vacuum=INCREMENTAL` on startup: the first start after upgrading performs a one-time
+`VACUUM` that both enables the mode and returns every page stranded by past log cleanups to the OS. From then on the
+30-minute log cleanup releases the pages it frees via `PRAGMA incremental_vacuum`, so the file no longer grows
+unbounded. No manual action is required.
+
+If the available disk space is smaller than the current database file, the one-time conversion is skipped with a
+warning (a `VACUUM` needs temporary space roughly equal to the file). Free some space and restart, or run it manually
+while the backend is stopped:
 
 ```bash
 docker compose down
-sqlite3 data/gateway.db "VACUUM;"
+sqlite3 data/gateway.db "PRAGMA auto_vacuum=INCREMENTAL; VACUUM;"
 docker compose up -d
 ```
 
-This can be done periodically. It is a disk-space optimization only and is not required for correctness; back up
-`data/gateway.db` first as a precaution.
+The startup conversion is a disk-space optimization; it is idempotent and skipped once the database is already in
+incremental mode. Back up `data/gateway.db` first as a precaution.
 
 ### Common Commands
 

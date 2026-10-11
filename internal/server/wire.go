@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/my-search/my-ai-gateway/internal/channelload"
+	"github.com/my-search/my-ai-gateway/internal/db"
 	"github.com/my-search/my-ai-gateway/internal/jtime"
 	"github.com/my-search/my-ai-gateway/internal/metrics"
 	"github.com/my-search/my-ai-gateway/internal/relay"
@@ -514,6 +515,13 @@ func runLogCleanup(ctx context.Context, st *store.Store, cfgSvc *service.ConfigS
 	}
 	if n1, n2 := cleanExpiredRequestData(ctx, st, ttlHours, retryFailTTL); n1+n2 > 0 {
 		slog.Info("清理原始请求数据", "normalTtlHours", ttlHours, "retryFailTtlHours", retryFailTTL, "rows", n1+n2)
+	}
+
+	// Return the pages the deletes just freed to the OS. On a database that has
+	// not been switched to auto_vacuum=INCREMENTAL this is a harmless no-op; once
+	// it has, it keeps the file from growing unbounded between restarts.
+	if err := db.IncrementalVacuum(st.DB); err != nil {
+		slog.Warn("增量回收空闲页失败", "error", err)
 	}
 }
 

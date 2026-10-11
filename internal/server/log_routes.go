@@ -3,12 +3,14 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/my-search/my-ai-gateway/internal/db"
 	"github.com/my-search/my-ai-gateway/internal/httpx"
 	"github.com/my-search/my-ai-gateway/internal/jtime"
 	"github.com/my-search/my-ai-gateway/internal/models"
@@ -241,6 +243,10 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 		// so the usage chart / dashboard stop serving pre-cleanup numbers for up
 		// to a full TTL instead of only the 15s front-end poll interval.
 		d.DashCache.Invalidate()
+		// Release the freed pages immediately, matching the periodic cleanup task.
+		if err := db.IncrementalVacuum(d.Store.DB); err != nil {
+			slog.Warn("增量回收空闲页失败", "error", err)
+		}
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("message", "已清理 30 天前的日志"))
 	})
 

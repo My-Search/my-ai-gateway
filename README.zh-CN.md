@@ -176,18 +176,23 @@ docker compose down
 
 SQLite 数据库文件挂载在 `./data/gateway.db`，容器重建不会丢失数据。
 
-### 数据库维护（回收磁盘空间）
+### 数据库维护（磁盘空间自动回收）
 
-日志清理只执行 `DELETE`，而 SQLite 配置为 `auto_vacuum=NONE`，释放的页会保留在数据库文件内、不会归还给操作系统，
-因此文件只增不减。如需回收这部分空间，请在**停止后端**后执行 `VACUUM`（需要独占访问）：
+SQLite 默认（`auto_vacuum=NONE`）不会把释放的页归还给操作系统。现在网关会在启动时自动把数据库切换为
+`auto_vacuum=INCREMENTAL`：升级后的首次启动会执行一次性 `VACUUM`，既启用该模式，也把历史日志清理遗留在文件内的
+空闲页全部归还给磁盘。此后每 30 分钟的日志清理会通过 `PRAGMA incremental_vacuum` 释放本次 DELETE 产生的空闲页，
+文件不再无限膨胀。无需任何手动操作。
+
+若磁盘可用空间小于当前数据库文件大小，一次性转换会跳过并打印告警（`VACUUM` 需要约等于文件大小的临时空间）。
+请清理出空间后重启，或在停止后端后手动执行：
 
 ```bash
 docker compose down
-sqlite3 data/gateway.db "VACUUM;"
+sqlite3 data/gateway.db "PRAGMA auto_vacuum=INCREMENTAL; VACUUM;"
 docker compose up -d
 ```
 
-可定期执行。此项仅为磁盘空间优化，不影响功能正确性；执行前建议先备份 `data/gateway.db`。
+启动时的转换仅为磁盘空间优化，具备幂等性：数据库已处于增量模式时会直接跳过。执行前建议先备份 `data/gateway.db`。
 
 ### 常用命令
 

@@ -57,9 +57,13 @@ func (a *App) Register(r *gin.Engine) {
 	r.Use(httpx.ActuatorToken(d.Cfg.ActuatorToken))
 
 	// --- Actuator ---------------------------------------------------------
-	r.GET("/actuator/health", func(c *gin.Context) {
+	// HEAD is registered alongside GET so `wget --spider` (which issues HEAD)
+	// health probes succeed, matching Spring Boot's actuator behaviour.
+	healthHandler := func(c *gin.Context) {
 		httpx.JSON(c, http.StatusOK, gin.H{"status": "UP"})
-	})
+	}
+	r.GET("/actuator/health", healthHandler)
+	r.HEAD("/actuator/health", healthHandler)
 	r.GET("/actuator/prometheus", gin.WrapH(promhttp.HandlerFor(d.Metrics.Reg, promhttp.HandlerOpts{})))
 
 	// --- Static: uploaded files -------------------------------------------

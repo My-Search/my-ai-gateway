@@ -40,14 +40,23 @@ func main() {
 	}
 	defer conn.Close()
 
-	readConn := db.OpenReadOnly(cfg.DBPath)
-	if readConn != nil {
-		defer readConn.Close()
-	}
-
 	if err := db.Migrate(conn); err != nil {
 		slog.Error("数据库迁移失败", "error", err)
 		os.Exit(1)
+	}
+
+	// Reclaim the space past log cleanups left stranded inside the file and arm
+	// incremental auto-vacuum so future deletions are released automatically.
+	// No-op once the database is already in incremental mode. Runs before the
+	// read-only pool is opened so VACUUM has exclusive access.
+	if err := db.EnsureIncrementalVacuum(conn, cfg.DBPath); err != nil {
+		slog.Error("启用数据库增量回收失败", "error", err)
+		os.Exit(1)
+	}
+
+	readConn := db.OpenReadOnly(cfg.DBPath)
+	if readConn != nil {
+		defer readConn.Close()
 	}
 
 	st := store.New(conn, readConn)
