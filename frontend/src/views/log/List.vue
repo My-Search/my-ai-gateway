@@ -164,19 +164,20 @@
         <div v-for="(group, gIdx) in groupedTraceLogs.get(trace.traceId) || []" :key="group.key + '-' + gIdx" class="log-entry" :class="{ 'log-entry-clickable': group.hasMessage }" :style="{ paddingLeft: `calc(var(--indent-base, 12px) + ${gIdx} * var(--indent-step, 16px))` }" @click.stop="openLogDetail(group)">
           <PhaseBadge :phase="group.logs[0].phase" :count="group.logs.length > 1 ? group.logs.length : undefined" />
           <span class="log-info">
+            <template v-if="group.protocol">
+              <span
+                class="protocol-badge"
+                :title="protocolTitle(group.protocol)"
+              >{{ protocolLabel(group.protocol) }}</span>{{ ' ' }}
+            </template>
             <template v-if="group.logs[0].channelName">{{ group.logs[0].channelName }}/</template>
             <template v-if="group.logs[0].apiKeyName">{{ group.logs[0].apiKeyName }}/</template>
             <template v-if="group.logs[0].channelModelName">{{ group.logs[0].channelModelName }}</template>
             <template v-else-if="group.logs[0].modelName">{{ group.logs[0].modelName }}</template><span v-if="group.logs[0].reasoningEffort" class="reasoning-effort">({{ group.logs[0].reasoningEffort }})</span>{{ ' ' }}
             <span
-              v-if="group.protocol"
-              class="protocol-badge"
-              :title="protocolTitle(group.protocol)"
-            >{{ protocolLabel(group.protocol) }}</span>
-            <span
               v-if="group.routeSource"
               class="route-source-badge"
-              :class="'route-source-badge--' + group.routeSource"
+              :class="routeSourceBadgeClass(group)"
               :title="routeSourceTitle(group.routeSource)"
             >{{ routeSourceLabel(group.routeSource) }}</span>
             {{ group.durationText }}
@@ -940,6 +941,17 @@ function routeSourceLabel(source?: RouteSource): string {
   return ''
 }
 
+/**
+ * 徽章配色跟随行的最终状态：候选已以「跳过」终结时与 skip 徽章同样降为灰色，
+ * 避免最终被跳过的行仍用黄色强调色误导为「正在回退/重试」。
+ */
+function routeSourceBadgeClass(group: LogGroup): string {
+  if (group.routeSource === 'sticky_fallback' && group.logs[0].phase === 'skip') {
+    return 'route-source-badge--sticky_fallback-skip'
+  }
+  return 'route-source-badge--' + group.routeSource
+}
+
 /** 粘性标记的悬浮说明。 */
 function routeSourceTitle(source?: RouteSource): string {
   if (source === 'sticky') return t('log.list.routeStickyTitle')
@@ -1221,7 +1233,8 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
   color: var(--accent-blue);
 }
-/* 小组粘性来源徽章：命中（绿）与回退（黄）区分开，一眼看出为何没命中粘性成员 */
+/* 小组粘性来源徽章：命中（绿）与回退（黄）区分开，一眼看出为何没命中粘性成员。
+   回退的候选若已以「跳过」终结，则与 skip 徽章同色（灰），弱化为已终结状态。 */
 .route-source-badge {
   display: inline-flex;
   align-items: center;
@@ -1240,6 +1253,10 @@ onUnmounted(() => {
 .route-source-badge--sticky_fallback {
   background: color-mix(in srgb, var(--accent-yellow) 18%, transparent);
   color: var(--accent-yellow);
+}
+.route-source-badge--sticky_fallback-skip {
+  background: color-mix(in srgb, var(--text-muted) 20%, transparent);
+  color: var(--text-muted);
 }
 
 .dialog-pre {

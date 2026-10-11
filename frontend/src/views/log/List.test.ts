@@ -226,6 +226,46 @@ describe('请求日志页 - 性能重构回归', () => {
     expect(badge.classes()).toContain('route-source-badge--sticky_fallback')
   })
 
+  it('已跳过的候选即使带粘性回退标记，徽章也与「跳过」一致降为灰色', async () => {
+    listMock.mockResolvedValueOnce(
+      listResponse([
+        makeTrace('t1', [
+          // 重试耗尽后以 skip 终结的回退候选：不应再用黄色强调。
+          makeLog({ id: 1, traceId: 't1', phase: 'skip', channelName: 'ch-b',
+            message: '重试耗尽跳过 ch-b', routeSource: 'sticky_fallback' }),
+        ]),
+      ]),
+    )
+    const wrapper = await mountPage()
+    await wrapper.vm.$nextTick()
+
+    const badge = wrapper.find('.route-source-badge')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe('粘性回退')
+    expect(badge.classes()).toContain('route-source-badge--sticky_fallback-skip')
+  })
+
+  it('「请求开始」的候选最终被熔断跳过时，粘性回退徽章同样降为灰色', async () => {
+    listMock.mockResolvedValueOnce(
+      listResponse([
+        makeTrace('t1', [
+          makeLog({ id: 1, traceId: 't1', phase: 'start', channelName: 'ch-b',
+            routeSource: 'sticky_fallback' }),
+          // 同一候选随后以「熔断跳过」终结；两组同徽章，最终组以 skip 呈灰色。
+          makeLog({ id: 2, traceId: 't1', phase: 'skip', channelName: 'ch-b',
+            message: '已熔断跳过 ch-b', createdAt: '2026-09-25T10:00:01Z',
+            routeSource: 'sticky_fallback' }),
+        ]),
+      ]),
+    )
+    const wrapper = await mountPage()
+    await wrapper.vm.$nextTick()
+
+    const badges = wrapper.findAll('.route-source-badge')
+    expect(badges.length).toBe(2)
+    expect(badges[1].classes()).toContain('route-source-badge--sticky_fallback-skip')
+  })
+
   it('详情弹框里说明路由来源（粘性命中）', async () => {
     listMock.mockResolvedValueOnce(
       listResponse([
