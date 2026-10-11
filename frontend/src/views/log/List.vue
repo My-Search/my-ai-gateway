@@ -169,6 +169,11 @@
             <template v-if="group.logs[0].channelModelName">{{ group.logs[0].channelModelName }}</template>
             <template v-else-if="group.logs[0].modelName">{{ group.logs[0].modelName }}</template><span v-if="group.logs[0].reasoningEffort" class="reasoning-effort">({{ group.logs[0].reasoningEffort }})</span>{{ ' ' }}
             <span
+              v-if="group.protocol"
+              class="protocol-badge"
+              :title="protocolTitle(group.protocol)"
+            >{{ protocolLabel(group.protocol) }}</span>
+            <span
               v-if="group.routeSource"
               class="route-source-badge"
               :class="'route-source-badge--' + group.routeSource"
@@ -245,7 +250,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, reactive, shallowRef, triggerRef, watch } from 'vue'
-import { logApi, subscribeLogStream, type LogTrace, type RequestLog, type LogSseSubscription, type LogUsageChart, type RouteSource } from '@/api/log'
+import { logApi, subscribeLogStream, type LogTrace, type RequestLog, type LogSseSubscription, type LogUsageChart, type RouteSource, type ClientProtocol } from '@/api/log'
 import { modelApi, type CustomModel } from '@/api/model'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { systemApi } from '@/api/system'
@@ -696,6 +701,11 @@ function openLogDetail(group: LogGroup) {
   else if (first.modelName) modelParts.push(first.modelName)
   if (modelParts.length) parts.push(`路由: ${modelParts.join(' / ')}`)
 
+  // 入站协议：说明客户端本次请求走的是哪种 API 协议。
+  if (group.protocol) {
+    parts.push(`${t('log.list.protocolLabel')}: ${protocolLabel(group.protocol)}`)
+  }
+
   // 小组粘性来源：说明本次是命中了会话粘性成员，还是命中失败后回退。
   if (group.routeSource) {
     parts.push(`${t('log.list.routeLabel')}: ${routeSourceLabel(group.routeSource)}（${routeSourceTitle(group.routeSource)}）`)
@@ -774,6 +784,8 @@ interface LogGroup {
   hasMessage: boolean
   /** 组内首个带粘性标记的 routeSource（同组连续行标记一致，取首个即可） */
   routeSource?: RouteSource
+  /** 组内首个带协议标记的 protocol（只写在起始行，取首个非空值即可） */
+  protocol?: ClientProtocol
 }
 
 /** 将日志插入已按 createdAt 排序的数组：绝大多数 SSE 日志按序到达，走末尾追加快路径 */
@@ -915,6 +927,8 @@ function groupLogs(logs: RequestLog[]): LogGroup[] {
     g.hasMessage = g.logs.some(l => l.message)
     // 粘性标记取组内首个非空值：合并行属于同一候选，标记一致。
     g.routeSource = g.logs.find(l => l.routeSource)?.routeSource ?? undefined
+    // 协议标记同样取首个非空值（只写在 trace 起始行）。
+    g.protocol = g.logs.find(l => l.protocol)?.protocol ?? undefined
   }
   return groups
 }
@@ -931,6 +945,24 @@ function routeSourceTitle(source?: RouteSource): string {
   if (source === 'sticky') return t('log.list.routeStickyTitle')
   if (source === 'sticky_fallback') return t('log.list.routeStickyFallbackTitle')
   return ''
+}
+
+/** 协议 slug → 展示文案（未知值原样回退显示，保证新协议不消失）。 */
+const PROTOCOL_LABEL_KEYS: Record<string, string> = {
+  'openai-chat': 'log.list.protocolOpenaiChat',
+  'anthropic-messages': 'log.list.protocolAnthropicMessages',
+  'openai-responses': 'log.list.protocolOpenaiResponses',
+  'embeddings': 'log.list.protocolEmbeddings',
+}
+
+function protocolLabel(protocol: ClientProtocol): string {
+  const key = PROTOCOL_LABEL_KEYS[protocol]
+  return key ? t(key) : protocol
+}
+
+/** 协议徽章的悬浮说明。 */
+function protocolTitle(protocol: ClientProtocol): string {
+  return t('log.list.protocolTitle', { protocol: protocolLabel(protocol) })
 }
 
 /**
@@ -1175,6 +1207,20 @@ onUnmounted(() => {
 /* 中断与失败同为「未成功终结」，统一用红色 */
 .log-message-interrupted { color: var(--accent-red); }
 .reasoning-effort { color: var(--accent-purple); font-size: 11px; white-space: nowrap; margin-left: 2px; }
+/* 入站协议徽章：跟随正文色系，弱于渠道信息，仅用于标注客户端协议 */
+.protocol-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 0 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  margin-left: 4px;
+  vertical-align: middle;
+  background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  color: var(--accent-blue);
+}
 /* 小组粘性来源徽章：命中（绿）与回退（黄）区分开，一眼看出为何没命中粘性成员 */
 .route-source-badge {
   display: inline-flex;

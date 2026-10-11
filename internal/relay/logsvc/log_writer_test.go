@@ -55,7 +55,8 @@ func newWriterStore(t *testing.T) *store.Store {
 		request_body TEXT,
 		gateway_api_key_id INTEGER,
 		reasoning_effort TEXT DEFAULT '',
-		route_source TEXT)`); err != nil {
+		route_source TEXT,
+		protocol TEXT)`); err != nil {
 		t.Fatal(err)
 	}
 	return store.New(db, nil)
@@ -129,7 +130,7 @@ func TestFlushPendingRequestDataMatrix(t *testing.T) {
 				ctx := context.Background()
 				trace := "trace-1"
 
-				w.WriteStart(ctx, trace, "m", 1, "H", "B", "")
+				w.WriteStart(ctx, trace, "m", 1, "H", "B", "", "")
 				if sc.retry {
 					w.WriteCandidatePhase(ctx, trace, "k", "m", "cm", "c", 1,
 						"retry", "pending", "第 1 次失败", 0, nil, "", "")
@@ -162,7 +163,7 @@ func TestFlushIsDetachedFromCancelledContext(t *testing.T) {
 	w := NewLogWriter(st, nil, fakeConfigReader{level: "info"})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	w.WriteStart(ctx, "trace-1", "m", 1, "H", "B", "")
+	w.WriteStart(ctx, "trace-1", "m", 1, "H", "B", "", "")
 	cancel() // simulate the client going away before the request completes
 	w.WriteFail(ctx, "trace-1", "m", 1, "error", "失败", 10, nil, 0)
 
@@ -187,7 +188,7 @@ func TestConcurrentTracesDoNotRace(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			trace := fmt.Sprintf("trace-%d", i)
-			w.WriteStart(ctx, trace, "m", 1, "H", "B", "")
+			w.WriteStart(ctx, trace, "m", 1, "H", "B", "", "")
 			w.WriteCandidatePhase(ctx, trace, "k", "m", "cm", "c", 1,
 				"retry", "pending", "第 1 次失败", 0, nil, "", "")
 			w.WriteSuccess(ctx, trace, "k", "m", "cm", "c", 1, "请求成功", 1, nil, 1, 1, 1, 2, "")
@@ -212,13 +213,13 @@ func TestRouteSourceRoundTrip(t *testing.T) {
 	w := NewLogWriter(st, nil, nil)
 	ctx := context.Background()
 
-	w.WriteStart(ctx, "t-sticky", "m", 1, "H", "B", "")
+	w.WriteStart(ctx, "t-sticky", "m", 1, "H", "B", "", "")
 	w.WriteCandidatePhase(ctx, "t-sticky", "k", "m", "cm", "c", 1,
 		"start", "pending", "路由到 c/k/cm", 0, nil, "", models.RouteSourceSticky)
 	w.WriteSuccess(ctx, "t-sticky", "k", "m", "cm", "c", 1, "请求成功", 10, nil, 0, 1, 1, 2,
 		models.RouteSourceSticky)
 
-	w.WriteStart(ctx, "t-plain", "m", 1, "H", "B", "")
+	w.WriteStart(ctx, "t-plain", "m", 1, "H", "B", "", "")
 	w.WriteCandidatePhase(ctx, "t-plain", "k", "m", "cm", "c", 1,
 		"start", "pending", "路由到 c/k/cm", 0, nil, "", "")
 	w.WriteSuccess(ctx, "t-plain", "k", "m", "cm", "c", 1, "请求成功", 10, nil, 0, 1, 1, 2, "")
@@ -251,5 +252,56 @@ func TestRouteSourceRoundTrip(t *testing.T) {
 		if got := row.Str("route_source"); got != tc.want {
 			t.Errorf("%s/%s route_source = %q, want %q", tc.trace, tc.phase, got, tc.want)
 		}
+	}
+}
+
+// TestProtocolRoundTrip 覆盖 protocol 的落库：起始行写入入站协议 slug 后可读回，
+// 空协议落库为 NULL（候选行与历史行都走这条路径，前端据此不显示协议徽章）。
+func TestProtocolRoundTrip(t *testing.T) {
+	st := newWriterStore(t)
+	w := NewLogWriter(st, nil, nil)
+	ctx := context.Background()
+
+	// 起始行带协议；候选行与终态行不带（protocol 只写在起始行）。
+	w.WriteStart(ctx, "t-chat", "m", 1, "H", "B", "", "anthropic-messages")
+	w.WriteCandidatePhase(ctx, "t-chat", "k", "m", "cm", "c", 1,
+		"start", "pending", "路由到 c/k/cm", 0, nil, "", "")
+	w.WriteSuccess(ctx, "t-chat", "k", "m", "cm", "c", 1, "请求成功", 10, nil, 0, 1, 1, 2, "")
+
+	// 未标注协议的起始行落库为 NULL。
+	w.WriteStart(ctx, "t-plain", "m", 1, "H", "B", "", "")
+
+	for _, tc := range []struct {
+		trace string
+		want  string
+		null  bool
+	}{
+		{"t-chat", "anthropic-messages", false},
+		{"t-plain", "", true},
+	} {
+		row, err := st.QueryOne(ctx,
+			"SELECT protocol FROM request_logs WHERE trace_id = ? AND phase = 'start'", tc.trace)
+		if err != nil || row == nil {
+			t.Fatalf("%s start row missing: %v", tc.trace, err)
+		}
+		if tc.null {
+			if row.StrPtr("protocol") != nil {
+				t.Errorf("%s protocol = %q, want NULL", tc.trace, row.Str("protocol"))
+			}
+			continue
+		}
+		if got := row.Str("protocol"); got != tc.want {
+			t.Errorf("%s protocol = %q, want %q", tc.trace, got, tc.want)
+		}
+	}
+
+	// 候选/终态行的 protocol 必须为 NULL，避免前端在非起始行重复展示协议。
+	row, err := st.QueryOne(ctx,
+		"SELECT COUNT(*) c FROM request_logs WHERE trace_id = 't-chat' AND phase <> 'start' AND protocol IS NOT NULL")
+	if err != nil || row == nil {
+		t.Fatalf("count non-start protocol rows: %v", err)
+	}
+	if got := row.I64("c", 0); got != 0 {
+		t.Errorf("non-start rows carrying protocol = %d, want 0", got)
 	}
 }

@@ -327,7 +327,11 @@ type RequestLog struct {
 	// RouteSource 标注本次路由的来源：sticky=小组粘性哈希命中的成员，
 	// sticky_fallback=命中成员失败后由组内其他成员承接；非粘性为 NULL。
 	RouteSource *string `json:"routeSource"`
-	CreatedAt   APITime `json:"createdAt"`
+	// Protocol 是本次请求的入站协议 slug（openai-chat / anthropic-messages /
+	// openai-responses / embeddings），只写在 trace 的起始行上；历史行与候选行
+	// 为 NULL，前端据此不显示协议徽章。
+	Protocol  *string `json:"protocol"`
+	CreatedAt APITime `json:"createdAt"`
 }
 
 // RouteSource 取值（写入 request_logs.route_source）。

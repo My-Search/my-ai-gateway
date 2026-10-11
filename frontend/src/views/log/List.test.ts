@@ -244,4 +244,92 @@ describe('请求日志页 - 性能重构回归', () => {
     expect(dialog).not.toBeNull()
     expect(dialog!.textContent).toContain('粘性')
   })
+
+  it('「请求开始」行显示入站协议徽章，候选行不显示', async () => {
+    listMock.mockResolvedValueOnce(
+      listResponse([
+        makeTrace('t1', [
+          // 起始行带协议（真正承载 protocol 的行）。
+          makeLog({ id: 1, traceId: 't1', phase: 'start', modelName: 'gpt-4o',
+            protocol: 'anthropic-messages' }),
+          // 候选/终态行不带 protocol，不应重复出现徽章。
+          makeLog({ id: 2, traceId: 't1', phase: 'success', channelName: 'ch-a', responseTimeMs: 50,
+            createdAt: '2026-09-25T10:00:01Z' }),
+        ]),
+      ]),
+    )
+    const wrapper = await mountPage()
+    await wrapper.find('.log-trace').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const badges = wrapper.findAll('.protocol-badge')
+    expect(badges.length).toBe(1)
+    expect(badges[0].text()).toBe('Anthropic Messages')
+    expect(badges[0].attributes('title')).toContain('Anthropic Messages')
+
+    const entries = wrapper.findAll('.log-entry')
+    expect(entries[0].find('.protocol-badge').exists()).toBe(true)
+    expect(entries[entries.length - 1].find('.protocol-badge').exists()).toBe(false)
+  })
+
+  it('无 protocol 的历史行不显示协议徽章', async () => {
+    listMock.mockResolvedValueOnce(
+      listResponse([
+        makeTrace('t1', [
+          makeLog({ id: 1, traceId: 't1', phase: 'start', modelName: 'gpt-4o' }),
+          makeLog({ id: 2, traceId: 't1', phase: 'success', channelName: 'ch-a', responseTimeMs: 50,
+            createdAt: '2026-09-25T10:00:01Z' }),
+        ]),
+      ]),
+    )
+    const wrapper = await mountPage()
+    await wrapper.find('.log-trace').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.find('.protocol-badge').exists()).toBe(false)
+  })
+
+  it('协议 slug 未知时原样回退显示，保证新增协议不消失', async () => {
+    listMock.mockResolvedValueOnce(
+      listResponse([
+        makeTrace('t1', [
+          makeLog({ id: 1, traceId: 't1', phase: 'start', modelName: 'gpt-4o',
+            protocol: 'brand-new-proto' as never }),
+          makeLog({ id: 2, traceId: 't1', phase: 'success', channelName: 'ch-a', responseTimeMs: 50,
+            createdAt: '2026-09-25T10:00:01Z' }),
+        ]),
+      ]),
+    )
+    const wrapper = await mountPage()
+    await wrapper.find('.log-trace').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    const badge = wrapper.find('.protocol-badge')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe('brand-new-proto')
+  })
+
+  it('详情弹框里说明入站协议', async () => {
+    // 前面用例的 Teleport 弹框会残留在 document.body，先清掉避免取到旧弹框。
+    document.body.querySelectorAll('.dialog-box').forEach(el => el.remove())
+    listMock.mockResolvedValueOnce(
+      listResponse([
+        makeTrace('t1', [
+          makeLog({ id: 1, traceId: 't1', phase: 'start', modelName: 'gpt-4o', message: '请求开始',
+            protocol: 'openai-responses' }),
+          makeLog({ id: 2, traceId: 't1', phase: 'success', channelName: 'ch-a', responseTimeMs: 50,
+            createdAt: '2026-09-25T10:00:01Z' }),
+        ]),
+      ]),
+    )
+    const wrapper = await mountPage()
+    await wrapper.find('.log-trace').trigger('click')
+    await wrapper.vm.$nextTick()
+
+    // 点击带 message 的起始行（首行），打开详情弹框。
+    await wrapper.find('.log-entry').trigger('click')
+    const dialog = document.body.querySelector('.dialog-box')
+    expect(dialog).not.toBeNull()
+    expect(dialog!.textContent).toContain('OpenAI Responses')
+  })
 })

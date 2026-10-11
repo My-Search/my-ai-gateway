@@ -64,7 +64,10 @@ func NewLogWriter(st *store.Store, sse *LogSseService, cfg ConfigReader) *LogWri
 // in memory for later persistence according to the save level.
 // api_key_name is left NULL (the gateway key id is stored instead), matching
 // Java's logStartWithReasoningEffort(traceId, null, gatewayApiKeyId, ...).
-func (w *LogWriter) WriteStart(ctx context.Context, traceID, modelName string, gwKeyID int64, headers, body, reasoningEffort string) {
+//
+// protocol is the inbound-protocol slug (relay.ClientProtocol*), recorded on
+// this trace's start row so the UI can label which API the client used; "" → NULL.
+func (w *LogWriter) WriteStart(ctx context.Context, traceID, modelName string, gwKeyID int64, headers, body, reasoningEffort, protocol string) {
 	w.mu.Lock()
 	w.pending[traceID] = &PendingRequestData{Headers: headers, Body: body}
 	w.mu.Unlock()
@@ -84,6 +87,9 @@ func (w *LogWriter) WriteStart(ctx context.Context, traceID, modelName string, g
 		RetryIndex:      models.Int(0),
 		ReasoningEffort: models.Str(reasoningEffort),
 		CreatedAt:       nowAPITime(),
+	}
+	if protocol != "" {
+		rec.Protocol = models.Str(protocol)
 	}
 	w.insertAndPublish(ctx, rec)
 }
@@ -266,18 +272,23 @@ func (w *LogWriter) insertAndPublish(ctx context.Context, log *models.RequestLog
 	if log.RouteSource != nil && *log.RouteSource != "" {
 		routeSource = *log.RouteSource
 	}
+	// protocol 可空：只写在 trace 起始行，其余行为 NULL。
+	var protocol any
+	if log.Protocol != nil && *log.Protocol != "" {
+		protocol = *log.Protocol
+	}
 	id, err := w.store.Insert(ctx,
 		`INSERT INTO request_logs
 		(trace_id, api_key_name, gateway_api_key_id, model_name, channel_model_name, channel_name,
 		 phase, status, message, retry_index,
 		 response_time_ms, first_byte_ms,
 		 prompt_tokens, completion_tokens, total_tokens,
-		 reasoning_effort, route_source, created_at)
+		 reasoning_effort, route_source, protocol, created_at)
 		VALUES (?, ?, ?, ?, ?, ?,
 		        ?, ?, ?, ?,
 		        ?, ?,
 		        ?, ?, ?,
-		        ?, ?, ?)`,
+		        ?, ?, ?, ?)`,
 		log.TraceID,
 		apiKeyName, gwID,
 		models.DerefStr(log.ModelName, ""),
@@ -287,7 +298,7 @@ func (w *LogWriter) insertAndPublish(ctx context.Context, log *models.RequestLog
 		rt, fb,
 		models.DerefInt(log.PromptTokens, 0), models.DerefInt(log.CompletionTokens, 0),
 		models.DerefInt(log.TotalTokens, 0),
-		models.DerefStr(log.ReasoningEffort, ""), routeSource, now)
+		models.DerefStr(log.ReasoningEffort, ""), routeSource, protocol, now)
 
 	if err != nil {
 		slog.Warn("写入请求日志失败", "traceId", log.TraceID, "phase", log.Phase, "error", err)

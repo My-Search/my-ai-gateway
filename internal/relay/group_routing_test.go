@@ -15,8 +15,9 @@ import (
 
 // newGroupTestStore builds the schema the group routing path touches, on top of
 // the minimal relay schema. The group tables mirror the v1.43.0 migration, and
-// request_logs mirrors the columns LogWriter writes (incl. route_source) so the
-// end-to-end tests can assert on the rows the routing loop produces.
+// request_logs mirrors the columns LogWriter writes (incl. route_source and
+// protocol) so the end-to-end tests can assert on the rows the routing loop
+// produces.
 func newGroupTestStore(t *testing.T) DataStore {
 	t.Helper()
 	st := newRelayTestStore(t)
@@ -30,7 +31,7 @@ func newGroupTestStore(t *testing.T) DataStore {
 			prompt_tokens INTEGER DEFAULT 0, completion_tokens INTEGER DEFAULT 0,
 			total_tokens INTEGER DEFAULT 0, reasoning_effort TEXT DEFAULT '',
 			request_headers TEXT, request_body TEXT,
-			route_source TEXT, created_at TEXT)`,
+			route_source TEXT, protocol TEXT, created_at TEXT)`,
 		`CREATE TABLE model_groups (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
 			description TEXT DEFAULT '', strategy TEXT DEFAULT 'random',
@@ -618,6 +619,28 @@ func (f *groupFixture) routeSourceByPhase(t *testing.T, phase string) (string, b
 	return "", false
 }
 
+// logRowsFull is logRows plus the protocol column, so tests can tell which row
+// (if any) carries the inbound-protocol slug.
+func (f *groupFixture) logRowsFull(t *testing.T) []struct{ Phase, Channel, RouteSource, Protocol string } {
+	t.Helper()
+	rows, err := f.store.Query(context.Background(),
+		`SELECT phase, channel_name, route_source, protocol
+		   FROM request_logs ORDER BY id ASC`)
+	if err != nil {
+		t.Fatalf("query request_logs: %v", err)
+	}
+	out := make([]struct{ Phase, Channel, RouteSource, Protocol string }, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, struct{ Phase, Channel, RouteSource, Protocol string }{
+			Phase:       r.Str("phase"),
+			Channel:     r.Str("channel_name"),
+			RouteSource: r.Str("route_source"),
+			Protocol:    r.Str("protocol"),
+		})
+	}
+	return out
+}
+
 // TestStickyHitMarksRequestLog 覆盖请求日志的粘性命中标记：开启粘性的小组里，
 // 哈希命中的成员被路由到时，其日志行（start 与 success）带 route_source=sticky。
 func TestStickyHitMarksRequestLog(t *testing.T) {
@@ -647,6 +670,30 @@ func TestNonStickyGroupLeavesRouteSourceEmpty(t *testing.T) {
 
 	if source, ok := f.routeSourceByPhase(t, PhaseSuccess); !ok || source != "" {
 		t.Errorf("success route_source = %q (present=%v), want empty for a non-sticky group", source, ok)
+	}
+}
+
+// TestTraceStartRecordsClientProtocol 覆盖「请求开始」行的入站协议：真实路由循环
+// 必须把 ClientProtocol(req) 写到 trace 起始行（无渠道的那行），供日志页展示协议徽章。
+// 候选行不带 protocol，避免前端在非起始行重复显示。
+func TestTraceStartRecordsClientProtocol(t *testing.T) {
+	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f.serveOnce(t, "protocol-session")
+
+	var startProtocol, candidateProtocol string
+	for _, r := range f.logRowsFull(t) {
+		switch {
+		case r.Phase == PhaseStart && r.Channel == "":
+			startProtocol = r.Protocol
+		case r.Channel != "":
+			candidateProtocol = r.Protocol
+		}
+	}
+	if startProtocol != ClientProtocolOpenAIChat {
+		t.Errorf("start row protocol = %q, want %q", startProtocol, ClientProtocolOpenAIChat)
+	}
+	if candidateProtocol != "" {
+		t.Errorf("candidate row protocol = %q, want empty (only the start row carries it)", candidateProtocol)
 	}
 }
 

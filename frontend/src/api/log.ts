@@ -3,6 +3,9 @@ import http from './index'
 /** 本次路由的来源：粘性命中 / 粘性回退；非粘性为 null */
 export type RouteSource = 'sticky' | 'sticky_fallback'
 
+/** 客户端入站协议 slug（与熔断记录同一套取值） */
+export type ClientProtocol = 'openai-chat' | 'anthropic-messages' | 'openai-responses' | 'embeddings'
+
 export interface RequestLog {
   id: number
   traceId: string
@@ -24,6 +27,11 @@ export interface RequestLog {
    * 由组内其他成员承接。仅小组路由会产生该值，其余为 null/undefined。
    */
   routeSource?: RouteSource | null
+  /**
+   * 本次请求的入站协议 slug，仅写在 trace 的「请求开始」行上；
+   * 候选行与历史行为 null/undefined，此时不展示协议徽章。
+   */
+  protocol?: ClientProtocol | null
   createdAt: string
 }
 

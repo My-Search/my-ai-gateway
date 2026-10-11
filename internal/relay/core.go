@@ -128,7 +128,7 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 	clientFormat := req.ClientAPIFormat
 
 	gwKeyID, _ := validateGatewayKey(ctx, c.Store, authHeader)
-	c.LogTraceStart(ctx, traceID, req.Model, gwKeyID, headersJSON, rawBody)
+	c.LogTraceStart(ctx, traceID, req.Model, gwKeyID, headersJSON, rawBody, ClientProtocol(req))
 	if gwKeyID == 0 {
 		if c.LogWriter != nil {
 			c.LogWriter.WriteFail(ctx, traceID, req.Model, 0, "auth", "无效或缺失的 API Key", 0, nil, 0)
@@ -441,7 +441,7 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 	clientFormat := req.ClientAPIFormat
 
 	gwKeyID, _ := validateGatewayKey(ctx, c.Store, authHeader)
-	c.LogTraceStart(ctx, traceID, req.Model, gwKeyID, headersJSON, rawBody)
+	c.LogTraceStart(ctx, traceID, req.Model, gwKeyID, headersJSON, rawBody, ClientProtocol(req))
 	if gwKeyID == 0 {
 		if c.LogWriter != nil {
 			c.LogWriter.WriteFail(ctx, traceID, req.Model, 0, "auth", "无效或缺失的 API Key", 0, nil, 0)
@@ -1019,13 +1019,15 @@ func markStickyFallback(failed, next RoutingCandidate) RoutingCandidate {
 	return next
 }
 
-// LogTraceStart writes the "start" row carrying the raw request.
-func (c *RelayCore) LogTraceStart(ctx context.Context, traceID, modelName string, gwKeyID int64, headersJSON, rawBody string) {
+// LogTraceStart writes the "start" row carrying the raw request. protocol is
+// the inbound-protocol slug derived from req (relay.ClientProtocol), recorded
+// so the log UI can label which API the client used.
+func (c *RelayCore) LogTraceStart(ctx context.Context, traceID, modelName string, gwKeyID int64, headersJSON, rawBody, protocol string) {
 	if c.LogWriter == nil {
 		return
 	}
 	c.LogWriter.WriteStart(ctx, traceID, modelName, gwKeyID, headersJSON, rawBody,
-		extractReasoningEffortFromBody(rawBody))
+		extractReasoningEffortFromBody(rawBody), protocol)
 }
 
 // extractUsageFromResponse parses token usage from a non-stream response body,

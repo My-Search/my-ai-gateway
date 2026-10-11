@@ -566,6 +566,13 @@ export default {
   'log.list.routeStickyTitle': 'Served by the group member this conversation hashes to',
   'log.list.routeStickyFallbackTitle': 'The sticky-pinned member failed; another group member took over',
   'log.list.routeLabel': 'Route source',
+  /* Inbound-protocol badge (shown on the "request start" row only) */
+  'log.list.protocolLabel': 'Protocol',
+  'log.list.protocolTitle': 'Inbound protocol used by this request: {protocol}',
+  'log.list.protocolOpenaiChat': 'OpenAI Chat',
+  'log.list.protocolAnthropicMessages': 'Anthropic Messages',
+  'log.list.protocolOpenaiResponses': 'OpenAI Responses',
+  'log.list.protocolEmbeddings': 'Embeddings',
   /* ========== Log Usage Chart ========== */
   'log.chart.title': 'Usage History',
   'log.chart.subtitle': 'Recent API usage and consumption overview',

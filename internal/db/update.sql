@@ -761,3 +761,24 @@ ALTER TABLE request_logs ADD COLUMN route_source TEXT;
 -- ========================================
 
 ALTER TABLE model_group_rels ADD COLUMN reasoning_effort TEXT;
+
+
+-- ========================================
+-- VERSION:v1.46.0
+-- 请求日志记录入站协议（protocol），用于在「请求开始」行标注客户端使用的 API 协议。
+--
+-- 背景：网关同时暴露多个入站端点（/v1/chat/completions、/v1/messages、
+--   /v1/responses、/v1/embeddings），排障时需要一眼看出某次请求走的是哪种协议，
+--   而原先日志里只能看到模型名与渠道，无法区分协议。
+--
+-- 取值（与熔断记录 circuit_breaker_states.protocol 同一套 slug）：
+--   openai-chat         OpenAI Chat Completions
+--   anthropic-messages  Anthropic Messages
+--   openai-responses    OpenAI Responses
+--   embeddings          OpenAI Embeddings
+--
+-- 仅写入每个 trace 的起始行（phase='start' 且无渠道的 WriteStart 行）；历史行与
+--   候选行保持 NULL，前端据此不显示协议徽章。
+-- ========================================
+
+ALTER TABLE request_logs ADD COLUMN protocol TEXT;

@@ -545,6 +545,7 @@ func RowToRequestLog(r Row) models.RequestLog {
 		RequestHeaders:   r.StrPtr("request_headers"),
 		RequestBody:      r.StrPtr("request_body"),
 		RouteSource:      r.StrPtr("route_source"),
+		Protocol:         r.StrPtr("protocol"),
 		CreatedAt:        r.TimePtr("created_at"),
 	}
 }

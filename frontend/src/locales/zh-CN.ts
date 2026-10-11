@@ -566,6 +566,13 @@ export default {
   'log.list.routeStickyTitle': '本次请求由会话粘性哈希命中的小组成员承接',
   'log.list.routeStickyFallbackTitle': '粘性命中的成员失败，已回退到组内其他成员',
   'log.list.routeLabel': '路由来源',
+  /* 入站协议徽章（只标注在「请求开始」行） */
+  'log.list.protocolLabel': '协议',
+  'log.list.protocolTitle': '本次请求使用的入站协议：{protocol}',
+  'log.list.protocolOpenaiChat': 'OpenAI Chat',
+  'log.list.protocolAnthropicMessages': 'Anthropic Messages',
+  'log.list.protocolOpenaiResponses': 'OpenAI Responses',
+  'log.list.protocolEmbeddings': 'Embeddings',
   /* ========== Log Usage Chart ========== */
   'log.chart.title': '使用历史',
   'log.chart.subtitle': '近期 API 用量与消耗概览',
