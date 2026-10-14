@@ -236,6 +236,59 @@ func TestConfigManagerDefaults(t *testing.T) {
 	}
 }
 
+// TestTriggerBreakPersistsModelScope pins the write path the relay loop relies
+// on: a trip (e.g. an upstream timeout after retries) must persist an open
+// model-level row for (channel, channel model, API key) carrying the protocol.
+// Without this the routing loop's handleFailure would be a no-op in production
+// even though it fires — the exact "timeout does not isolate the channel"
+// symptom.
+func TestTriggerBreakPersistsModelScope(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	mgr := &ConfigManager{Store: st}
+	trigger := &Trigger{Store: st, ConfigMgr: mgr}
+
+	keyID := int64(7)
+	trigger.TriggerBreak(ctx, 42, 1, &keyID, 100, "openai-chat")
+
+	row, err := st.QueryOne(ctx,
+		"SELECT * FROM circuit_breaker_states WHERE channel_id = 1 AND channel_model_id = 100 AND channel_api_key_id = 7")
+	if err != nil || row == nil {
+		t.Fatalf("no breaker row persisted: %v", err)
+	}
+	if got := row.Int("is_open", 0); got != 1 {
+		t.Errorf("is_open = %d, want 1", got)
+	}
+	if got := row.Str("protocol"); got != "openai-chat" {
+		t.Errorf("protocol = %q, want openai-chat", got)
+	}
+	if row.Str("expire_at") == "" {
+		t.Error("expire_at must be set so the recovery scan can find the record")
+	}
+}
+
+// TestTriggerBreakReportsWriteError proves a failed trip is not silently
+// swallowed: the WriteErrorFn hook fires so the fail-open path stays observable.
+func TestTriggerBreakReportsWriteError(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	// Drop the states table so the INSERT fails.
+	if _, err := st.Exec(ctx, "DROP TABLE circuit_breaker_states"); err != nil {
+		t.Fatal(err)
+	}
+	var reasons []string
+	trigger := &Trigger{
+		Store:        st,
+		ConfigMgr:    &ConfigManager{Store: st},
+		WriteErrorFn: func(reason string) { reasons = append(reasons, reason) },
+	}
+	trigger.TriggerBreak(ctx, 42, 1, nil, 100, "openai-chat")
+
+	if len(reasons) != 1 || reasons[0] != "write" {
+		t.Fatalf("WriteErrorFn calls = %v, want [\"write\"]", reasons)
+	}
+}
+
 // TestRenewStatePersistsProbeOutcome checks that a failed probe's outcome is
 // written to last_probe_* alongside the renewal, and stays NULL when no probe
 // outcome was stamped.

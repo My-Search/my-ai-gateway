@@ -42,6 +42,11 @@ func WireRelayRuntime(core *relay.RelayCore, st *store.Store, cfgSvc *service.Co
 		APIKeyMoveFn: func(ctx context.Context, channelID, apiKeyID int64) {
 			moveAPIKeyToEnd(ctx, st, channelID, apiKeyID)
 		},
+		WriteErrorFn: func(reason string) {
+			if m != nil {
+				m.RecordCircuitBreakWriteError(reason)
+			}
+		},
 	}
 
 	probe := &circuit.ProbeService{
@@ -124,6 +129,9 @@ func WireRelayRuntime(core *relay.RelayCore, st *store.Store, cfgSvc *service.Co
 			if rec := recover(); rec != nil {
 				// 熔断写入失败不阻断主流程（Java CandidateRouter.handleFailure）
 				slog.Error("触发熔断写入失败", "error", rec)
+				if m != nil {
+					m.RecordCircuitBreakWriteError("panic")
+				}
 			}
 		}()
 		trigger.TriggerBreak(ctx, modelID, channelID, apiKeyID, channelModelID, protocol)

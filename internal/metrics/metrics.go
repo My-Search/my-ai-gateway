@@ -16,6 +16,10 @@ type Registry struct {
 	RequestsTotal    *prometheus.CounterVec
 	RouteLatency     *prometheus.HistogramVec
 	CircuitBreakSkip *prometheus.CounterVec
+	// CircuitBreakWriteError counts breaker trips that could not be persisted.
+	// The relay path is fail-open (a broken DB must not break live traffic), so
+	// without this counter a silently non-tripping breaker is invisible.
+	CircuitBreakWriteError *prometheus.CounterVec
 
 	mu       sync.Mutex
 	counters map[string]prometheus.Counter
@@ -48,10 +52,14 @@ func NewRegistry() *Registry {
 			Name: "mag_circuit_break_skip_total",
 			Help: "Candidates skipped because of an open circuit breaker",
 		}, []string{"scope"}),
+		CircuitBreakWriteError: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "mag_circuit_break_write_error_total",
+			Help: "Circuit breaker trips that failed to persist (relay path is fail-open)",
+		}, []string{"reason"}),
 		counters: map[string]prometheus.Counter{},
 		timers:   map[string]prometheus.Observer{},
 	}
-	reg.MustRegister(r.RequestsTotal, r.RouteLatency, r.CircuitBreakSkip)
+	reg.MustRegister(r.RequestsTotal, r.RouteLatency, r.CircuitBreakSkip, r.CircuitBreakWriteError)
 	return r
 }
 
@@ -91,4 +99,16 @@ func (r *Registry) RecordCircuitBreakSkip(scope string) {
 		scope = "unknown"
 	}
 	r.CircuitBreakSkip.WithLabelValues(scope).Inc()
+}
+
+// RecordCircuitBreakWriteError counts a breaker trip that failed to persist, so
+// the fail-open path is observable. reason is a short tag: "panic" or "write".
+func (r *Registry) RecordCircuitBreakWriteError(reason string) {
+	if r == nil {
+		return
+	}
+	if reason == "" {
+		reason = "unknown"
+	}
+	r.CircuitBreakWriteError.WithLabelValues(reason).Inc()
 }

@@ -125,6 +125,20 @@ type Trigger struct {
 	// new broken state within the next cache lookup (Java CandidateRouter
 	// listens to CircuitBreakerStateChangedEvent).
 	StateCache *StateCache
+	// WriteErrorFn, when set, is called with a short reason tag ("write" or
+	// "panic") whenever a trip could not be persisted. The relay path is
+	// fail-open by design, so this hook is what keeps a silently non-tripping
+	// breaker observable (wired to a Prometheus counter).
+	WriteErrorFn func(reason string)
+}
+
+// reportWriteError notifies the observability hook without ever panicking.
+func (t *Trigger) reportWriteError(reason string) {
+	if t.WriteErrorFn == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	t.WriteErrorFn(reason)
 }
 
 // TriggerBreak mirrors CircuitTrigger.triggerCircuitBreak. The protocol is the
@@ -138,8 +152,10 @@ func (t *Trigger) TriggerBreak(ctx context.Context, modelID, channelID int64, ch
 	now := time.Now().UTC()
 	expireAt := now.Add(time.Duration(cfg.CircuitBreakDuration) * time.Second)
 
-	// Java wraps trigger + insert in one @Transactional block.
-	_ = t.Store.Tx(ctx, func(tx *sql.Tx) error {
+	// Java wraps trigger + insert in one @Transactional block. A write failure
+	// must not break the live request (fail-open), but it must not vanish
+	// either: report it so an unavailable breaker is visible.
+	if err := t.Store.Tx(ctx, func(tx *sql.Tx) error {
 		if cfg.CircuitBreakScope == "channel" {
 			if channelAPIKeyID != nil {
 				_, _ = tx.ExecContext(ctx, "DELETE FROM circuit_breaker_states WHERE channel_id = ? AND channel_api_key_id = ?", channelID, *channelAPIKeyID)
@@ -160,7 +176,12 @@ func (t *Trigger) TriggerBreak(ctx context.Context, modelID, channelID int64, ch
 			"INSERT INTO circuit_breaker_states (channel_id, channel_api_key_id, channel_model_id, protocol, is_open, fail_count, opened_at, expire_at, created_at, updated_at) VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?, ?)",
 			channelID, channelAPIKeyID, channelModelID, protocol, jtime.FormatApp(now), jtime.FormatApp(expireAt), jtime.FormatApp(now), jtime.FormatApp(now))
 		return err
-	})
+	}); err != nil {
+		slog.Error("熔断状态写入失败（fail-open，本次未熔断）", "channelId", channelID,
+			"channelModelId", channelModelID, "error", err)
+		t.reportWriteError("write")
+		return
+	}
 
 	// 熔断后将 API Key 移到排序末尾（隐式排序）
 	if channelAPIKeyID != nil && t.APIKeyMoveFn != nil {
