@@ -247,6 +247,16 @@ func (c *RelayCore) RelayNonStream(ctx context.Context, req *InternalRequest, au
 				interrupted = true
 				break
 			}
+			// The global 600s ceiling (or a caller deadline) expiring mid-attempt
+			// is likewise not this candidate's fault: the attempt was killed by
+			// our own budget, not by a slow or broken upstream. Stop the loop and
+			// report a plain timeout instead of tripping the breaker.
+			if isParentBudgetError(ctx, err) {
+				slog.Info("请求总预算已耗尽，终止候选循环", "channel", candidate.ChannelName,
+					"retryIndex", retryIndex, "remaining", len(remaining))
+				lastErr = err
+				break
+			}
 			slog.Warn("候选失败（重试耗尽）", "channel", candidate.ChannelName, "error", err)
 			c.handleFailure(ctx, req, candidate)
 			remaining = removeCandidate(remaining, candidate)
@@ -343,15 +353,30 @@ func (c *RelayCore) invokeCandidateWithRetries(ctx context.Context, traceID stri
 			return "", nil, err
 		}
 
+		// The parent budget (global 600s ceiling / caller deadline) expiring
+		// mid-attempt is not an upstream fault either: retrying is pointless and
+		// recording the configured timeout would poison the adaptive timeout.
+		if isParentBudgetError(ctx, err) {
+			slog.Info("请求总预算已耗尽，中止候选重试", "channel", candidate.ChannelName,
+				"model", candidate.ModelName, "attempt", attempt, "elapsedMs", attemptDuration)
+			return "", nil, err
+		}
+
+		// A request-level fault (400/413/422) is not a latency signal: the model
+		// answered promptly and correctly rejected the request, so recording the
+		// configured timeout as a first-byte sample would poison the adaptive
+		// timeout with fake 30-60s latencies. This mirrors the streaming path,
+		// where the same check precedes RecordTimeout.
+		var nre *NonRetryableProviderError
+		if errors.As(err, &nre) {
+			return "", nil, err
+		}
+
 		c.LatencyTracker.RecordTimeout(candidate.ChannelID, candidate.ChannelModelID, timeoutMs)
 		slog.Warn("候选尝试失败", "attempt", attempt, "maxAttempts", maxAttempts,
 			"channel", candidate.ChannelName, "key", candidate.APIKeyName,
 			"model", candidate.ModelName, "elapsedMs", attemptDuration, "error", err)
 
-		var nre *NonRetryableProviderError
-		if errors.As(err, &nre) {
-			return "", nil, err
-		}
 		if attempt < maxAttempts {
 			c.logPhase(ctx, traceID, gwKeyID, candidate, req, PhaseRetry,
 				fmt.Sprintf("第 %d 次失败: %s，准备第 %d 次重试", attempt, err.Error(), attempt+1),
@@ -599,6 +624,14 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 			interrupted = true
 			break
 		}
+		// The parent budget expiring mid-attempt is not this candidate's fault
+		// either (see the non-stream loop).
+		if isParentBudgetError(ctx, firstByte.err) {
+			slog.Info("请求总预算已耗尽，终止流式候选循环", "channel", candidate.ChannelName,
+				"retryIndex", retryIndex, "remaining", len(remaining))
+			lastErr = firstByte.err
+			break
+		}
 
 		slog.Warn("流式候选失败（重试耗尽）", "channel", candidate.ChannelName, "error", firstByte.err)
 		c.handleFailure(ctx, currentReq, candidate)
@@ -691,6 +724,14 @@ func (c *RelayCore) streamCandidateLoop(ctx context.Context, traceID string, gwK
 		// window free of fake samples.
 		if isCanceledError(err) {
 			slog.Info("请求上下文已取消，中止流式候选重试", "channel", candidate.ChannelName,
+				"model", candidate.ModelName, "attempt", attempt, "elapsedMs", attemptDuration)
+			return streamResult{err: err, firstByteMs: firstByteMs}
+		}
+
+		// The parent budget expiring mid-attempt is not an upstream fault (see
+		// the non-stream retry loop).
+		if isParentBudgetError(ctx, err) {
+			slog.Info("请求总预算已耗尽，中止流式候选重试", "channel", candidate.ChannelName,
 				"model", candidate.ModelName, "attempt", attempt, "elapsedMs", attemptDuration)
 			return streamResult{err: err, firstByteMs: firstByteMs}
 		}

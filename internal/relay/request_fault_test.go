@@ -107,6 +107,31 @@ func (f *requestFaultFixture) serve(t *testing.T) RelayResult {
 	return f.core.RelayNonStream(context.Background(), req, "Bearer gw-key", "", body)
 }
 
+// TestRequestFaultDoesNotPolluteLatencyWindow proves a request-level fault
+// (400/413/422) never records its configured timeout as a first-byte sample.
+// The model answered promptly and rejected the request, so counting it as a
+// latency sample would drive the adaptive timeout (avg*3) to the 60s ceiling —
+// the same pollution the cancellation fix guards against.
+func TestRequestFaultDoesNotPolluteLatencyWindow(t *testing.T) {
+	f := setupRequestFaultFixture(t, http.StatusBadRequest)
+	f.core.LatencyTracker = NewLatencyTrackerFixed(DefaultMinTimeoutMs, DefaultMaxTimeoutMs)
+
+	f.serve(t)
+
+	req, err := ParseRequest(`{"model":"entry","messages":[{"role":"user","content":"hi"}]}`, ProtoOpenAI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cand := range f.core.RouteResolver.BuildCandidates(context.Background(), req) {
+		f.core.LatencyTracker.mu.Lock()
+		n := len(f.core.LatencyTracker.samples[formatKey(cand.ChannelID, cand.ChannelModelID)])
+		f.core.LatencyTracker.mu.Unlock()
+		if cand.ModelName == "m-a" && n != 0 {
+			t.Errorf("m-a recorded %d latency samples on a 400, want 0", n)
+		}
+	}
+}
+
 // TestRequestFaultStatusesSkipWithoutTrippingBreaker pins the classification
 // contract: 400/413/422 blame the request, not the model service, so the
 // candidate gets exactly one attempt — no retry, no breaker trip — and routing
@@ -154,6 +179,30 @@ func TestAuthFailureStillTripsBreaker(t *testing.T) {
 	}
 	if trips != 1 {
 		t.Errorf("breaker tripped %d times on 401, want 1", trips)
+	}
+	if got := f.dispatchedCount("m-a"); got <= 1 {
+		t.Errorf("m-a dispatched %d times, want retries before the breaker trips", got)
+	}
+}
+
+// TestRateLimitStillRetriesAndTripsBreaker pins the deliberate 429 decision: a
+// rate limit is a channel-wide capacity signal, so the candidate is retried and
+// then tripped (isolated for the break duration) rather than skipped like a
+// request-level 400. This guards the trade-off documented on
+// isRequestFaultStatus against an accidental "429 is a client error too" fix.
+func TestRateLimitStillRetriesAndTripsBreaker(t *testing.T) {
+	f := setupRequestFaultFixture(t, http.StatusTooManyRequests)
+
+	var trips int
+	f.core.CircuitTripFn = func(context.Context, int64, int64, int64, *int64, string) { trips++ }
+
+	res := f.serve(t)
+
+	if res.StatusCode != 200 {
+		t.Errorf("status = %d, want 200 (failover must continue); body %s", res.StatusCode, res.Body)
+	}
+	if trips != 1 {
+		t.Errorf("breaker tripped %d times on 429, want 1 (rate limits isolate the candidate)", trips)
 	}
 	if got := f.dispatchedCount("m-a"); got <= 1 {
 		t.Errorf("m-a dispatched %d times, want retries before the breaker trips", got)

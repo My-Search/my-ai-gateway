@@ -129,8 +129,17 @@ func NewNonRetryableError(status int, body string) *NonRetryableProviderError {
 // not the model service. Such a candidate gets exactly one attempt — no retry
 // and no breaker trip — because the model is healthy and a faultless request
 // would succeed; tripping the breaker would take it down for every tenant.
-// Note 401/403/404 are deliberately absent: a wrong key or model name fails
-// every request until we fix the configuration, so they must trip the breaker.
+//
+// Deliberately absent:
+//   - 401/403/404: a wrong key or model name fails every request until we fix
+//     the configuration, so they must trip the breaker.
+//   - 429: kept on the normal failure path (retry, then trip) on purpose. A
+//     rate limit is an upstream capacity/quota signal shared by the whole
+//     channel, so isolating the candidate for the break duration lets the
+//     other candidates serve traffic while the quota recovers. Treating it as
+//     a request fault would keep hammering the saturated upstream on every
+//     request. This is a product decision, not an oversight — do not "fix" it
+//     without revisiting that trade-off.
 func isRequestFaultStatus(status int) bool {
 	switch status {
 	case 400, 413, 422:

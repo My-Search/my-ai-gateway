@@ -48,6 +48,25 @@ func isCanceledError(err error) bool {
 	return errors.Is(err, context.Canceled)
 }
 
+// isParentBudgetError reports whether err is the expiry of the request's parent
+// context budget — the global 600s candidate-loop ceiling (MaxTotalTimeoutMs) or
+// a caller-supplied deadline — rather than a fault of the candidate being
+// attempted. It is the DeadlineExceeded counterpart of isCanceledError: the
+// candidate never got a fair chance to answer, so it must not be counted as a
+// candidate failure nor trip the breaker.
+//
+// The discriminator is ctx.Err(): a per-attempt timeout fires attemptCtx while
+// the parent stays live, so ctx.Err() is nil and the error still counts as a
+// real candidate timeout. Only when the parent itself is done with
+// DeadlineExceeded do we refuse to blame the candidate.
+func isParentBudgetError(ctx context.Context, err error) bool {
+	if ctx == nil || err == nil {
+		return false
+	}
+	return errors.Is(ctx.Err(), context.DeadlineExceeded) &&
+		errors.Is(err, context.DeadlineExceeded)
+}
+
 // isTimeoutError returns true when err is (or wraps) a TimeoutError, or is
 // a context deadline exceeded / cancelled from a timeout-derived context.
 // It is the single decision point so call sites never need strings.Contains.
