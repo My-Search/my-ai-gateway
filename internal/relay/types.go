@@ -102,6 +102,12 @@ const (
 	StreamIdleTimeoutMs   = 60000
 	DefaultMinTimeoutMs   = 20000
 	DefaultMaxTimeoutMs   = 60000
+	// StreamNoProgressTimeoutMs caps how long a stream may keep moving without
+	// ever producing content. It bounds the "alive but silently stalled" case
+	// the idle timeout cannot see: upstream heartbeats (SSE comments,
+	// keep-alive pings, empty deltas) reset the idle timer on every read while
+	// the caller still waits on an answer.
+	StreamNoProgressTimeoutMs = 300000
 )
 
 // SseEvent is the SSE event record.

@@ -50,6 +50,15 @@ type RelayCore struct {
 	clientCache      map[int64]*http.Client
 	maxCachedClients int
 
+	// StreamIdleTimeoutMs bounds the gap between two raw reads once the first
+	// byte has arrived. Zero means "use StreamIdleTimeoutMs"; it is a field so
+	// tests and future config can tighten it without waiting minutes.
+	StreamIdleTimeoutMs int64
+	// StreamNoProgressTimeoutMs bounds how long a stream may keep moving
+	// without ever yielding content. Zero means "use StreamNoProgressTimeoutMs".
+	// See the constant's comment for why the idle timeout alone is not enough.
+	StreamNoProgressTimeoutMs int64
+
 	mu               sync.Mutex
 	streamUsage      map[string][3]int
 	streamTranslate  *StreamTranslateStates
@@ -494,6 +503,17 @@ func (c *RelayCore) RelayStream(ctx context.Context, req *InternalRequest, authH
 		return
 	}
 
+	// Same 600s ceiling over the whole candidate loop as RelayNonStream. Without
+	// it a stream that keeps the idle timer alive with heartbeats would run
+	// forever: the server sets IdleTimeout 0 for SSE and the candidate loop has
+	// no other bound, so isParentBudgetError() below would never fire.
+	deadline := startTime.Add(MaxTotalTimeoutMs * time.Millisecond)
+	if d, ok := ctx.Deadline(); !ok || d.After(deadline) {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
+
 	// 候选顺序已由 BuildCandidates 排定（小组保持连续），按序尝试即可。
 	retryIndex := 0
 	var lastErr error
@@ -687,6 +707,22 @@ type streamAccumulator struct {
 	totalTokens      int
 }
 
+// streamIdleMs resolves the effective per-read idle timeout.
+func (c *RelayCore) streamIdleMs() time.Duration {
+	if c.StreamIdleTimeoutMs > 0 {
+		return time.Duration(c.StreamIdleTimeoutMs) * time.Millisecond
+	}
+	return StreamIdleTimeoutMs * time.Millisecond
+}
+
+// streamNoProgressMs resolves the effective no-content-progress timeout.
+func (c *RelayCore) streamNoProgressMs() time.Duration {
+	if c.StreamNoProgressTimeoutMs > 0 {
+		return time.Duration(c.StreamNoProgressTimeoutMs) * time.Millisecond
+	}
+	return StreamNoProgressTimeoutMs * time.Millisecond
+}
+
 // streamCandidateLoop runs one candidate's attempts, converting and forwarding
 // events to the client through the sink.
 func (c *RelayCore) streamCandidateLoop(ctx context.Context, traceID string, gwKeyID int64,
@@ -800,10 +836,18 @@ func (c *RelayCore) callProviderStream(ctx context.Context, req *InternalRequest
 	buf := make([]byte, 0, 4096)
 	readBuf := make([]byte, 4096)
 	// First-byte timeout: waits timeoutMs for the first SSE event.
-	// After the first event, it is reset to StreamIdleTimeoutMs per chunk
+	// After the first event, it is reset to the idle timeout per chunk
 	// to detect semi-dead connections while allowing long-running streams.
+	idleMs := c.streamIdleMs()
 	timeout := time.NewTimer(time.Duration(timeoutMs) * time.Millisecond)
 	defer timeout.Stop()
+
+	// No-progress timer: started together with the first-byte wait and only
+	// reset by events that actually carry content. A stalled stream that keeps
+	// resetting the idle timer with heartbeats still trips this one.
+	noProgressMs := c.streamNoProgressMs()
+	noProgress := time.NewTimer(noProgressMs)
+	defer noProgress.Stop()
 
 	for {
 		type readResult struct {
@@ -826,10 +870,10 @@ func (c *RelayCore) callProviderStream(ctx context.Context, req *InternalRequest
 					firstByte = &fb
 					c.LatencyTracker.Record(candidate.ChannelID, candidate.ChannelModelID, fb)
 					// Switch from first-byte timeout to per-chunk idle timeout.
-					resetTimer(timeout, StreamIdleTimeoutMs*time.Millisecond)
+					resetTimer(timeout, idleMs)
 				} else {
 					// Reset idle timeout on every chunk.
-					resetTimer(timeout, StreamIdleTimeoutMs*time.Millisecond)
+					resetTimer(timeout, idleMs)
 				}
 				buf = append(buf, readBuf[:n]...)
 				for {
@@ -839,7 +883,11 @@ func (c *RelayCore) callProviderStream(ctx context.Context, req *InternalRequest
 					}
 					block := string(buf[:idx])
 					buf = buf[idx+2:]
-					c.dispatchSseBlock(block, provider, clientFormat, req.Model, state, acc, sink, traceID)
+					if c.dispatchSseBlock(block, provider, clientFormat, req.Model, state, acc, sink, traceID) {
+						// Real content reached the caller: the stream is making
+						// progress, so restart the no-progress deadline.
+						resetTimer(noProgress, noProgressMs)
+					}
 				}
 			}
 			if readErr != nil {
@@ -864,7 +912,15 @@ func (c *RelayCore) callProviderStream(ctx context.Context, req *InternalRequest
 			if firstByte == nil {
 				return newFirstByteTimeout(timeoutMs), firstByte
 			}
-			return newStreamIdleTimeout(StreamIdleTimeoutMs * time.Millisecond), firstByte
+			return newStreamIdleTimeout(idleMs), firstByte
+
+		case <-noProgress.C:
+			// Data has been flowing (the idle timer keeps getting reset) but
+			// nothing the caller can use has arrived for the whole window.
+			if firstByte == nil {
+				return newFirstByteTimeout(timeoutMs), firstByte
+			}
+			return newStreamNoProgressTimeout(noProgressMs), firstByte
 
 		case <-ctx.Done():
 			return ctx.Err(), firstByte
@@ -873,9 +929,16 @@ func (c *RelayCore) callProviderStream(ctx context.Context, req *InternalRequest
 }
 
 // dispatchSseBlock parses one raw SSE block and forwards each event.
+// It reports whether the block carried anything beyond an inert heartbeat.
+// Pure liveness frames (SSE comments, empty deltas) return false so they cannot
+// keep the no-progress deadline alive; see isInertHeartbeat for the (one-sided)
+// classification.
 func (c *RelayCore) dispatchSseBlock(block, provider, clientFormat, originalModel string,
-	state StreamTranslateState, acc *streamAccumulator, sink StreamSink, traceID string) {
+	state StreamTranslateState, acc *streamAccumulator, sink StreamSink, traceID string) bool {
 
+	// progress stays false only while every event in the block is an inert
+	// heartbeat; the first event carrying output flips it.
+	progress := false
 	events := ParseSseEventBlock(block)
 	for _, ev := range events {
 		if ev.Data == "[DONE]" {
@@ -896,6 +959,9 @@ func (c *RelayCore) dispatchSseBlock(block, provider, clientFormat, originalMode
 		if pt, ct, tt, ok := ExtractUsageFromSseData(ev.Data); ok {
 			acc.promptTokens, acc.completionTokens, acc.totalTokens = pt, ct, tt
 		}
+		if !isInertHeartbeat(ev.Data) {
+			progress = true
+		}
 		if provider == clientFormat {
 			payload := ReplaceModelInJSON(ev.Data, originalModel)
 			if sink.OnEvent != nil {
@@ -908,6 +974,7 @@ func (c *RelayCore) dispatchSseBlock(block, provider, clientFormat, originalMode
 			addTranslated(sink, payload)
 		}
 	}
+	return progress
 }
 
 // addTranslated splits translated payloads on newlines and forwards them.

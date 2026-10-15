@@ -534,6 +534,59 @@ func mustJSONString(v any) string {
 // Content extraction / usage (SseHandler.extractTextContentFromRawData etc.)
 // ---------------------------------------------------------------------------
 
+// isInertHeartbeat reports whether a raw SSE data payload is a pure liveness
+// heartbeat: something the upstream sends to keep the connection alive without
+// carrying any part of the answer. Only these are allowed to leave the stream's
+// no-progress deadline untouched.
+//
+// The test is deliberately one-sided — it recognizes the known-inert shapes and
+// treats EVERYTHING else as progress. Reasoning-only deltas
+// (delta.reasoning_content), tool-call deltas and any future event type must
+// keep a long-running stream alive; misclassifying real output as a heartbeat
+// would kill valid responses, which is far worse than missing a heartbeat.
+func isInertHeartbeat(data string) bool {
+	s := strings.TrimSpace(data)
+	if s == "" {
+		return true
+	}
+	// SSE comment lines (": keep-alive") carry no data field at all.
+	if strings.HasPrefix(s, ":") {
+		return true
+	}
+	var root map[string]any
+	if err := json.Unmarshal([]byte(s), &root); err != nil {
+		// Unparseable payload: assume it matters rather than risk a false kill.
+		return false
+	}
+	if choices, ok := root["choices"].([]any); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]any); ok {
+			if delta, ok := choice["delta"].(map[string]any); ok {
+				// A non-empty delta of any kind is progress. An empty object
+				// (some providers open with it) or a nil content is not.
+				for k, v := range delta {
+					if k == "role" {
+						continue
+					}
+					if v == nil {
+						continue
+					}
+					if str, isStr := v.(string); isStr && str == "" {
+						continue
+					}
+					return false
+				}
+				return true
+			}
+			// No delta but a choice body: role/finish/usage chunk, not output.
+			return true
+		}
+		return true
+	}
+	// Anything unrecognized (Anthropic block events, Responses events, ...)
+	// counts as progress.
+	return false
+}
+
 // ExtractTextContentFromRawData mirrors SseHandler.extractTextContentFromRawData.
 func ExtractTextContentFromRawData(rawData, provider string) string {
 	var root map[string]any

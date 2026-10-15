@@ -125,6 +125,17 @@ func newStreamIdleTimeout(d time.Duration) *TimeoutError {
 	}
 }
 
+// newStreamNoProgressTimeout returns a TimeoutError for a stream that kept the
+// connection alive (heartbeats resetting the idle timer) but produced nothing
+// the caller can use within the whole window.
+func newStreamNoProgressTimeout(d time.Duration) *TimeoutError {
+	return &TimeoutError{
+		Upstream: true,
+		Stage:    "stream_no_progress",
+		Wrapped:  errors.New("stream no progress timeout (" + itoa(int(d/time.Millisecond)) + "ms)"),
+	}
+}
+
 // newEmptyResponseTimeout returns a TimeoutError for upstream returning an
 // empty body with a 2xx status (treated as timeout for retry purposes).
 func newEmptyResponseTimeout() *TimeoutError {
