@@ -58,6 +58,12 @@ echo ""
 echo "7. 停止旧容器..."
 ${COMPOSE_CMD} down --remove-orphans
 
+# 旧版前端使用固定容器名；Compose 项目标签变化时 down 可能识别不到它。
+if docker container inspect my-ai-frontend >/dev/null 2>&1; then
+  echo "  清理旧前端容器 my-ai-frontend..."
+  docker rm -f my-ai-frontend
+fi
+
 echo ""
 echo "8. 启动新容器..."
 ${COMPOSE_CMD} up -d

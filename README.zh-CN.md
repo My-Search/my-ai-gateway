@@ -160,8 +160,12 @@ docker compose up -d --build
 
 ```bash
 docker compose down --remove-orphans
+docker rm -f my-ai-frontend 2>/dev/null || true
 docker compose up -d --build
 ```
+
+第二条命令用于清理 Compose 项目元数据与当前目录不一致、因而未被 `down`
+识别的旧容器；`update.sh` 已自动执行该清理。
 
 ### 3. 访问
 

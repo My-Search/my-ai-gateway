@@ -160,8 +160,13 @@ frontend service first so it cannot keep occupying `FRONTEND_PORT`:
 
 ```bash
 docker compose down --remove-orphans
+docker rm -f my-ai-frontend 2>/dev/null || true
 docker compose up -d --build
 ```
+
+The second command handles an old container whose Compose project metadata no
+longer matches the current checkout. `update.sh` performs this cleanup
+automatically.
 
 ### 3. Access
 
