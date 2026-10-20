@@ -76,6 +76,7 @@ export default {
   'common.confirmAction': 'Confirm',
   'common.noData': 'No data',
   'common.refresh': 'Refresh',
+  'common.retry': 'Retry',
   'common.filter': 'Filter',
   'common.reset': 'Reset',
 
@@ -585,6 +586,8 @@ export default {
   'log.chart.yAxis': 'Tokens',
   'log.chart.empty': 'No usage data this month',
   'log.chart.loadFailed': 'Failed to load usage history',
+  'log.chart.refreshFailed': 'Usage history refresh failed; showing the last successfully loaded data',
+  'log.chart.stale': 'Data may be out of date',
   'log.chart.monthLabel': '{year}-{month}',
   'log.chart.tokensUnit': 'tokens',
   'log.chart.requestsUnit': 'requests',

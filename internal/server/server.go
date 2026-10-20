@@ -66,6 +66,9 @@ func (a *App) Register(r *gin.Engine) {
 	r.HEAD("/actuator/health", healthHandler)
 	r.GET("/actuator/prometheus", gin.WrapH(promhttp.HandlerFor(d.Metrics.Reg, promhttp.HandlerOpts{})))
 
+	// --- Static: embedded management console ------------------------------
+	a.registerConsoleRoutes(r)
+
 	// --- Static: uploaded files -------------------------------------------
 	uploads := r.Group("/uploads")
 	uploads.Use(noCacheProxied())
@@ -116,25 +119,32 @@ func (a *App) serveUpload(c *gin.Context) {
 	c.File(full)
 }
 
-// spaFallback reproduces the WebMvcConfig resource resolver: unknown paths that
-// are not API calls return index.html when the front-end bundle is present.
+// spaFallback serves the Vue bundle when one is configured. Hashed assets are
+// served directly while unknown page routes fall back to index.html.
 func (a *App) spaFallback(c *gin.Context) {
 	uri := c.Request.URL.Path
 
-	if strings.HasPrefix(uri, "/admin/api/") {
+	if isBackendOnlyPath(uri) {
 		c.String(http.StatusNotFound, "Not Found")
 		return
 	}
-	if strings.HasPrefix(uri, "/uploads/") {
+
+	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
 		c.String(http.StatusNotFound, "Not Found")
 		return
 	}
-	if a.deps.Cfg.StaticDir != "" {
-		idx := filepath.Join(a.deps.Cfg.StaticDir, "index.html")
-		if _, err := os.Stat(idx); err == nil {
-			c.File(idx)
-			return
-		}
+
+	if a.serveStaticFile(c, uri) {
+		return
+	}
+	// Missing build artifacts must stay 404 instead of being replaced by the
+	// HTML shell, otherwise browsers cache the wrong content type.
+	if strings.HasPrefix(uri, "/assets/") || isStaticAssetLike(uri) {
+		c.String(http.StatusNotFound, "Not Found")
+		return
+	}
+	if a.serveStaticIndex(c) {
+		return
 	}
 	c.String(http.StatusNotFound, "Not Found")
 }

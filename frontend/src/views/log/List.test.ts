@@ -395,3 +395,106 @@ describe('请求日志页 - 性能重构回归', () => {
     expect(dialog!.textContent).toContain('OpenAI Responses')
   })
 })
+
+describe('请求日志页 - 使用历史图表的加载态与刷新', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    sseCallbacks = null
+    listMock.mockReset()
+    usageChartMock.mockReset()
+    getRequestDataMock.mockReset()
+    cleanMock.mockReset()
+    listMock.mockResolvedValue(listResponse([]))
+    usageChartMock.mockResolvedValue({
+      data: { year: 2026, month: 9, days: [], models: [], tokenValues: {}, requestValues: {}, maxValue: 0, totalValue: 0 },
+    })
+  })
+
+  it('图表请求失败时显示加载失败与重试，而不是「当月暂无使用数据」', async () => {
+    usageChartMock.mockRejectedValueOnce(new Error('请求失败 (500)'))
+    const wrapper = await mountPage()
+
+    const overlay = wrapper.find('.chart-overlay-error')
+    expect(overlay.exists()).toBe(true)
+    expect(overlay.text()).toContain('使用历史加载失败')
+    expect(overlay.text()).toContain('重试')
+    // 关键回归：查询失败不能被渲染成「没有数据」。
+    expect(wrapper.text()).not.toContain('当月暂无使用数据')
+  })
+
+  it('点击重试会重新请求图表，成功后渲染数据并清除失败态', async () => {
+    usageChartMock.mockRejectedValueOnce(new Error('请求失败 (500)'))
+    const wrapper = await mountPage()
+    expect(wrapper.find('.chart-overlay-error').exists()).toBe(true)
+
+    usageChartMock.mockResolvedValueOnce({
+      data: {
+        year: 2026, month: 9,
+        days: ['2026-09-01'],
+        models: ['gpt-4o'],
+        tokenValues: { 'gpt-4o': [123] },
+        requestValues: { 'gpt-4o': [1] },
+        maxValue: 123, totalValue: 123,
+      },
+    })
+    await wrapper.find('.chart-retry-btn').trigger('click')
+    await vi.waitFor(() => expect(wrapper.find('.chart-overlay-error').exists()).toBe(false))
+
+    expect(wrapper.findAll('.chart-legend-item').length).toBe(1)
+    expect(wrapper.text()).not.toContain('当月暂无使用数据')
+  })
+
+  it('加载成功但确实没有数据时才显示「当月暂无使用数据」', async () => {
+    const wrapper = await mountPage()
+    await vi.waitFor(() => expect(usageChartMock).toHaveBeenCalled())
+
+    expect(wrapper.find('.chart-overlay-error').exists()).toBe(false)
+    expect(wrapper.text()).toContain('当月暂无使用数据')
+  })
+
+  it('切换到新月份后请求失败，不能继续显示上个月的柱状图', async () => {
+    usageChartMock.mockResolvedValueOnce({
+      data: {
+        year: 2026, month: 9,
+        days: ['2026-09-01'],
+        models: ['gpt-4o'],
+        tokenValues: { 'gpt-4o': [123] },
+        requestValues: { 'gpt-4o': [1] },
+        maxValue: 123, totalValue: 123,
+      },
+    })
+    const wrapper = await mountPage()
+    await vi.waitFor(() => expect(wrapper.findAll('.chart-legend-item').length).toBe(1))
+
+    usageChartMock.mockRejectedValueOnce(new Error('请求失败 (500)'))
+    // 月份翻页会同时触发图表与列表重载
+    await wrapper.findAll('.month-nav-btn')[0].trigger('click')
+    await vi.waitFor(() => expect(wrapper.find('.chart-overlay-error').exists()).toBe(true))
+
+    // 旧月份图例必须消失，避免误读成新月份的数据
+    expect(wrapper.findAll('.chart-legend-item').length).toBe(0)
+    expect(wrapper.text()).not.toContain('当月暂无使用数据')
+  })
+
+  it('历史图表按 60 秒静默轮询，而不是 15 秒', async () => {
+    vi.useFakeTimers()
+    try {
+      listMock.mockResolvedValue(listResponse([]))
+      const wrapper = mount(LogList, { global: { plugins: [createPinia()] } })
+      // 首屏加载由 onMounted 同步发起，等待微任务完成即可
+      await Promise.resolve()
+      await Promise.resolve()
+      usageChartMock.mockClear()
+
+      await vi.advanceTimersByTimeAsync(15_000)
+      expect(usageChartMock).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(45_000)
+      expect(usageChartMock).toHaveBeenCalledTimes(1)
+
+      wrapper.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

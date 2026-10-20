@@ -92,3 +92,34 @@ export function formatLocalDate(dateStr: string | undefined | null): string {
   const day = String(d.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
 }
+
+/** 网关统计口径时区：Asia/Shanghai（中国无夏令时，固定 +8） */
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000
+
+/**
+ * 返回「上海时区的当前年月」。
+ *
+ * 请求日志页的月份导航、使用历史图表与日志列表筛选必须共用同一口径，
+ * 否则在月初 00:00–08:00（上海）会出现「列表有数据、图表却提示当月暂无数据」。
+ */
+export function shanghaiYearMonth(now: Date = new Date()): { year: number; month: number } {
+  const shifted = new Date(now.getTime() + SHANGHAI_OFFSET_MS)
+  return { year: shifted.getUTCFullYear(), month: shifted.getUTCMonth() + 1 }
+}
+
+/**
+ * 返回上海时区某个自然月对应的 UTC ISO 边界，供日志列表接口过滤。
+ *
+ * 日志列表接口的 endTime 是「包含」语义，且后端 datetime() 会把时间截断到秒，
+ * 所以结束边界取次月 1 日 00:00:00 的前一秒：这样 23:59:59.xxx 仍属于本月，
+ * 而次月 00:00:00 起的数据不会被重复计入（与图表的半开窗口一致）。
+ */
+export function shanghaiMonthRange(year: number, month: number): { start: string; end: string } {
+  // Date.UTC 先按 UTC 构造月首，再减 8 小时得到上海月首对应的 UTC 瞬时。
+  const startMs = Date.UTC(year, month - 1, 1) - SHANGHAI_OFFSET_MS
+  const endMs = Date.UTC(year, month, 1) - SHANGHAI_OFFSET_MS - 1000
+  return {
+    start: new Date(startMs).toISOString(),
+    end: new Date(endMs).toISOString(),
+  }
+}

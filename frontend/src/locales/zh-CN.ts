@@ -76,6 +76,7 @@ export default {
   'common.confirmAction': '确认',
   'common.noData': '暂无数据',
   'common.refresh': '刷新',
+  'common.retry': '重试',
   'common.filter': '筛选',
   'common.reset': '重置',
 
@@ -585,6 +586,8 @@ export default {
   'log.chart.yAxis': 'Tokens',
   'log.chart.empty': '当月暂无使用数据',
   'log.chart.loadFailed': '使用历史加载失败',
+  'log.chart.refreshFailed': '使用历史自动刷新失败，当前展示的是上次成功加载的数据',
+  'log.chart.stale': '数据可能已过期',
   'log.chart.monthLabel': '{year} 年 {month} 月',
   'log.chart.tokensUnit': 'tokens',
   'log.chart.requestsUnit': '次',

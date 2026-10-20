@@ -28,6 +28,11 @@
           <option :value="null">{{ t('log.chart.allKeys') }}</option>
           <option v-for="k in chartApiKeyOptions" :key="k.id" :value="k.id">{{ k.keyName }}</option>
         </select>
+        <!-- 静默刷新失败：保留旧图但明确标记数据已过期，避免把旧数字当成最新结果 -->
+        <span v-if="chartError && usageChartData" class="chart-stale-badge" :title="t('log.chart.refreshFailed')">
+          {{ t('log.chart.stale') }}
+          <button type="button" class="chart-retry-link" @click="reloadChart">{{ t('common.retry') }}</button>
+        </span>
       </div>
     </div>
 
@@ -37,8 +42,15 @@
       <div v-if="chartLoading" class="chart-overlay" :class="{ 'chart-overlay-mask': chartHasRendered }">
         <LoadingSpinner :text="t('common.loading')" />
       </div>
-      <!-- 无数据叠加空状态提示（仅在加载完成后判定），图表骨架依然可见 -->
-      <div v-else-if="!usageChartData || usageChartData.models.length === 0" class="chart-overlay">
+      <!-- 查询失败（超时/5xx）必须与「无数据」区分，否则会谎报当月没有用量 -->
+      <div v-else-if="chartError && !usageChartData" class="chart-overlay chart-overlay-error">
+        <span>{{ t('log.chart.loadFailed') }}</span>
+        <button type="button" class="btn btn-sm btn-ghost chart-retry-btn" @click="reloadChart">
+          {{ t('common.retry') }}
+        </button>
+      </div>
+      <!-- 无数据叠加空状态提示（仅在加载成功且确无数据时判定），图表骨架依然可见 -->
+      <div v-else-if="usageChartData && usageChartData.models.length === 0" class="chart-overlay">
         {{ t('log.chart.empty') }}
       </div>
       <svg :viewBox="`0 0 ${CHART_SVG_WIDTH} ${CHART_SVG_HEIGHT}`" class="chart-svg" preserveAspectRatio="none">
@@ -262,7 +274,7 @@ import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { useLocaleStore } from '@/stores/locale'
-import { formatLocalDateTime, formatLocalFullTime } from '@/utils/date'
+import { formatLocalDateTime, formatLocalFullTime, shanghaiMonthRange, shanghaiYearMonth } from '@/utils/date'
 
 const { t } = useI18n()
 // 语言参与列表行 v-memo 的依赖：切换语言时强制已缓存的行重新渲染（t() 结果变了）
@@ -277,8 +289,9 @@ const loadingMore = ref(false)
 const sseConnected = ref(false)
 const sseReconnecting = ref(false)
 
-// 图表 15s 自动刷新定时器
+// 图表自动刷新定时器（历史图表不要求实时性，60s 一次即可）
 let chartRefreshTimer: ReturnType<typeof setInterval> | null = null
+const CHART_REFRESH_INTERVAL_MS = 60_000
 
 // SSE 缓冲队列：合并短时间内的多条事件，减少重复计算和渲染次数
 const sseBuffer: RequestLog[] = []
@@ -339,9 +352,10 @@ async function fetchRequestDataSaveLevel() {
 
 /* ========== 使用历史图表 ========== */
 
-// 月份导航
-const chartYear = ref(new Date().getFullYear())
-const chartMonth = ref(new Date().getMonth() + 1) // 1-12
+// 月份导航：与后端统计口径一致，使用上海时区的年月（避免月初跨时区错位）
+const initialMonth = shanghaiYearMonth()
+const chartYear = ref(initialMonth.year)
+const chartMonth = ref(initialMonth.month) // 1-12
 const chartModelName = ref('')
 const chartModelType = ref<'entry' | 'channel'>('entry')
 const chartApiKeyId = ref<number | null>(null)
@@ -349,6 +363,8 @@ const usageChartData = ref<LogUsageChart | null>(null)
 const chartLoading = ref(false)
 /** 是否已经成功渲染过一次图表数据（用于区分「首次加载中」与「已有数据翻月刷新」） */
 const chartHasRendered = ref(false)
+/** 最近一次图表请求是否失败：失败不能被当成「当月无数据」 */
+const chartError = ref(false)
 const chartApiKeyOptions = ref<ApiKey[]>([])
 
 /**
@@ -390,7 +406,7 @@ function nextChartMonth() {
 
 /**
  * 加载图表数据。
- * @param silent 静默刷新（15s 定时器）：不显示加载态，避免周期性闪烁；
+ * @param silent 静默刷新（60s 定时器）：不显示加载态，避免周期性闪烁；
  *               用户主动切换筛选时始终显示加载态。
  */
 async function loadUsageChart(silent = false) {
@@ -408,12 +424,23 @@ async function loadUsageChart(silent = false) {
     if (seq !== chartRequestSeq) return
     usageChartData.value = res.data
     chartHasRendered.value = true
+    chartError.value = false
   } catch (e) {
     console.warn('Failed to load usage chart:', e)
-    // 失败时保留旧数据，图表不闪烁
+    if (seq === chartRequestSeq) {
+      chartError.value = true
+      // 静默轮询失败保留上一张图（内容仍是同一筛选条件，只是可能过期）；
+      // 用户切换月份/筛选失败则必须清掉旧图，否则会把上个月的数据当成新月份。
+      if (!silent) usageChartData.value = null
+    }
   } finally {
     if (seq === chartRequestSeq) chartLoading.value = false
   }
+}
+
+/** 手动重试图表（用于首屏失败后的恢复入口） */
+function reloadChart() {
+  loadUsageChart()
 }
 
 /* --- SVG 几何常量 --- */
@@ -552,7 +579,7 @@ const usageTooltip = reactive({
  * 上一次计算 tooltip 行所依据的数据与列。
  * 模板同时绑定了 mouseenter 与 mousemove，鼠标在同一根柱上移动会反复触发；
  * 行内容只取决于 (data, dayIdx)，故同一组合只需算一次。这里记录 data 对象引用
- * 而不只是日期：15s 静默刷新会替换 usageChartData，此时即使鼠标没动也必须重算，
+ * 而不只是日期：60s 静默刷新会替换 usageChartData，此时即使鼠标没动也必须重算，
  * 否则会一直显示刷新前的旧数值。
  */
 let tooltipRowsFor: { data: LogUsageChart | null; dayIdx: number } | null = null
@@ -1028,11 +1055,11 @@ function getCurrentFilters(): import('@/api/log').LogFilters {
   const filters: import('@/api/log').LogFilters = {}
   if (chartModelName.value.trim()) filters.modelName = chartModelName.value.trim()
   if (chartApiKeyId.value != null) filters.gatewayApiKeyId = chartApiKeyId.value
-  // 月份 → 半开区间 [since, until)：本月 1 日 00:00 → 次月 1 日 00:00
-  const since = new Date(chartYear.value, chartMonth.value - 1, 1)
-  const until = new Date(chartYear.value, chartMonth.value, 1)
-  filters.startTime = since.toISOString()
-  filters.endTime = until.toISOString()
+  // 月份 → 半开区间 [since, until)：上海时区本月 1 日 00:00 → 次月 1 日 00:00。
+  // 必须与使用历史图表的月份窗口完全一致，否则两者会给出不同的统计结果。
+  const range = shanghaiMonthRange(chartYear.value, chartMonth.value)
+  filters.startTime = range.start
+  filters.endTime = range.end
   return filters
 }
 
@@ -1100,7 +1127,7 @@ watch(chartModelType, () => loadUsageChart())
  *
  * 注意：这里必须同步触发 loadUsageChart。此前只调用 loadLogs()，而日志列表请求
  * 通常远快于图表聚合查询，导致翻月/换筛选后表现为"列表先刷新、图表不动"，
- * 只能等 15s 自动刷新定时器才会更新（期间图表与筛选条件不一致）。
+ * 只能等自动刷新定时器才会更新（期间图表与筛选条件不一致）。
  */
 watch(
   [chartYear, chartMonth, chartModelName, chartApiKeyId],
@@ -1129,9 +1156,11 @@ onMounted(() => {
   fetchChartApiKeys()
   fetchRequestDataSaveLevel()
   loadUsageChart()
-  // 15s 静默自动刷新：只在后台更新数据，不弹加载遮罩（否则每 15s 闪烁一次）；
-  // 页面不可见时跳过（与 Dashboard 一致），回到前台后下个周期自然恢复
-  chartRefreshTimer = setInterval(() => { if (!document.hidden) loadUsageChart(true) }, 15000)
+  // 60s 静默自动刷新：历史图表不要求实时性，降低大库上的聚合压力；
+  // 只在后台更新数据，不弹加载遮罩；页面不可见时跳过，回到前台后下个周期自然恢复
+  chartRefreshTimer = setInterval(() => {
+    if (!document.hidden) loadUsageChart(true)
+  }, CHART_REFRESH_INTERVAL_MS)
   loadLogs()
   startSse()
 
@@ -1537,6 +1566,36 @@ onUnmounted(() => {
 /* 已有数据时的刷新遮罩：轻微压暗旧图，明确提示「正在加载新筛选的数据」 */
 .chart-overlay-mask {
   background: color-mix(in srgb, var(--bg-secondary) 70%, transparent);
+}
+.chart-overlay-error {
+  gap: 10px;
+  pointer-events: auto;
+}
+.chart-retry-btn {
+  font-size: 12px;
+}
+.chart-stale-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--accent-yellow);
+  background: color-mix(in srgb, var(--accent-yellow) 16%, transparent);
+  white-space: nowrap;
+}
+.chart-retry-link {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--accent-blue);
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.chart-retry-link:hover {
+  text-decoration: underline;
 }
 .chart-wrapper {
   position: relative;

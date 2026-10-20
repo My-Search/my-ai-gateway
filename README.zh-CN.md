@@ -31,7 +31,7 @@
 | 后端 | Java 17、Spring Boot 3.2、MyBatis-Plus 3.5 |
 | 数据库 | SQLite（零配置，文件级存储，支持 WAL 模式） |
 | 前端 | Vue 3、Vite 5、Pinia、TypeScript、Vue Router 4 |
-| 部署 | Docker Compose（Nginx 统一入口） |
+| 部署 | Docker Compose（Go 后端统一入口） |
 
 ## 项目结构
 
@@ -85,12 +85,11 @@ my-ai-api/
 │   │   │   └── styles/               # 全局样式
 │   │   ├── types/                    # TypeScript 类型定义
 │   │   └── utils/                    # 工具函数
-│   ├── nginx.conf                    # 生产 Nginx 配置
-│   └── Dockerfile                    # 前端容器构建
+│   └── Dockerfile                    # 旧版独立前端容器构建（Compose 已不再使用）
 ├── data/                             # SQLite 数据文件（运行时自动创建）
 ├── .agents/                          # Agent 工作区
 ├── pom.xml                           # Maven 项目配置
-├── Dockerfile                        # 后端容器构建（多阶段构建）
+├── Dockerfile                        # 前后端一体化镜像（多阶段构建）
 ├── docker-compose.yml                # 服务编排
 └── .env.compose.example              # 环境变量示例
 ```
@@ -111,6 +110,11 @@ mvn spring-boot:run
 ```
 
 后端运行在 `http://localhost:1399`，SQLite 数据库文件自动创建在 `data/gateway.db`。
+
+后端二进制内嵌了单文件控制台，无需构建前端即可访问：
+
+- `http://localhost:1399/` 或 `http://localhost:1399/console`
+- 仅当设置了 `MAG_STATIC_DIR` 且该目录存在 `index.html` 时，`/` 才优先返回该 Vue 构建产物，此时内嵌控制台仍在 `/console` 可访问。
 
 ### 2. 启动前端
 
@@ -143,11 +147,19 @@ npm run dev
 cp .env.compose.example .env.compose
 ```
 
-默认配置即可，按需修改 `FRONTEND_PORT`。
+默认配置即可；如需更换对外端口，修改 `FRONTEND_PORT`。
 
 ### 2. 构建并启动
 
 ```bash
+docker compose up -d --build
+```
+
+从旧版双容器部署升级时，首次启动请清理被移除的旧前端服务，避免它继续占用
+`FRONTEND_PORT`：
+
+```bash
+docker compose down --remove-orphans
 docker compose up -d --build
 ```
 
@@ -156,7 +168,9 @@ docker compose up -d --build
 - 管理后台：`http://localhost:3990`
 - AI 接口：`http://localhost:3990/v1/chat/completions`
 
-所有请求通过 Nginx 统一入口（端口 3990），后端不暴露端口。
+Vue 前端已由多阶段镜像构建并复制到后端镜像中，由 Go 后端直接托管，不再创建
+独立的 Nginx 前端容器。对外仍使用原来的 `FRONTEND_PORT`（默认 3990），
+所有请求共用一个入口。
 
 | 路径 | 用途 |
 |------|------|
@@ -198,8 +212,7 @@ docker compose up -d
 
 ```bash
 docker compose logs -f          # 查看日志
-docker compose up -d --build my-ai-gateway   # 仅重建后端
-docker compose up -d --build my-ai-frontend  # 仅重建前端
+docker compose up -d --build    # 重建前后端一体化镜像
 ```
 
 ## API 使用示例

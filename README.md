@@ -31,7 +31,7 @@ A personal unified AI gateway that provides multi-channel aggregation, model rou
 | Backend | Java 17, Spring Boot 3.2, MyBatis-Plus 3.5 |
 | Database | SQLite (zero-config, file-based storage with WAL mode) |
 | Frontend | Vue 3, Vite 5, Pinia, TypeScript, Vue Router 4 |
-| Deployment | Docker Compose (Nginx as unified entry) |
+| Deployment | Docker Compose (Go backend as unified entry) |
 
 ## Project Structure
 
@@ -85,12 +85,11 @@ my-ai-api/
 │   │   │   └── styles/               # Global styles
 │   │   ├── types/                    # TypeScript type definitions
 │   │   └── utils/                    # Utility functions
-│   ├── nginx.conf                    # Production Nginx configuration
-│   └── Dockerfile                    # Frontend container build
+│   └── Dockerfile                    # Legacy standalone frontend container (not used by Compose)
 ├── data/                             # SQLite data file (auto-created at runtime)
 ├── .agents/                          # Agent workspace
 ├── pom.xml                           # Maven project configuration
-├── Dockerfile                        # Backend container build (multi-stage)
+├── Dockerfile                        # Combined frontend/backend image (multi-stage)
 ├── docker-compose.yml                # Service orchestration
 └── .env.compose.example              # Environment variable example
 ```
@@ -111,6 +110,11 @@ mvn spring-boot:run
 ```
 
 The backend runs at `http://localhost:1399`; the SQLite database file is auto-created at `data/gateway.db`.
+
+The single-file console is embedded in the backend binary, so no front-end build is needed:
+
+- `http://localhost:1399/` or `http://localhost:1399/console`
+- `/` prefers the Vue bundle only when `MAG_STATIC_DIR` is set and contains `index.html`; the embedded console then stays reachable at `/console`.
 
 ### 2. Start the Frontend
 
@@ -143,11 +147,19 @@ The frontend runs at `http://localhost:3990` with a proxy configured to forward 
 cp .env.compose.example .env.compose
 ```
 
-The default configuration works as-is; modify `FRONTEND_PORT` as needed.
+The default configuration works as-is; modify `FRONTEND_PORT` to change the public port.
 
 ### 2. Build and Start
 
 ```bash
+docker compose up -d --build
+```
+
+When upgrading from the previous two-container deployment, remove the obsolete
+frontend service first so it cannot keep occupying `FRONTEND_PORT`:
+
+```bash
+docker compose down --remove-orphans
 docker compose up -d --build
 ```
 
@@ -156,7 +168,9 @@ docker compose up -d --build
 - Admin Console: `http://localhost:3990`
 - AI API: `http://localhost:3990/v1/chat/completions`
 
-All requests go through the Nginx unified entry (port 3990); the backend ports are not exposed.
+The Vue frontend is built in the multi-stage image and served directly by the Go backend.
+There is no separate Nginx frontend container. The public entry remains the existing
+`FRONTEND_PORT` (3990 by default), and all requests share that single port.
 
 | Path | Purpose |
 |------|---------|
@@ -201,8 +215,7 @@ incremental mode. Back up `data/gateway.db` first as a precaution.
 
 ```bash
 docker compose logs -f          # View logs
-docker compose up -d --build my-ai-gateway   # Rebuild backend only
-docker compose up -d --build my-ai-frontend  # Rebuild frontend only
+docker compose up -d --build    # Rebuild the combined image
 ```
 
 ## API Usage Examples

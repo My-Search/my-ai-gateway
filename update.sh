@@ -56,7 +56,7 @@ ${COMPOSE_CMD} build --no-cache
 
 echo ""
 echo "7. 停止旧容器..."
-${COMPOSE_CMD} down
+${COMPOSE_CMD} down --remove-orphans
 
 echo ""
 echo "8. 启动新容器..."

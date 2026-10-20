@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -155,28 +156,46 @@ func TestUsageChartCountsBothTimestampFormats(t *testing.T) {
 	}
 }
 
-// TestUsageChartMonthBoundaries pins the half-open [since, until) window: the
-// last instant of the month is inside, the first instant of the next month is
-// not.
+// TestUsageChartMonthBoundaries pins the half-open Shanghai-month window: a
+// request at Shanghai 00:00 on the 1st belongs to that month even though its
+// UTC timestamp still falls on the previous day. This is the regression that
+// made the chart say "no usage this month" while the log list (which filters
+// on the same local month) clearly had rows.
 func TestUsageChartMonthBoundaries(t *testing.T) {
 	st := newUsageChartTestStore(t)
 
-	insertUsageRow(t, st, "t-last", "success", "beta", "2026-09-30T23:59:59.000000000", 50)
-	insertUsageRow(t, st, "t-next", "success", "beta", "2026-10-01T00:00:00.000000000", 999)
-	insertUsageRow(t, st, "t-prev", "success", "beta", "2026-08-31T23:59:59.000000000", 888)
+	// Shanghai 2026-09-30 23:59:59 == UTC 2026-09-30 15:59:59.
+	insertUsageRow(t, st, "t-last", "success", "beta", "2026-09-30T15:59:59.000000000", 50)
+	// Shanghai 2026-10-01 00:00:00 == UTC 2026-09-30 16:00:00 (inside September
+	// visually but October in Shanghai).
+	insertUsageRow(t, st, "t-oct-first", "success", "gamma", "2026-09-30T16:00:00.000000000", 25)
+	// Shanghai 2026-11-01 00:00:00 == UTC 2026-10-31 16:00:00 (excluded).
+	insertUsageRow(t, st, "t-next", "success", "beta", "2026-10-31T16:00:00.000000000", 999)
+	// Shanghai 2026-08-31 23:59:59 == UTC 2026-08-31 15:59:59 (excluded; one
+	// second before the month's inclusive start instant).
+	insertUsageRow(t, st, "t-prev", "success", "beta", "2026-08-31T15:59:59.000000000", 888)
 
 	data := fetchUsageChart(t, st, "year=2026&month=9&modelType=entry")
 	tokenValues := data["tokenValues"].(map[string]any)
 
 	beta := asFloatSlice(t, tokenValues, "beta")
 	if got := sum(beta); got != 50 {
-		t.Errorf("beta total = %v, want 50 (only the 09-30 row; 10-01 and 08-31 excluded); per-day=%v", got, beta)
+		t.Errorf("beta total = %v, want 50 (only the Shanghai 09-30 row; Nov/Sept boundaries excluded); per-day=%v", got, beta)
 	}
 	if len(beta) != 30 {
 		t.Errorf("beta has %d days, want 30 for September", len(beta))
 	}
 	if beta[29] != 50 {
 		t.Errorf("beta[day 30] = %v, want 50", beta[29])
+	}
+
+	// The UTC row on 2026-09-30 16:00 must be bucketed on Shanghai Oct 1 of the
+	// October chart, not silently dropped from both months.
+	oct := fetchUsageChart(t, st, "year=2026&month=10&modelType=entry")
+	octTokens := oct["tokenValues"].(map[string]any)
+	gamma := asFloatSlice(t, octTokens, "gamma")
+	if gamma[0] != 25 {
+		t.Errorf("gamma[Oct 1] = %v, want 25 (Shanghai midnight request)", gamma[0])
 	}
 }
 
@@ -283,7 +302,7 @@ func explainQueryPlan(t *testing.T, st *store.Store, query string, args ...any) 
 }
 
 // TestUsageChartCachesRepeatedRequests verifies the DashCache wiring: a second
-// identical request is served from cache, so the 15s front-end poll does not
+// identical request is served from cache, so the 60s front-end poll does not
 // re-run the aggregation each time.
 func TestUsageChartCachesRepeatedRequests(t *testing.T) {
 	st := newUsageChartTestStore(t)
@@ -312,5 +331,92 @@ func TestUsageChartCachesRepeatedRequests(t *testing.T) {
 
 	if got, want := second["totalValue"].(float64), first["totalValue"].(float64); got != want {
 		t.Errorf("second request totalValue = %v, want cached %v", got, want)
+	}
+}
+
+// TestUsageChartBucketsByShanghaiDay guards the day bucket. created_at is
+// stored in UTC, so a request at Shanghai 00:30 (UTC 16:30 the day before)
+// used to land on the wrong day of the chart.
+func TestUsageChartBucketsByShanghaiDay(t *testing.T) {
+	st := newUsageChartTestStore(t)
+
+	// Shanghai 2026-09-15 00:30 == UTC 2026-09-14 16:30.
+	insertUsageRow(t, st, "t-midnight", "success", "alpha", "2026-09-14T16:30:00.000000000", 42)
+	// Shanghai 2026-09-15 23:30 == UTC 2026-09-15 15:30.
+	insertUsageRow(t, st, "t-late", "success", "alpha", "2026-09-15T15:30:00.000000000", 58)
+
+	data := fetchUsageChart(t, st, "year=2026&month=9&modelType=entry")
+	alpha := asFloatSlice(t, data["tokenValues"].(map[string]any), "alpha")
+
+	if alpha[14] != 100 {
+		t.Errorf("alpha[Sep 15] = %v, want 100 (both requests belong to Shanghai Sep 15); per-day=%v", alpha[14], alpha)
+	}
+	if alpha[13] != 0 {
+		t.Errorf("alpha[Sep 14] = %v, want 0 (UTC Sep 14 16:30 is Shanghai Sep 15)", alpha[13])
+	}
+}
+
+// TestUsageChartReturnsErrorInsteadOfEmptyOnQueryFailure guards the UI
+// contract: a failed aggregation must not be reported as "no data this
+// month". The frontend relies on a non-2xx status to show a retry prompt.
+func TestUsageChartReturnsErrorInsteadOfEmptyOnQueryFailure(t *testing.T) {
+	st := newUsageChartTestStore(t)
+	// Drop the table so the aggregation fails while the route stays mounted.
+	if _, err := st.Exec(context.Background(), "DROP TABLE request_logs"); err != nil {
+		t.Fatal(err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	registerLogRoutes(r.Group("/admin/api"), Deps{Store: st, DashCache: NewDashCache()})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest("GET",
+		"/admin/api/logs/usage-chart?year=2026&month=9&modelType=entry", nil))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "error") {
+		t.Errorf("error body = %s, want an error message", w.Body.String())
+	}
+}
+
+// TestUsageChartChannelModeAggregatesTraces covers the channel-model branch,
+// whose SQL also gained the coarse/exact range pair and the Shanghai day
+// bucket. A successful trace is attributed to its channel model; a trace with
+// no success row folds into "请求失败" with zero tokens.
+func TestUsageChartChannelModeAggregatesTraces(t *testing.T) {
+	st := newUsageChartTestStore(t)
+
+	// Shanghai 2026-09-10 00:30 == UTC 2026-09-09 16:30 (must land on Sep 10).
+	insertUsageRow(t, st, "t-ok", "start", "alpha", "2026-09-09T16:30:00.000000000", 0)
+	insertUsageRow(t, st, "t-ok", "success", "alpha", "2026-09-09T16:30:05.000000000", 100)
+	insertUsageRow(t, st, "t-fail", "start", "alpha", "2026-09-10T10:00:00.000000000", 0)
+	insertUsageRow(t, st, "t-fail", "fail", "alpha", "2026-09-10T10:00:05.000000000", 0)
+
+	data := fetchUsageChart(t, st, "year=2026&month=9&modelType=channel")
+	models := data["models"].([]any)
+	tokenValues := data["tokenValues"].(map[string]any)
+	requestValues := data["requestValues"].(map[string]any)
+
+	cm := asFloatSlice(t, tokenValues, "cm1")
+	if cm[9] != 100 {
+		t.Errorf("cm1[Sep 10] = %v, want 100 (Shanghai bucket); per-day=%v", cm[9], cm)
+	}
+	if got := asFloatSlice(t, requestValues, "cm1")[9]; got != 1 {
+		t.Errorf("cm1 requests on Sep 10 = %v, want 1", got)
+	}
+
+	failed := asFloatSlice(t, tokenValues, "请求失败")
+	if failed[9] != 0 {
+		t.Errorf("failed bucket on Sep 10 = %v, want 0 tokens", failed[9])
+	}
+	if got := asFloatSlice(t, requestValues, "请求失败")[9]; got != 1 {
+		t.Errorf("failed requests on Sep 10 = %v, want 1", got)
+	}
+
+	if len(models) != 2 {
+		t.Errorf("models = %v, want the channel model plus 请求失败", models)
 	}
 }

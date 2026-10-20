@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +19,22 @@ import (
 	"github.com/my-search/my-ai-gateway/internal/store"
 )
 
+// usageChartQueryTimeout bounds the detached aggregation. The query must
+// outlive a browser timeout (axios gives up after 30s) so a slow first request
+// can still populate DashCache for the next poll instead of being cancelled
+// and re-run from scratch.
+const usageChartQueryTimeout = 2 * time.Minute
+
+// requestLogListColumns excludes request_headers / request_body: the list API
+// never returns them, and reading them here would pull every saved payload
+// (potentially tens of KB per row) only to null it out before serialisation.
+// The raw data is loaded on demand by GET /logs/:id/request-data.
+const requestLogListColumns = `id, trace_id, api_key_name, gateway_api_key_id,
+	model_name, channel_model_name, channel_name, phase, status, message,
+	reasoning_effort, retry_index, response_time_ms, first_byte_ms,
+	prompt_tokens, completion_tokens, total_tokens, route_source, protocol,
+	created_at`
+
 // dtFmt renders a stored timestamp with the exact pattern of the Java
 // controller's DT_FMT ("yyyy-MM-dd HH:mm:ss", AdminLogController.java:49),
 // which is what trace.startTime / trace.endTime carry in the Java response.
@@ -27,6 +45,33 @@ func dtFmt(t *time.Time) string {
 		return ""
 	}
 	return t.UTC().Format("2006-01-02 15:04:05")
+}
+
+// sargableStartBound returns a bare UTC date that is never greater than the
+// given instant, so `created_at >= date` is a safe superset of the exact
+// instant comparison. request_logs.created_at stores both "YYYY-MM-DDTHH:..."
+// and "YYYY-MM-DD HH:..." text, and both sort at or after their date prefix.
+//
+// The offset is deliberately parsed first: slicing the input string would pick
+// the caller's local date (e.g. 2026-10-01T00:00:00+08:00 is still
+// 2026-09-30 in UTC) and could exclude rows that the exact predicate keeps.
+func sargableStartBound(s string) (string, bool) {
+	t, ok := jtime.Parse(s)
+	if !ok {
+		return "", false
+	}
+	return t.UTC().Format("2006-01-02"), true
+}
+
+// sargableEndBound returns the exclusive bare UTC date after the given
+// instant, for `created_at < date`. It is a safe superset of the exact
+// inclusive `<=` predicate.
+func sargableEndBound(s string) (string, bool) {
+	t, ok := jtime.Parse(s)
+	if !ok {
+		return "", false
+	}
+	return t.UTC().AddDate(0, 0, 1).Format("2006-01-02"), true
 }
 
 func registerLogRoutes(g *gin.RouterGroup, d Deps) {
@@ -63,15 +108,29 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			args = append(args, apiKeyName)
 		}
 		if startTime != "" {
-			// Java RequestLogMapper.java:101 — created_at >= #{startTime}. The
-			// column holds both "…T…" (app writes) and "… …" (SQL defaults)
-			// representations, so both sides go through SQLite datetime() to
-			// compare the same instant instead of the raw text.
+			// Java RequestLogMapper.java:101 — created_at >= #{startTime}.
+			//
+			// The exact comparison still goes through datetime() because the
+			// column holds both "…T…" (app writes) and "… …" (SQL defaults).
+			// Wrapping the column makes that predicate non-sargable, so a
+			// coarse bare-date prefix is ANDed in to let SQLite open the
+			// created_at index. The exact predicate stays and still decides
+			// which rows inside the prefix range match.
+			if bound, ok := sargableStartBound(startTime); ok {
+				where = append(where, "r.created_at >= ?")
+				args = append(args, bound)
+			}
 			where = append(where, "datetime(r.created_at) >= datetime(?)")
 			args = append(args, startTime)
 		}
 		if endTime != "" {
 			// Java RequestLogMapper.java:102 — created_at <= #{endTime}.
+			// Same coarse-bound trick as startTime; the exclusive `< next day`
+			// prefix is a superset of the inclusive instant comparison.
+			if bound, ok := sargableEndBound(endTime); ok {
+				where = append(where, "r.created_at < ?")
+				args = append(args, bound)
+			}
 			where = append(where, "datetime(r.created_at) <= datetime(?)")
 			args = append(args, endTime)
 		}
@@ -80,8 +139,15 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			w = " AND " + strings.Join(where, " AND ")
 		}
 
-		countRow, _ := d.Store.QueryOne(ctx,
+		started := time.Now()
+		countRow, err := d.Store.QueryOneReadOnly(ctx,
 			`SELECT COUNT(DISTINCT r.trace_id) as total FROM request_logs r WHERE 1=1`+w, args...)
+		if err != nil {
+			slog.Error("统计请求日志失败", "offset", offset, "limit", limit, "error", err)
+			httpx.JSON(c, http.StatusInternalServerError,
+				httpx.NewOrderedMap().Set("error", "查询请求日志失败"))
+			return
+		}
 		total := int64(0)
 		if countRow != nil {
 			total = countRow.I64("total", 0)
@@ -92,9 +158,15 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 		// NOTE: the where clause references columns via the "r." alias — this query
 		// must keep the same alias as the count query or the filter silently fails.
 		// Java RequestLogMapper.java:94-105 pages traces by MAX(created_at) DESC.
-		traceRows, _ := d.Store.Query(ctx,
+		traceRows, err := d.Store.QueryReadOnly(ctx,
 			`SELECT trace_id FROM (SELECT trace_id, MAX(created_at) FROM request_logs r WHERE 1=1`+w+` GROUP BY trace_id ORDER BY MAX(created_at) DESC LIMIT ? OFFSET ?)`,
 			append(traceArgs, limit, offset)...)
+		if err != nil {
+			slog.Error("分页查询请求日志失败", "offset", offset, "limit", limit, "error", err)
+			httpx.JSON(c, http.StatusInternalServerError,
+				httpx.NewOrderedMap().Set("error", "查询请求日志失败"))
+			return
+		}
 
 		traceIDs := make([]string, 0, len(traceRows))
 		for _, r := range traceRows {
@@ -103,14 +175,21 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 
 		trees := make([]logTree, 0, len(traceIDs))
 		if len(traceIDs) > 0 {
-			quotedIDs := make([]string, 0, len(traceIDs))
-			for _, id := range traceIDs {
-				quotedIDs = append(quotedIDs, "'"+strings.ReplaceAll(id, "'", "''")+"'")
+			placeholders := strings.TrimSuffix(strings.Repeat("?,", len(traceIDs)), ",")
+			traceArgs := make([]any, len(traceIDs))
+			for i, id := range traceIDs {
+				traceArgs[i] = id
 			}
-			traceList := strings.Join(quotedIDs, ",")
 
-			logRows, _ := d.Store.Query(ctx,
-				"SELECT * FROM request_logs WHERE trace_id IN ("+traceList+") ORDER BY created_at ASC")
+			logRows, err := d.Store.QueryReadOnly(ctx,
+				"SELECT "+requestLogListColumns+" FROM request_logs WHERE trace_id IN ("+placeholders+") ORDER BY created_at ASC",
+				traceArgs...)
+			if err != nil {
+				slog.Error("查询请求日志明细失败", "traceCount", len(traceIDs), "error", err)
+				httpx.JSON(c, http.StatusInternalServerError,
+					httpx.NewOrderedMap().Set("error", "查询请求日志失败"))
+				return
+			}
 
 			traceMap := make(map[string][]store.Row)
 			for _, r := range logRows {
@@ -119,8 +198,15 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			}
 
 			// Check which traces have request data
-			hasDataRows, _ := d.Store.Query(ctx,
-				"SELECT DISTINCT trace_id FROM request_logs WHERE trace_id IN ("+traceList+") AND phase='start' AND (request_headers IS NOT NULL OR request_body IS NOT NULL)")
+			hasDataRows, err := d.Store.QueryReadOnly(ctx,
+				"SELECT DISTINCT trace_id FROM request_logs WHERE trace_id IN ("+placeholders+") AND phase='start' AND (request_headers IS NOT NULL OR request_body IS NOT NULL)",
+				traceArgs...)
+			if err != nil {
+				slog.Error("查询请求日志原始数据标记失败", "traceCount", len(traceIDs), "error", err)
+				httpx.JSON(c, http.StatusInternalServerError,
+					httpx.NewOrderedMap().Set("error", "查询请求日志失败"))
+				return
+			}
 			hasData := make(map[string]bool)
 			for _, r := range hasDataRows {
 				hasData[r.Str("trace_id")] = true
@@ -219,6 +305,9 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 
 		// Java AdminLogController.java:197-204 — hasMore is derived from the number
 		// of traces actually returned, not from the requested limit.
+		slog.Debug("请求日志列表查询完成",
+			"offset", offset, "limit", limit, "total", total,
+			"returned", len(trees), "elapsedMs", time.Since(started).Milliseconds())
 		httpx.OK(c, httpx.NewOrderedMap().
 			Set("data", trees).
 			Set("total", total).
@@ -241,7 +330,7 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 		}
 		// The cleanup changed the data behind every cached snapshot; invalidate
 		// so the usage chart / dashboard stop serving pre-cleanup numbers for up
-		// to a full TTL instead of only the 15s front-end poll interval.
+		// to a full TTL instead of only the 60s front-end poll interval.
 		d.DashCache.Invalidate()
 		// Release the freed pages immediately, matching the periodic cleanup task.
 		if err := db.IncrementalVacuum(d.Store.DB); err != nil {
@@ -252,13 +341,21 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 
 	// GET /admin/api/logs/usage-chart
 	g.GET("/logs/usage-chart", func(c *gin.Context) {
-		ctx := c.Request.Context()
-		// Java AdminLogController.logUsageChart:245 defaults to LocalDate.now();
-		// TimeZoneConfig pins the JVM zone to UTC, so the default period is the
-		// current UTC month.
-		nowUTC := time.Now().UTC()
-		yearStr := c.DefaultQuery("year", strconv.Itoa(nowUTC.Year()))
-		monthStr := c.DefaultQuery("month", strconv.Itoa(int(nowUTC.Month())))
+		// Keep the aggregation alive after a browser timeout so it can still
+		// populate DashCache; otherwise every retry cancels the previous query
+		// and starts the expensive scan again.
+		ctx, cancel := context.WithTimeout(
+			context.WithoutCancel(c.Request.Context()), usageChartQueryTimeout)
+		defer cancel()
+
+		// The chart is labelled with the browser's calendar month and the log
+		// list filters on that same month, while the gateway's canonical display
+		// timezone is Asia/Shanghai (the dashboard and key stats already use it).
+		// Anchor the default period there so "current month" means the same
+		// thing everywhere.
+		nowLocal := time.Now().In(jtime.Shanghai)
+		yearStr := c.DefaultQuery("year", strconv.Itoa(nowLocal.Year()))
+		monthStr := c.DefaultQuery("month", strconv.Itoa(int(nowLocal.Month())))
 		modelType := c.DefaultQuery("modelType", "entry")
 		// StatsSupport.emptyToNull trims and treats blank as "no filter".
 		modelName := strings.TrimSpace(c.Query("modelName"))
@@ -267,11 +364,11 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 
 		year, errY := strconv.Atoi(strings.TrimSpace(yearStr))
 		if errY != nil {
-			year = nowUTC.Year()
+			year = nowLocal.Year()
 		}
 		month, errM := strconv.Atoi(strings.TrimSpace(monthStr))
 		if errM != nil {
-			month = int(nowUTC.Month())
+			month = int(nowLocal.Month())
 		}
 
 		if month < 1 || month > 12 {
@@ -279,7 +376,7 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 
-		// Cache the whole response: the chart is polled silently every 15s and
+		// Cache the whole response: the chart is polled silently every 60s and
 		// re-fetched on every month/filter switch, so without this each poll
 		// re-runs a multi-second aggregation. The key discriminates on every
 		// parameter that changes the result; the TTL (dashCacheTTL) bounds staleness.
@@ -293,30 +390,35 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 
-		// Java TrendChartStatsCollector.collectLogUsageChart:314-320 — half-open
-		// [since, until) covering the requested calendar month.
-		since := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+		// Half-open [since, until) covering the requested calendar month in the
+		// display timezone. Using UTC here would put a request made at 00:30
+		// Shanghai on the 1st into the previous month's bucket, so the chart
+		// could claim "no data this month" while the list (which filters by the
+		// same local month) clearly shows that request.
+		since := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, jtime.Shanghai)
 		until := since.AddDate(0, 1, 0)
 		daysInMonth := until.AddDate(0, 0, -1).Day()
 
-		// Range bounds are passed as DATE-ONLY strings ("2006-01-02"), NOT as full
-		// timestamps, and compared against the bare created_at column (no datetime()
-		// wrapper). Two reasons, both load-bearing:
+		// Two layers of bounds, both load-bearing:
 		//
-		//  1. datetime(created_at) is not sargable — it forces a full table scan,
-		//     which is what made this endpoint take seconds at scale.
-		//  2. created_at holds two representations: "…T…" (app writes, jtime.FormatApp)
-		//     and "… …" (SQL DEFAULT CURRENT_TIMESTAMP). A bare bound of
-		//     "2026-09-01T00:00:00" compares greater than the space form on the same
-		//     day and would silently DROP every space-format row from the month. The
-		//     bare date prefix sorts below both forms, so it is inclusive of both.
-		sinceArg := since.Format("2006-01-02")
-		untilArg := until.Format("2006-01-02")
+		//  1. Coarse DATE-ONLY bounds compared against the bare column keep the
+		//     range sargable, so SQLite can use idx_usage_entry instead of
+		//     scanning the whole table (the old datetime(created_at) predicate
+		//     took seconds at scale). They are widened by one UTC day on each
+		//     side because the Shanghai month boundary is mid-day in UTC.
+		//  2. Exact instant bounds still go through datetime() because
+		//     created_at holds both "…T…" (app writes) and "… …" (SQL defaults).
+		//     They trim the extra half-days the coarse bounds let through, so
+		//     the month window is exact.
+		sinceArg := since.UTC().Format("2006-01-02")
+		untilArg := until.UTC().AddDate(0, 0, 1).Format("2006-01-02")
+		sinceInstant := jtime.FormatDefault(since)
+		untilInstant := jtime.FormatDefault(until)
 
 		days := make([]string, daysInMonth)
 		dateIndex := make(map[string]int, daysInMonth)
 		for i := range days {
-			days[i] = since.AddDate(0, 0, i).Format("2006-01-02")
+			days[i] = since.AddDate(0, 0, i).In(jtime.Shanghai).Format("2006-01-02")
 			dateIndex[days[i]] = i
 		}
 
@@ -344,6 +446,12 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 		}
 
 		var rows []store.Row
+		var err error
+		queryStarted := time.Now()
+		// Shanghai day bucket: created_at is UTC text, so the date must be
+		// shifted by +8h before truncating; otherwise every request made
+		// between 00:00 and 08:00 Shanghai lands on the previous day.
+		const shanghaiDay = "DATE(created_at, '+8 hours')"
 		if modelType == "channel" {
 			// Java RequestLogMapper.java:527-559 — trace-level outcome aggregation.
 			// The trace set is selected by rows inside [since, until) with a non-empty
@@ -351,13 +459,13 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			// whole history: successful traces are attributed to their channel model
 			// name (NULL names are dropped by the collector), failed traces fold into
 			// "请求失败" with zero tokens. The per-trace token value is MAX, not SUM.
-			args := append([]any{sinceArg, untilArg}, filterArgs...)
-			rows, _ = d.Store.QueryReadOnly(ctx,
+			args := append([]any{sinceArg, untilArg, sinceInstant, untilInstant}, filterArgs...)
+			rows, err = d.Store.QueryReadOnly(ctx,
 				`SELECT date, model_name, COUNT(1) AS request_count,
 				        COALESCE(SUM(total_tokens), 0) AS total_tokens
 				   FROM (
 				     SELECT r.trace_id,
-				            DATE(MIN(r.created_at)) AS date,
+				            DATE(MIN(r.created_at), '+8 hours') AS date,
 				            CASE WHEN MAX(CASE WHEN r.phase = 'success' THEN 1 ELSE 0 END) = 1
 				                 THEN MAX(CASE WHEN r.phase = 'success' THEN r.channel_model_name END)
 				                 ELSE '请求失败'
@@ -370,6 +478,8 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 				      WHERE r.trace_id IN (
 				            SELECT DISTINCT trace_id FROM request_logs
 				             WHERE created_at >= ? AND created_at < ?
+				               AND datetime(created_at) >= datetime(?)
+				               AND datetime(created_at) < datetime(?)
 				               AND channel_model_name IS NOT NULL AND channel_model_name != ''`+w+`
 				      )
 				      GROUP BY r.trace_id
@@ -380,16 +490,26 @@ func registerLogRoutes(g *gin.RouterGroup, d Deps) {
 			// Java RequestLogMapper.java:489-507 — entry models by DATE(created_at).
 			// Rows are not filtered by phase: models whose requests all failed still
 			// contribute a (0 token, 0 request) row, exactly like Java.
-			args := append([]any{sinceArg, untilArg}, filterArgs...)
-			rows, _ = d.Store.QueryReadOnly(ctx,
-				`SELECT DATE(created_at) AS date, model_name,
+			args := append([]any{sinceArg, untilArg, sinceInstant, untilInstant}, filterArgs...)
+			rows, err = d.Store.QueryReadOnly(ctx,
+				`SELECT `+shanghaiDay+` AS date, model_name,
 				        COALESCE(SUM(CASE WHEN phase = 'success' THEN COALESCE(total_tokens, 0) ELSE 0 END), 0) AS total_tokens,
 				        COUNT(DISTINCT CASE WHEN phase = 'success' THEN trace_id END) AS request_count
 				   FROM request_logs
 				  WHERE created_at >= ? AND created_at < ?
+				    AND datetime(created_at) >= datetime(?)
+				    AND datetime(created_at) < datetime(?)
 				    AND model_name IS NOT NULL AND model_name != ''`+w+`
-				  GROUP BY DATE(created_at), model_name
+				  GROUP BY `+shanghaiDay+`, model_name
 				  ORDER BY date ASC, total_tokens DESC`, args...)
+		}
+		if err != nil {
+			slog.Warn("查询使用历史图表失败",
+				"year", year, "month", month, "modelType", modelType,
+				"elapsedMs", time.Since(queryStarted).Milliseconds(), "error", err)
+			httpx.JSON(c, http.StatusInternalServerError,
+				httpx.NewOrderedMap().Set("error", "查询使用历史数据失败"))
+			return
 		}
 
 		// Java TrendChartStatsCollector.collectLogUsageChart:340-362 — accumulate

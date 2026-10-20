@@ -1,0 +1,2642 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>My AI Gateway · 新版控制台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2361afef'/%3E%3C/svg%3E" />
+<style>
+/* ══════════════════════════════════════════════════════════════
+   设计令牌：与现有 Vue 后台（assets/styles/index.css）同一套
+   oklch 色彩体系，保证两个入口视觉一致。
+   ══════════════════════════════════════════════════════════════ */
+:root {
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+
+  --accent-blue: #61afef;
+  --accent-green: #98c379;
+  --accent-red: #e06c75;
+  --accent-yellow: #e5c07b;
+  --accent-purple: #c678dd;
+  --accent-cyan: #56b6c2;
+}
+
+:root,
+[data-theme="light"] {
+  --bg-primary: oklch(0.985 0 0);
+  --bg-secondary: oklch(1 0 0);
+  --bg-tertiary: oklch(0.96 0 0);
+  --bg-hover: oklch(0.93 0 0);
+  --border-color: oklch(0.90 0 0);
+  --border-strong: oklch(0.84 0 0);
+  --text-primary: oklch(0.15 0 0);
+  --text-secondary: oklch(0.48 0 0);
+  --text-muted: oklch(0.62 0 0);
+  --primary: oklch(0.20 0 0);
+  --primary-fg: oklch(0.98 0 0);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.04), 0 1px 1px rgba(0,0,0,0.02);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --drop-bg: rgba(97, 175, 239, 0.10);
+  --drop-border: #61afef;
+}
+
+[data-theme="dark"] {
+  --bg-primary: #000000;
+  --bg-secondary: #0a0a0a;
+  --bg-tertiary: #141414;
+  --bg-hover: #1e1e1e;
+  --border-color: #282828;
+  --border-strong: #3a3a3a;
+  --text-primary: #f5f5f5;
+  --text-secondary: #a3a3a3;
+  --text-muted: #6b6b6b;
+  --primary: #f5f5f5;
+  --primary-fg: #000000;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.45);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.6);
+  --drop-bg: rgba(97, 175, 239, 0.14);
+  --drop-border: #61afef;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, select, textarea { font: inherit; color: inherit; }
+a { color: inherit; text-decoration: none; }
+
+/* ── 滚动条 ── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── 顶栏 ── */
+.topbar {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 30;
+}
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: -0.01em; }
+.brand-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+  box-shadow: 0 0 8px rgba(97,175,239,0.5);
+}
+.brand small { font-weight: 400; color: var(--text-muted); font-size: 12px; }
+
+.tabs { display: flex; gap: 4px; margin-left: 8px; }
+.tab {
+  border: 0; background: transparent; cursor: pointer;
+  padding: 6px 12px; border-radius: var(--radius-sm);
+  color: var(--text-secondary); font-weight: 500;
+  transition: background .15s, color .15s;
+}
+.tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+.tab.is-active { background: var(--bg-tertiary); color: var(--text-primary); }
+
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+/* ── 通用控件 ── */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  padding: 6px 12px; border-radius: var(--radius-sm);
+  cursor: pointer; font-weight: 500; white-space: nowrap;
+  transition: background .15s, border-color .15s, opacity .15s;
+}
+.btn:hover:not(:disabled) { background: var(--bg-hover); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--primary); color: var(--primary-fg); border-color: var(--primary); }
+.btn-primary:hover:not(:disabled) { opacity: .88; background: var(--primary); }
+.btn-ghost { border-color: transparent; background: transparent; }
+.btn-ghost:hover:not(:disabled) { background: var(--bg-hover); }
+.btn-sm { padding: 3px 8px; font-size: 12px; }
+.btn-icon { padding: 4px 6px; line-height: 1; }
+
+.input, .select {
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  outline: none;
+  min-width: 0;
+  transition: border-color .15s, box-shadow .15s;
+}
+.input:focus, .select:focus { border-color: var(--accent-blue); box-shadow: 0 0 0 3px rgba(97,175,239,0.15); }
+.input-sm, .select-sm { padding: 3px 8px; font-size: 12px; }
+
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 1px 7px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; line-height: 1.6;
+  background: var(--bg-tertiary); color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+.badge-blue   { color: #2b6cb0; background: rgba(97,175,239,.14); border-color: rgba(97,175,239,.35); }
+.badge-green  { color: #2f7a3e; background: rgba(152,195,121,.16); border-color: rgba(152,195,121,.4); }
+.badge-red    { color: #b3394a; background: rgba(224,108,117,.16); border-color: rgba(224,108,117,.4); }
+.badge-yellow { color: #93701f; background: rgba(229,192,123,.18); border-color: rgba(229,192,123,.45); }
+.badge-purple { color: #8b4a9e; background: rgba(198,120,221,.16); border-color: rgba(198,120,221,.4); }
+.badge-muted  { color: var(--text-muted); }
+[data-theme="dark"] .badge-blue   { color: #8cc4f0; }
+[data-theme="dark"] .badge-green  { color: #a9d68f; }
+[data-theme="dark"] .badge-red    { color: #f08b93; }
+[data-theme="dark"] .badge-yellow { color: #e8cd8f; }
+[data-theme="dark"] .badge-purple { color: #d9a2e6; }
+
+.mono { font-family: var(--font-mono); font-size: 12px; }
+.muted { color: var(--text-muted); }
+.secondary { color: var(--text-secondary); }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nowrap { white-space: nowrap; }
+
+.spinner {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--border-strong); border-top-color: var(--accent-blue);
+  animation: spin .7s linear infinite; display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.empty-state {
+  padding: 28px 16px; text-align: center;
+  color: var(--text-muted); font-size: 13px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   配置拓扑：三列（渠道模型池 → 小组 → 入口模型）
+   ══════════════════════════════════════════════════════════════ */
+.view { display: none; }
+.view.is-active { display: block; }
+
+#view-topology {
+  display: none;
+  padding: 16px 20px 40px;
+}
+#view-topology.is-active { display: block; }
+
+.board {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(300px, 1.15fr) minmax(300px, 1.15fr);
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 1180px) {
+  .board { grid-template-columns: 1fr; }
+}
+
+.col {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 100px);
+  min-height: 240px;
+  overflow: hidden;
+}
+.col-head {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex; align-items: center; gap: 8px;
+  background: var(--bg-tertiary);
+}
+.col-head .col-title { font-weight: 600; font-size: 13px; }
+.col-head .col-step {
+  width: 18px; height: 18px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700;
+  background: var(--primary); color: var(--primary-fg);
+  flex: none;
+}
+.col-head .col-hint { color: var(--text-muted); font-size: 11px; }
+.col-tools {
+  display: flex; gap: 6px; padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  flex-wrap: wrap;
+}
+.col-tools .input, .col-tools .select { flex: 1 1 90px; }
+.col-body { overflow: auto; padding: 8px; flex: 1; }
+
+/* ── 渠道分组（池） ── */
+.ch-group { border: 1px solid var(--border-color); border-radius: var(--radius); margin-bottom: 6px; overflow: hidden; }
+.ch-group.is-expanded { border-color: var(--border-strong); }
+.ch-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 9px; cursor: pointer; user-select: none;
+  background: var(--bg-tertiary);
+}
+.ch-head:hover { background: var(--bg-hover); }
+.ch-head .caret { color: var(--text-muted); font-size: 10px; width: 10px; flex: none; }
+.ch-head .ch-name { font-weight: 500; font-size: 13px; }
+.ch-head .ch-meta { margin-left: auto; }
+
+.pool-item {
+  display: flex; align-items: flex-start; gap: 6px;
+  padding: 6px 8px; margin: 4px 0;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  cursor: grab;
+  transition: border-color .12s, background .12s;
+}
+.pool-item:hover { border-color: var(--border-strong); background: var(--bg-tertiary); }
+.pool-item:active { cursor: grabbing; }
+.pool-item.is-dragging { opacity: .45; }
+.pool-item-main { min-width: 0; flex: 1; }
+.pool-item-name { font-size: 12.5px; font-weight: 500; }
+.pool-item-meta { font-size: 11px; color: var(--text-muted); display: flex; gap: 6px; flex-wrap: wrap; }
+.pool-item.is-in-group { opacity: .62; }
+.pool-item.is-in-group::after {
+  content: '已在组内'; font-size: 10px; color: var(--accent-green);
+  align-self: center; white-space: nowrap;
+}
+
+/* ── 小组 / 入口模型卡片 ── */
+.card {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  margin-bottom: 8px;
+  overflow: hidden;
+  transition: border-color .12s, box-shadow .12s;
+}
+.card.is-drop-target {
+  border-color: var(--drop-border);
+  box-shadow: 0 0 0 3px var(--drop-bg);
+  background: var(--drop-bg);
+}
+.card-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; cursor: pointer; user-select: none;
+}
+.card-head:hover { background: var(--bg-tertiary); }
+.card-title { font-weight: 600; font-size: 13px; min-width: 0; }
+.card-sub { font-size: 11px; color: var(--text-muted); }
+.card-spacer { margin-left: auto; }
+.card-actions { display: flex; gap: 4px; align-items: center; }
+.card-body { border-top: 1px solid var(--border-color); padding: 8px; }
+
+.card[draggable="true"] .card-head { cursor: grab; }
+.card[draggable="true"].is-dragging { opacity: .45; }
+
+/* 候选/成员行 */
+.row-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  margin-bottom: 5px;
+}
+.row-item:hover { background: var(--bg-tertiary); }
+.row-item.is-dirty { border-color: var(--accent-yellow); }
+.row-item[draggable="true"] { cursor: grab; }
+.row-item.is-dragging { opacity: .4; }
+.row-index {
+  width: 20px; flex: none; text-align: center;
+  font-family: var(--font-mono); font-size: 11px; color: var(--text-muted);
+}
+.row-main { min-width: 0; flex: 1; }
+.row-name { font-size: 12.5px; font-weight: 500; }
+.row-meta { font-size: 11px; color: var(--text-muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.row-tools { display: flex; gap: 4px; align-items: center; flex: none; }
+.weight-input { width: 52px; text-align: center; }
+
+.drop-empty {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px; text-align: center;
+  color: var(--text-muted); font-size: 12px;
+}
+
+.drop-zone-hint {
+  margin: 4px 0 0;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.card.is-drop-target .drop-zone-hint { border-color: var(--drop-border); color: var(--accent-blue); }
+
+/* ══════════════════════════════════════════════════════════════
+   日志链路追踪
+   ══════════════════════════════════════════════════════════════ */
+#view-logs { display: none; padding: 16px 20px 40px; }
+#view-logs.is-active { display: block; }
+
+.log-toolbar {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 12px;
+}
+.log-toolbar .input, .log-toolbar .select { min-width: 120px; }
+.log-toolbar label { font-size: 12px; color: var(--text-secondary); display: inline-flex; align-items: center; gap: 5px; }
+
+.trace-list { display: flex; flex-direction: column; gap: 8px; }
+
+.trace-card {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+.trace-card.is-open { border-color: var(--border-strong); }
+
+.trace-head {
+  display: grid;
+  grid-template-columns: 190px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.trace-head:hover { background: var(--bg-tertiary); }
+.trace-id-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.trace-id {
+  font-family: var(--font-mono); font-size: 12px;
+  color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.trace-copy {
+  border: 0; background: transparent; cursor: pointer;
+  color: var(--text-muted); padding: 0 2px; font-size: 11px;
+  border-radius: 4px; flex: none;
+}
+.trace-copy:hover { color: var(--accent-blue); background: var(--bg-hover); }
+.trace-summary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.trace-meta { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 11.5px; white-space: nowrap; }
+
+.trace-timeline { border-top: 1px solid var(--border-color); padding: 10px 12px 12px; background: var(--bg-primary); }
+
+.waterfall {
+  display: flex; align-items: stretch; gap: 0;
+  height: 22px; margin: 4px 0 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-tertiary);
+  overflow: hidden;
+  position: relative;
+}
+.wf-seg {
+  height: 100%;
+  border-right: 1px solid var(--bg-primary);
+  position: relative;
+  min-width: 2px;
+  cursor: default;
+}
+.wf-seg:last-child { border-right: 0; }
+.wf-seg--start { background: rgba(97,175,239,.55); }
+.wf-seg--retry { background: rgba(229,192,123,.7); }
+.wf-seg--reroute { background: rgba(198,120,221,.6); }
+.wf-seg--success { background: rgba(152,195,121,.8); }
+.wf-seg--fail { background: rgba(224,108,117,.8); }
+.wf-seg--skip { background: rgba(160,160,160,.45); }
+.wf-seg--interrupted { background: rgba(120,120,120,.6); }
+.wf-axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--text-muted); margin-bottom: 8px; }
+
+.hop {
+  display: grid;
+  grid-template-columns: 26px 96px minmax(160px, 1.3fr) minmax(120px, 1fr) auto;
+  gap: 10px; align-items: center;
+  padding: 7px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  margin-bottom: 5px;
+}
+.hop:hover { background: var(--bg-tertiary); }
+.hop-no { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); text-align: center; }
+.hop-route { min-width: 0; }
+.hop-route-name { font-size: 12.5px; font-weight: 500; }
+.hop-route-sub { font-size: 11px; color: var(--text-muted); }
+.hop-bar { height: 12px; border-radius: 3px; background: var(--bg-tertiary); position: relative; overflow: hidden; }
+.hop-bar-fill { position: absolute; top: 0; bottom: 0; border-radius: 3px; min-width: 2px; }
+.hop-bar-fill--start { background: rgba(97,175,239,.75); }
+.hop-bar-fill--retry { background: rgba(229,192,123,.85); }
+.hop-bar-fill--reroute { background: rgba(198,120,221,.8); }
+.hop-bar-fill--success { background: rgba(152,195,121,.9); }
+.hop-bar-fill--fail { background: rgba(224,108,117,.9); }
+.hop-bar-fill--skip { background: rgba(160,160,160,.55); }
+.hop-bar-fill--interrupted { background: rgba(120,120,120,.7); }
+.hop-metrics { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.hop-metric { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+.hop-message {
+  grid-column: 1 / -1;
+  font-size: 11.5px; color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 160px;
+  overflow: auto;
+}
+.hop-message.is-error { color: #b3394a; }
+[data-theme="dark"] .hop-message.is-error { color: #f08b93; }
+
+.trace-foot { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+
+.request-data {
+  margin-top: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  padding: 8px;
+}
+.request-data pre {
+  margin: 6px 0 0;
+  font-family: var(--font-mono); font-size: 11px;
+  max-height: 320px; overflow: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+.load-more {
+  text-align: center; padding: 14px; color: var(--text-muted); font-size: 12px;
+}
+
+/* ── 登录遮罩 ── */
+.login-mask {
+  position: fixed; inset: 0; z-index: 100;
+  display: none; align-items: center; justify-content: center;
+  background: var(--bg-primary);
+  padding: 20px;
+}
+.login-mask.is-open { display: flex; }
+.login-box {
+  width: 100%; max-width: 360px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-lg);
+  padding: 24px;
+}
+.login-box h1 { margin: 0 0 4px; font-size: 18px; }
+.login-box p.sub { margin: 0 0 18px; color: var(--text-muted); font-size: 12.5px; }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 4px; }
+.field .input { width: 100%; }
+.login-error { color: var(--accent-red); font-size: 12px; min-height: 18px; margin-bottom: 8px; }
+.login-box .btn { width: 100%; justify-content: center; }
+
+/* ── Toast ── */
+.toast-host {
+  position: fixed; right: 18px; bottom: 18px; z-index: 200;
+  display: flex; flex-direction: column; gap: 8px;
+  pointer-events: none;
+}
+.toast {
+  min-width: 200px; max-width: 380px;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-md);
+  font-size: 12.5px;
+  animation: toast-in .18s ease-out;
+}
+.toast--ok { border-left: 3px solid var(--accent-green); }
+.toast--err { border-left: 3px solid var(--accent-red); }
+.toast--info { border-left: 3px solid var(--accent-blue); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ── 工具类 ── */
+.hidden { display: none !important; }
+.flex { display: flex; }
+.gap-6 { gap: 6px; }
+.items-center { align-items: center; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════ 顶栏 ══════════════ -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-dot"></span>
+    My AI Gateway <small>新版控制台</small>
+  </div>
+  <nav class="tabs">
+    <button class="tab is-active" data-view="topology">配置拓扑</button>
+    <button class="tab" data-view="logs">请求日志</button>
+  </nav>
+  <div class="topbar-right">
+    <span id="whoami" class="muted" style="font-size:12px"></span>
+    <button class="btn btn-ghost btn-sm" id="btn-theme" title="切换深浅色">◐</button>
+    <button class="btn btn-ghost btn-sm" id="btn-refresh" title="重新加载当前视图">刷新</button>
+    <button class="btn btn-ghost btn-sm" id="btn-logout">退出</button>
+  </div>
+</header>
+
+<!-- ══════════════ 配置拓扑 ══════════════ -->
+<section id="view-topology" class="view is-active">
+  <div class="board">
+    <!-- 第 1 列：渠道模型池 -->
+    <div class="col" id="col-pool">
+      <div class="col-head">
+        <span class="col-step">1</span>
+        <span class="col-title">渠道模型池</span>
+        <span class="col-hint">拖入中间的小组</span>
+      </div>
+      <div class="col-tools">
+        <input class="input input-sm" id="pool-search" placeholder="搜索模型 / 渠道…" />
+      </div>
+      <div class="col-body" id="pool-body">
+        <div class="empty-state"><span class="spinner"></span></div>
+      </div>
+    </div>
+
+    <!-- 第 2 列：小组 -->
+    <div class="col" id="col-groups">
+      <div class="col-head">
+        <span class="col-step">2</span>
+        <span class="col-title">模型小组</span>
+        <span class="col-hint">承接渠道模型，再拖入右侧入口模型</span>
+        <button class="btn btn-sm btn-ghost" id="btn-new-group" style="margin-left:auto">+ 新建</button>
+      </div>
+      <div class="col-tools">
+        <select class="select select-sm" id="group-strategy-filter">
+          <option value="">全部路由方式</option>
+          <option value="failover">故障转移 failover</option>
+          <option value="random">随机加权 random</option>
+          <option value="round_robin">轮询 round_robin</option>
+        </select>
+      </div>
+      <div class="col-body" id="groups-body">
+        <div class="empty-state"><span class="spinner"></span></div>
+      </div>
+    </div>
+
+    <!-- 第 3 列：入口模型 -->
+    <div class="col" id="col-models">
+      <div class="col-head">
+        <span class="col-step">3</span>
+        <span class="col-title">入口模型</span>
+        <span class="col-hint">拖入小组即建立关联</span>
+      </div>
+      <div class="col-tools">
+        <input class="input input-sm" id="model-search" placeholder="搜索入口模型…" />
+      </div>
+      <div class="col-body" id="models-body">
+        <div class="empty-state"><span class="spinner"></span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 请求日志 ══════════════ -->
+<section id="view-logs" class="view">
+  <div class="log-toolbar">
+    <label>入口模型
+      <select class="select select-sm" id="log-model">
+        <option value="">全部</option>
+      </select>
+    </label>
+    <label>开始
+      <input class="input input-sm" type="datetime-local" id="log-start" />
+    </label>
+    <label>结束
+      <input class="input input-sm" type="datetime-local" id="log-end" />
+    </label>
+    <input class="input input-sm" id="log-trace-search" placeholder="按 traceId 过滤已加载记录…" style="min-width:180px" />
+    <button class="btn btn-sm" id="btn-log-query">查询</button>
+    <button class="btn btn-sm btn-ghost" id="btn-log-reset">重置</button>
+    <label style="margin-left:auto">
+      <input type="checkbox" id="log-live" /> 实时（SSE）
+    </label>
+    <span id="log-status" class="muted" style="font-size:12px"></span>
+  </div>
+
+  <div class="trace-list" id="trace-list">
+    <div class="empty-state"><span class="spinner"></span></div>
+  </div>
+  <div class="load-more hidden" id="load-more">加载更多…</div>
+</section>
+
+<!-- ══════════════ 登录 ══════════════ -->
+<div class="login-mask" id="login-mask">
+  <form class="login-box" id="login-form" autocomplete="on">
+    <h1>登录控制台</h1>
+    <p class="sub">与现有后台共用同一套管理员账号</p>
+    <div class="field">
+      <label for="login-user">用户名</label>
+      <input class="input" id="login-user" name="username" autocomplete="username" />
+    </div>
+    <div class="field">
+      <label for="login-pass">密码</label>
+      <input class="input" id="login-pass" name="password" type="password" autocomplete="current-password" />
+    </div>
+    <div class="login-error" id="login-error"></div>
+    <button class="btn btn-primary" type="submit" id="login-submit">登录</button>
+  </form>
+</div>
+
+<div class="toast-host" id="toast-host"></div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   新版控制台（单文件，零构建依赖）
+   ──────────────────────────────────────────────────────────────────────────
+   仅消费现有后端 REST 契约，不引入新的接口：
+     · GET  /admin/api/channels、/channels/:id/models      渠道模型池
+     · GET  /admin/api/model-groups、/model-groups/:id     小组及成员
+     · GET  /admin/api/models、/models/:id/rels             入口模型及候选队列
+     · POST /model-groups/:id/members、/models/:id/rels     建立两级关联
+     · PUT  /model-groups/members/sort、/models/rels/sort   拖拽排序
+     · GET  /admin/api/logs、/logs/stream                   日志与链路追踪
+   模块划分：utils → api → state → topology（三段式拖拽）→ logs（链路追踪）→ app
+   ══════════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  /* ══════════════════════════ 1. utils ══════════════════════════ */
+
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $all = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+  /** HTML 文本转义：所有动态内容拼进模板前必须经过它。 */
+  function esc(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function toast(message, kind) {
+    const host = $('#toast-host');
+    if (!host) return;
+    const node = document.createElement('div');
+    node.className = 'toast toast--' + (kind || 'info');
+    node.textContent = message;
+    host.appendChild(node);
+    setTimeout(() => node.remove(), 3200);
+  }
+
+  /** 轻量防抖：用于搜索框与 SSE 高频推送后的重绘。 */
+  function debounce(fn, wait) {
+    let timer = null;
+    return function () {
+      const args = arguments;
+      clearTimeout(timer);
+      timer = setTimeout(() => fn.apply(null, args), wait || 200);
+    };
+  }
+
+  /* ══════════════════════════ 2. 展示格式化 ══════════════════════════ */
+
+  /** 阶段文案：与现有后台 locales 的 log.phase.* 保持一致。 */
+  const PHASE_LABEL = {
+    start: '请求开始',
+    retry: '重试',
+    reroute: '重路由',
+    success: '成功',
+    fail: '失败',
+    skip: '跳过',
+    interrupted: '中断'
+  };
+
+  /** 阶段 → 徽章配色（终态决定整行观感）。 */
+  const PHASE_BADGE = {
+    start: 'badge-blue',
+    retry: 'badge-yellow',
+    reroute: 'badge-purple',
+    success: 'badge-green',
+    fail: 'badge-red',
+    skip: 'badge-muted',
+    interrupted: 'badge-muted'
+  };
+
+  const PROTOCOL_LABEL = {
+    'openai-chat': 'OpenAI Chat',
+    'anthropic-messages': 'Anthropic Messages',
+    'openai-responses': 'OpenAI Responses',
+    embeddings: 'Embeddings'
+  };
+
+  function phaseLabel(phase) {
+    return PHASE_LABEL[phase] || phase || '-';
+  }
+
+  function phaseBadge(phase) {
+    return 'badge ' + (PHASE_BADGE[phase] || 'badge-muted');
+  }
+
+  function protocolLabel(protocol) {
+    return PROTOCOL_LABEL[protocol] || protocol;
+  }
+
+  function routeSourceLabel(source) {
+    if (source === 'sticky') return '粘性';
+    if (source === 'sticky_fallback') return '粘性回退';
+    return '';
+  }
+
+  function routeSourceTitle(source) {
+    if (source === 'sticky') return '本次请求由会话粘性哈希命中的小组成员承接';
+    if (source === 'sticky_fallback') return '粘性命中的成员失败，已回退到组内其他成员';
+    return '';
+  }
+
+  const STRATEGY_LABEL = {
+    failover: '故障转移',
+    random: '随机加权',
+    round_robin: '轮询'
+  };
+
+  function strategyLabel(strategy) {
+    return STRATEGY_LABEL[strategy] || strategy || '-';
+  }
+
+  /** 毫秒 → 人类可读耗时（<1s 用毫秒，其余保留 2 位秒）。 */
+  function fmtDuration(ms) {
+    if (ms === null || ms === undefined || ms === '' || isNaN(ms)) return '-';
+    const n = Number(ms);
+    if (n <= 0) return '0ms';
+    if (n < 1000) return Math.round(n) + 'ms';
+    if (n < 60000) return (n / 1000).toFixed(2) + 's';
+    return Math.floor(n / 60000) + 'm' + Math.round((n % 60000) / 1000) + 's';
+  }
+
+  function pad2(n) {
+    return n < 10 ? '0' + n : String(n);
+  }
+
+  /** ISO 时间串 → 本地 HH:mm:ss.SSS（链路时间线用）。 */
+  function fmtClock(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()) +
+      '.' + String(d.getMilliseconds()).padStart(3, '0');
+  }
+
+  /** ISO 时间串 → 本地 MM-DD HH:mm:ss（列表摘要用）。 */
+  function fmtDateTime(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
+    return pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' +
+      pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+  }
+
+  function fmtInt(n) {
+    if (n === null || n === undefined || n === '') return '-';
+    const v = Number(n);
+    if (isNaN(v)) return '-';
+    return v.toLocaleString('zh-CN');
+  }
+
+  /** 上下文窗口：按 1M / 128k 缩写，避免长表格被数字撑开。 */
+  function fmtContext(tokens) {
+    if (!tokens || tokens <= 0) return '-';
+    if (tokens >= 1000000) return (tokens / 1000000).toFixed(tokens % 1000000 === 0 ? 0 : 1) + 'M';
+    if (tokens >= 1000) return Math.round(tokens / 1000) + 'k';
+    return String(tokens);
+  }
+
+  /* ══════════════════════════ 3. api ══════════════════════════ */
+
+  const TOKEN_KEY = 'admin_token';
+  const API_BASE = '/admin/api';
+
+  /**
+   * 极简 API 客户端：与现有 Vue 后台共用 localStorage 里的 admin_token，
+   * 因此在同一域名下两个入口的登录态天然互通。
+   */
+  const api = {
+    token: localStorage.getItem(TOKEN_KEY) || '',
+
+    setToken(token) {
+      this.token = token || '';
+      if (token) localStorage.setItem(TOKEN_KEY, token);
+      else localStorage.removeItem(TOKEN_KEY);
+    },
+
+    async request(method, path, body) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (this.token) headers.Authorization = 'Bearer ' + this.token;
+
+      const res = await fetch(API_BASE + path, {
+        method: method,
+        headers: headers,
+        credentials: 'same-origin',
+        body: body === undefined ? undefined : JSON.stringify(body)
+      });
+
+      if (res.status === 401) {
+        api.setToken('');
+        // 统一拉起登录框：任何接口的 401 都收敛到一处处理。
+        if (typeof api.onUnauthorized === 'function') api.onUnauthorized();
+        throw Object.assign(new Error('未登录或登录已过期'), { status: 401 });
+      }
+      const text = await res.text();
+      let data = null;
+      if (text) {
+        try { data = JSON.parse(text); } catch (e) { data = null; }
+      }
+      if (!res.ok) {
+        const msg = (data && (data.error || data.message)) || ('请求失败 (' + res.status + ')');
+        throw Object.assign(new Error(msg), { status: res.status, data: data });
+      }
+      return data;
+    },
+
+    async login(username, password) {
+      const data = await this.request('POST', '/auth/login', { username: username, password: password });
+      if (!data || !data.success) throw new Error((data && data.error) || '登录失败');
+      this.setToken(data.token);
+      return data;
+    },
+
+    async logout() {
+      try { await this.request('POST', '/auth/logout', {}); } catch (e) { /* 忽略：本地清理即可 */ }
+      this.setToken('');
+    },
+
+    /* ── 渠道 / 渠道模型 ── */
+    channels() { return this.request('GET', '/channels'); },
+    channelModels(channelId) { return this.request('GET', '/channels/' + channelId + '/models'); },
+
+    /* ── 小组 ── */
+    groups() { return this.request('GET', '/model-groups'); },
+    group(id) { return this.request('GET', '/model-groups/' + id); },
+    createGroup(payload) { return this.request('POST', '/model-groups', payload); },
+    updateGroup(id, payload) { return this.request('PUT', '/model-groups/' + id, payload); },
+    deleteGroup(id) { return this.request('DELETE', '/model-groups/' + id); },
+    addGroupMembers(groupId, channelModelIds) {
+      return this.request('POST', '/model-groups/' + groupId + '/members', { channelModelIds: channelModelIds });
+    },
+    removeGroupMember(memberId) { return this.request('DELETE', '/model-groups/members/' + memberId); },
+    sortGroupMembers(memberIds) {
+      return this.request('PUT', '/model-groups/members/sort', { sortedMemberIds: memberIds });
+    },
+    updateGroupMember(memberId, payload) {
+      return this.request('PUT', '/model-groups/members/' + memberId, payload);
+    },
+
+    /* ── 入口模型 ── */
+    models() { return this.request('GET', '/models'); },
+    modelRels(modelId) { return this.request('GET', '/models/' + modelId + '/rels'); },
+    addModelRels(modelId, payload) { return this.request('POST', '/models/' + modelId + '/rels', payload); },
+    removeChannelRel(relId) { return this.request('DELETE', '/models/rels/' + relId); },
+    removeGroupRel(relId) { return this.request('DELETE', '/models/group-rels/' + relId); },
+    sortRels(refs) { return this.request('PUT', '/models/rels/sort', { sortedRelIds: refs }); },
+
+    /* ── 日志 ── */
+    logs(params) {
+      const qs = new URLSearchParams();
+      Object.keys(params || {}).forEach(key => {
+        const v = params[key];
+        if (v !== undefined && v !== null && v !== '') qs.set(key, v);
+      });
+      return this.request('GET', '/logs?' + qs.toString());
+    },
+    requestData(logId) { return this.request('GET', '/logs/' + logId + '/request-data'); }
+  };
+
+  /** 业务接口统一带 {success:false,error} 失败信封，这里集中抛出。 */
+  function assertSuccess(data, fallback) {
+    if (data && data.success === false) throw new Error(data.error || fallback || '操作失败');
+    return data;
+  }
+
+  /* ══════════════════════════ 4. state ══════════════════════════ */
+
+  const state = {
+    view: 'topology',
+
+    /* 拓扑视图 */
+    channels: [],
+    poolLoading: true,
+    pool: [],                       // 扁平化的渠道模型
+    poolByKey: new Map(),           // `${channelId}:${modelId}` → 池条目
+    poolExpanded: new Set(),        // 展开的渠道 id
+    groups: [],
+    groupDetail: new Map(),         // groupId → { group, members, usedByModels }
+    groupExpanded: new Set(),
+    groupBusy: new Set(),           // 正在请求详情的小组
+    models: [],
+    modelDetail: new Map(),         // modelId → { model, rels, groupRels }
+    modelExpanded: new Set(),
+    modelBusy: new Set(),
+    filters: { pool: '', model: '', strategy: '' },
+    newGroupOpen: false,
+
+    /* 日志视图 */
+    logModels: [],
+    logs: {
+      loading: false,
+      rows: new Map(),              // traceId → Map(logId → row)
+      order: [],                    // traceId 展示顺序（最近结束优先）
+      total: 0,
+      offset: 0,
+      limit: 20,
+      hasMore: false,
+      open: new Set(),              // 展开的 traceId
+      traceFilter: '',
+      filters: { modelName: '', startTime: '', endTime: '' },
+      liveSource: null,
+      requestData: new Map()        // logId → { headers, body }
+    }
+  };
+
+  /* ══════════════════════════ 5. topology 数据加载 ══════════════════════════ */
+
+  /** 加载渠道 + 各渠道模型，扁平化成「渠道模型池」。 */
+  async function loadPool() {
+    state.poolLoading = true;
+    renderPool();
+    try {
+      const channels = await api.channels();
+      state.channels = Array.isArray(channels) ? channels : [];
+
+      // 并发上限 6：渠道数量级在几十，避免把后端打满。
+      const items = [];
+      const queue = state.channels.slice();
+      const worker = async () => {
+        while (queue.length) {
+          const ch = queue.shift();
+          try {
+            const data = await api.channelModels(ch.id);
+            (data && data.models ? data.models : []).forEach(m => {
+              items.push({
+                key: ch.id + ':' + m.id,
+                id: m.id,
+                modelName: m.modelName,
+                displayName: m.displayName || m.modelName,
+                channelId: ch.id,
+                channelName: ch.name,
+                channelType: ch.channelType,
+                channelEnabled: ch.enabled,
+                input: m.input,
+                contextLength: m.contextLength,
+                linked: m.linked
+              });
+            });
+          } catch (e) {
+            // 单个渠道失败不阻断整体：保留其余渠道可用。
+            console.warn('加载渠道模型失败', ch.name, e);
+          }
+        }
+      };
+      await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
+      items.sort((a, b) => (a.channelName + a.modelName).localeCompare(b.channelName + b.modelName));
+      state.pool = items;
+      state.poolByKey = new Map(items.map(item => [item.key, item]));
+      // 首屏默认展开第一个渠道：池里上千条模型全部展开会让 DOM 膨胀，
+      // 但全折叠又让人无从下手，因此只开一个作为拖拽起点。
+      if (!state.poolExpanded.size && items.length) {
+        state.poolExpanded.add(items[0].channelId);
+      }
+    } catch (e) {
+      toast('加载渠道模型失败：' + e.message, 'err');
+    } finally {
+      state.poolLoading = false;
+      renderPool();
+      renderGroups();
+      renderModels();
+    }
+  }
+
+  async function loadGroups() {
+    try {
+      const data = await api.groups();
+      state.groups = Array.isArray(data) ? data : [];
+    } catch (e) {
+      toast('加载小组失败：' + e.message, 'err');
+    }
+    renderGroups();
+  }
+
+  async function loadModels() {
+    try {
+      const data = await api.models();
+      state.models = Array.isArray(data) ? data : [];
+    } catch (e) {
+      toast('加载入口模型失败：' + e.message, 'err');
+    }
+    renderModels();
+  }
+
+  /** 小组详情按需加载：接口会附带全部可添加渠道模型（体积大），只读一次并缓存。 */
+  async function ensureGroupDetail(groupId, force) {
+    if (!force && state.groupDetail.has(groupId)) return state.groupDetail.get(groupId);
+    if (state.groupBusy.has(groupId)) return null;
+    state.groupBusy.add(groupId);
+    renderGroups();
+    try {
+      const data = await api.group(groupId);
+      state.groupDetail.set(groupId, data);
+      return data;
+    } catch (e) {
+      toast('加载小组详情失败：' + e.message, 'err');
+      return null;
+    } finally {
+      state.groupBusy.delete(groupId);
+      renderGroups();
+    }
+  }
+
+  /** 入口模型关联按需加载：同样避免首屏拉取超大 availableModels。 */
+  async function ensureModelDetail(modelId, force) {
+    if (!force && state.modelDetail.has(modelId)) return state.modelDetail.get(modelId);
+    if (state.modelBusy.has(modelId)) return null;
+    state.modelBusy.add(modelId);
+    renderModels();
+    try {
+      const data = await api.modelRels(modelId);
+      state.modelDetail.set(modelId, data);
+      return data;
+    } catch (e) {
+      toast('加载模型关联失败：' + e.message, 'err');
+      return null;
+    } finally {
+      state.modelBusy.delete(modelId);
+      renderModels();
+    }
+  }
+
+  /* ══════════════════════════ 6. topology 渲染 ══════════════════════════ */
+
+  /** 某个渠道模型被哪些已加载小组占用（用于池里标注「已在组内」）。 */
+  function memberGroupNames(channelModelId) {
+    const names = [];
+    state.groupDetail.forEach(detail => {
+      if (!detail || !detail.members) return;
+      const hit = detail.members.some(m => m.channelModelId === channelModelId);
+      if (hit) names.push(detail.group ? detail.group.name : '');
+    });
+    return names.filter(Boolean);
+  }
+
+  function renderPool() {
+    const host = $('#pool-body');
+    if (!host) return;
+    if (state.poolLoading) {
+      host.innerHTML = '<div class="empty-state"><span class="spinner"></span> 正在加载渠道模型…</div>';
+      return;
+    }
+    const keyword = state.filters.pool.trim().toLowerCase();
+    const matched = keyword
+      ? state.pool.filter(item =>
+          (item.modelName || '').toLowerCase().includes(keyword) ||
+          (item.channelName || '').toLowerCase().includes(keyword))
+      : state.pool;
+
+    if (!matched.length) {
+      host.innerHTML = '<div class="empty-state">没有匹配的渠道模型</div>';
+      return;
+    }
+
+    // 按渠道分组；搜索时只渲染命中项，且自动展开命中渠道。
+    const byChannel = new Map();
+    matched.forEach(item => {
+      if (!byChannel.has(item.channelId)) {
+        byChannel.set(item.channelId, { id: item.channelId, name: item.channelName, type: item.channelType, items: [] });
+      }
+      byChannel.get(item.channelId).items.push(item);
+    });
+
+    const html = [];
+    byChannel.forEach(group => {
+      // 搜索态下强制展开，且限制单渠道渲染条数，避免一次插入上万节点。
+      const expanded = keyword ? true : state.poolExpanded.has(group.id);
+      const limit = keyword ? 120 : 400;
+      const visible = group.items.slice(0, limit);
+      const hiddenCount = group.items.length - visible.length;
+
+      html.push(
+        '<div class="ch-group' + (expanded ? ' is-expanded' : '') + '">' +
+          '<div class="ch-head" data-action="toggle-channel" data-channel-id="' + group.id + '">' +
+            '<span class="caret">' + (expanded ? '▾' : '▸') + '</span>' +
+            '<span class="ch-name ellipsis">' + esc(group.name) + '</span>' +
+            '<span class="ch-meta badge badge-muted">' + group.items.length + '</span>' +
+          '</div>' +
+          (expanded
+            ? '<div style="padding:4px 6px 6px">' + visible.map(item => {
+                const inGroups = memberGroupNames(item.id);
+                return '<div class="pool-item' + (inGroups.length ? ' is-in-group' : '') + '"' +
+                  ' draggable="true" data-drag="pool" data-channel-model-id="' + item.id + '"' +
+                  ' data-key="' + esc(item.key) + '"' +
+                  ' title="拖到中间的小组即可加入成员">' +
+                  '<div class="pool-item-main">' +
+                    '<div class="pool-item-name ellipsis">' + esc(item.displayName) + '</div>' +
+                    '<div class="pool-item-meta">' +
+                      '<span>' + esc(group.name) + '</span>' +
+                      '<span>ctx ' + fmtContext(item.contextLength) + '</span>' +
+                      (item.input ? '<span>' + esc(item.input) + '</span>' : '') +
+                      (inGroups.length ? '<span>组：' + esc(inGroups.join('、')) + '</span>' : '') +
+                    '</div>' +
+                  '</div>' +
+                '</div>';
+              }).join('') +
+              (hiddenCount > 0
+                ? '<div class="drop-zone-hint">另有 ' + hiddenCount + ' 个模型未展示，请用搜索缩小范围</div>'
+                : '') +
+              '</div>'
+            : '') +
+        '</div>'
+      );
+    });
+    host.innerHTML = html.join('');
+  }
+
+  function renderGroups() {
+    const host = $('#groups-body');
+    if (!host) return;
+
+    const filter = state.filters.strategy;
+    const groups = state.groups.filter(g => !filter || g.strategy === filter);
+
+    const parts = [];
+
+    if (state.newGroupOpen) {
+      parts.push(
+        '<div class="card"><div class="card-body">' +
+          '<div class="field"><label>小组名称</label>' +
+            '<input class="input input-sm" id="new-group-name" placeholder="例如 deepseek-flash" style="width:100%" /></div>' +
+          '<div class="field"><label>组内路由方式</label>' +
+            '<select class="select select-sm" id="new-group-strategy" style="width:100%">' +
+              '<option value="random">随机加权 random</option>' +
+              '<option value="failover">故障转移 failover</option>' +
+              '<option value="round_robin">轮询 round_robin</option>' +
+            '</select></div>' +
+          '<div class="flex gap-6 items-center" style="margin-top:8px">' +
+            '<label class="secondary" style="font-size:12px">' +
+              '<input type="checkbox" id="new-group-sticky" checked /> 会话粘性</label>' +
+            '<span class="card-spacer"></span>' +
+            '<button class="btn btn-sm btn-ghost" data-action="cancel-new-group">取消</button>' +
+            '<button class="btn btn-sm btn-primary" data-action="create-group">创建</button>' +
+          '</div>' +
+        '</div></div>'
+      );
+    }
+
+    if (!groups.length) {
+      parts.push('<div class="empty-drop"></div>');
+      parts.push('<div class="drop-empty">暂无小组，点击右上「+ 新建」创建</div>');
+    } else {
+      groups.forEach(group => parts.push(renderGroupCard(group)));
+    }
+
+    host.innerHTML = parts.join('');
+  }
+
+  /** 单个小组卡片：头部可拖拽（拖入右侧入口模型），展开后管理成员。 */
+  function renderGroupCard(group) {
+    const expanded = state.groupExpanded.has(group.id);
+    const detail = state.groupDetail.get(group.id);
+    const busy = state.groupBusy.has(group.id);
+    const strategy = group.strategy || 'failover';
+
+    const head =
+      '<div class="card-head" data-action="toggle-group" data-group-id="' + group.id + '">' +
+        '<span class="badge badge-blue">' + esc(strategyLabel(strategy)) + '</span>' +
+        '<span class="card-title ellipsis">' + esc(group.name) + '</span>' +
+        (group.sticky === 1 ? '<span class="badge badge-purple">粘性</span>' : '') +
+        (group.enabled === 0 ? '<span class="badge badge-muted">已停用</span>' : '') +
+        '<span class="card-spacer"></span>' +
+        '<span class="card-sub">' +
+          (group.memberCount || 0) + ' 成员 · 可用 ' + (group.availableCount || 0) +
+          (group.brokenCount ? ' · 熔断 ' + group.brokenCount : '') +
+        '</span>' +
+        '<span class="caret muted" style="font-size:10px">' + (expanded ? '▾' : '▸') + '</span>' +
+      '</div>';
+
+    let body = '';
+    if (expanded) {
+      // 已有数据时刷新不闪成「加载中」：保留旧内容并加淡化提示，
+      // 只有首次加载（无缓存）才展示 spinner。
+      if (!detail) {
+        body = '<div class="card-body"><div class="empty-state"><span class="spinner"></span> 加载成员…</div></div>';
+      } else {
+        body = '<div class="card-body"' + (busy ? ' style="opacity:.6"' : '') + '>' +
+          renderGroupBody(group, detail) + '</div>';
+      }
+    }
+
+    return '<div class="card" draggable="true" data-drag="group" data-group-id="' + group.id + '"' +
+      ' data-drop="group" data-title="' + esc(group.name) + '">' + head + body + '</div>';
+  }
+
+  function renderGroupBody(group, detail) {
+    const members = (detail.members || []).slice();
+    const parts = [];
+
+    // 组内配置：策略 / 粘性 / 启用状态（改动即时落库）
+    parts.push(
+      '<div class="flex gap-6 items-center" style="margin-bottom:8px;flex-wrap:wrap">' +
+        '<select class="select select-sm" data-action="group-strategy" data-group-id="' + group.id + '">' +
+          ['failover', 'random', 'round_robin'].map(s =>
+            '<option value="' + s + '"' + (s === (group.strategy || 'failover') ? ' selected' : '') + '>' +
+            esc(strategyLabel(s)) + '</option>').join('') +
+        '</select>' +
+        '<label class="secondary" style="font-size:12px">' +
+          '<input type="checkbox" data-action="group-sticky" data-group-id="' + group.id + '"' +
+          (group.sticky === 1 ? ' checked' : '') + ' /> 粘性</label>' +
+        '<span class="card-spacer"></span>' +
+        '<span class="card-sub">拖成员行可调整顺序</span>' +
+        '<button class="btn btn-sm btn-ghost" data-action="group-delete" data-group-id="' + group.id + '"' +
+          ' data-group-name="' + esc(group.name) + '">删除</button>' +
+      '</div>'
+    );
+
+    if (!members.length) {
+      parts.push('<div class="drop-empty">从左侧渠道模型池拖入模型，成为小组成员</div>');
+    } else {
+      parts.push(members.map((member, index) => renderMemberRow(member, index, group)).join(''));
+    }
+
+    if (detail.usedByModels && detail.usedByModels.length) {
+      parts.push(
+        '<div class="card-sub" style="margin-top:6px">被入口模型引用：' +
+          detail.usedByModels.map(m => esc(m.modelName)).join('、') +
+        '</div>'
+      );
+    }
+    return parts.join('');
+  }
+
+  function renderMemberRow(member, index, group) {
+    const broken = member.circuitBroken === 1;
+    const unavailable = member.enabled === 0 || member.channelEnabled === 0 || member.apiKeyAvailable === 0;
+    return '<div class="row-item' + (unavailable ? ' muted' : '') + '"' +
+        ' draggable="true" data-drag="member" data-group-id="' + group.id + '"' +
+        ' data-member-id="' + member.id + '" data-sort-index="' + index + '">' +
+      '<span class="row-index">' + (index + 1) + '</span>' +
+      '<div class="row-main">' +
+        '<div class="row-name ellipsis">' + esc(member.channelModelName || ('成员 #' + member.id)) + '</div>' +
+        '<div class="row-meta">' +
+          '<span>' + esc(member.channelName || '-') + '</span>' +
+          (member.contextLength ? '<span>ctx ' + fmtContext(member.contextLength) + '</span>' : '') +
+          (member.ttftMs ? '<span>TTFT ' + fmtDuration(member.ttftMs) + '</span>' : '') +
+          (member.outputSpeed ? '<span>' + Number(member.outputSpeed).toFixed(1) + ' t/s</span>' : '') +
+          (broken ? '<span class="badge badge-red">熔断中</span>' : '') +
+          (member.enabled === 0 ? '<span class="badge badge-muted">已停用</span>' : '') +
+          (member.apiKeyAvailable === 0 ? '<span class="badge badge-yellow">无可用 Key</span>' : '') +
+          (member.reasoningEffort ? '<span class="badge badge-blue">' + esc(member.reasoningEffort) + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="row-tools">' +
+        '<input class="input input-sm weight-input" type="number" min="1" max="1000" value="' +
+          esc(member.weight || 1) + '" title="组内权重"' +
+          ' data-action="member-weight" data-member-id="' + member.id + '" />' +
+        '<button class="btn btn-sm btn-ghost" data-action="toggle-member" data-member-id="' + member.id + '"' +
+          ' data-member-enabled="' + (member.enabled === 0 ? 1 : 0) + '"' +
+          ' title="启用/停用">' + (member.enabled === 0 ? '启用' : '停用') + '</button>' +
+        '<button class="btn btn-sm btn-ghost" data-action="remove-member" data-member-id="' + member.id + '"' +
+          ' data-member-name="' + esc(member.channelModelName || '') + '"' +
+          ' data-group-id="' + group.id + '" title="移出小组">×</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function renderModels() {
+    const host = $('#models-body');
+    if (!host) return;
+    const keyword = state.filters.model.trim().toLowerCase();
+    const models = state.models.filter(m => !keyword || (m.modelName || '').toLowerCase().includes(keyword));
+
+    if (!models.length) {
+      host.innerHTML = '<div class="empty-state">' +
+        (state.models.length ? '没有匹配的入口模型' : '暂无入口模型，请先在原后台创建') + '</div>';
+      return;
+    }
+    host.innerHTML = models.map(model => renderModelCard(model)).join('');
+  }
+
+  /** 入口模型卡片：拖入小组即建立关联；展开后展示统一候选队列并支持排序。 */
+  function renderModelCard(model) {
+    const expanded = state.modelExpanded.has(model.id);
+    const detail = state.modelDetail.get(model.id);
+    const busy = state.modelBusy.has(model.id);
+    const inherit = model.relMode === 'inherit';
+
+    const relCount = detail
+      ? (detail.rels || []).length + (detail.groupRels || []).length
+      : null;
+
+    const head =
+      '<div class="card-head" data-action="toggle-model" data-model-id="' + model.id + '">' +
+        '<span class="card-title ellipsis">' + esc(model.modelName) + '</span>' +
+        (inherit ? '<span class="badge badge-yellow">继承模式 · 只读</span>' : '') +
+        (model.enabled === 0 ? '<span class="badge badge-muted">已停用</span>' : '') +
+        (model.hidden === 1 ? '<span class="badge badge-muted">隐藏</span>' : '') +
+        '<span class="card-spacer"></span>' +
+        '<span class="card-sub">' + (relCount === null ? '展开查看候选' : relCount + ' 条候选') + '</span>' +
+        '<span class="caret muted" style="font-size:10px">' + (expanded ? '▾' : '▸') + '</span>' +
+      '</div>';
+
+    let body = '';
+    if (expanded) {
+      // 同小组卡片：有缓存时刷新只做淡化，不闪加载态。
+      if (!detail) {
+        body = '<div class="card-body"><div class="empty-state"><span class="spinner"></span> 加载候选队列…</div></div>';
+      } else {
+        body = '<div class="card-body"' + (busy ? ' style="opacity:.6"' : '') + '>' +
+          renderModelQueue(model, detail) + '</div>';
+      }
+    }
+
+    // 继承模式下后端拒绝改关联，这里直接禁用拖放目标，避免无谓报错。
+    return '<div class="card" data-drop="model" data-model-id="' + model.id + '"' +
+      ' data-inherit="' + (inherit ? '1' : '0') + '"' +
+      ' data-title="' + esc(model.modelName) + '">' + head + body + '</div>';
+  }
+
+  /** 合并渠道模型关联与小组关联，按 sort_order 还原真实尝试顺序。 */
+  function buildCandidateQueue(detail) {
+    const queue = [];
+    (detail.rels || []).forEach(rel => {
+      queue.push({
+        kind: 'cm',
+        id: rel.id,
+        sortOrder: rel.sortOrder === null || rel.sortOrder === undefined ? 0 : rel.sortOrder,
+        channelModelId: rel.channelModelId,
+        name: rel.channelModelName || ('渠道模型 #' + rel.channelModelId),
+        sub: rel.channelName || '',
+        rel: rel
+      });
+    });
+    (detail.groupRels || []).forEach(rel => {
+      queue.push({
+        kind: 'g',
+        id: rel.id,
+        sortOrder: rel.sortOrder === null || rel.sortOrder === undefined ? 0 : rel.sortOrder,
+        groupId: rel.groupId,
+        name: rel.groupName || ('小组 #' + rel.groupId),
+        sub: strategyLabel(rel.groupStrategy) + (rel.groupSticky === 1 ? ' · 粘性' : ''),
+        rel: rel
+      });
+    });
+    queue.sort((a, b) => (a.sortOrder - b.sortOrder) || (a.id - b.id));
+    return queue;
+  }
+
+  function renderModelQueue(model, detail) {
+    const queue = buildCandidateQueue(detail);
+    const readonly = model.relMode === 'inherit';
+    const parts = [];
+
+    if (readonly) {
+      const source = detail.inheritFromModelName;
+      parts.push('<div class="drop-zone-hint" style="text-align:left">' +
+        '当前为继承模式，候选队列来自源模型' + (source ? '「' + esc(source) + '」' : '') + '，不可直接修改。' +
+        '</div>');
+    }
+
+    if (!queue.length) {
+      parts.push('<div class="drop-empty">' +
+        (readonly ? '源模型暂无可继承的候选' : '把中间的小组拖到这张卡片上，建立关联') + '</div>');
+    } else {
+      parts.push(queue.map((item, index) => renderCandidateRow(item, index, readonly)).join(''));
+    }
+
+    if (!readonly) {
+      parts.push('<div class="drop-zone-hint" style="margin-top:6px">拖入小组卡片可追加候选；拖行可调整顺序</div>');
+    }
+    return parts.join('');
+  }
+
+  function renderCandidateRow(item, index, readonly) {
+    const rel = item.rel;
+    const isGroup = item.kind === 'g';
+    const broken = rel.circuitBroken === 1;
+    const meta = [];
+
+    if (isGroup) {
+      meta.push('<span class="badge badge-blue">小组</span>');
+      meta.push('<span>成员 ' + (rel.memberCount || 0) + ' · 可用 ' + (rel.availableCount || 0) + '</span>');
+      if (rel.brokenCount) meta.push('<span class="badge badge-yellow">熔断 ' + rel.brokenCount + '</span>');
+      if (rel.maxContextLength) meta.push('<span>ctx ' + fmtContext(rel.maxContextLength) + '</span>');
+      if (rel.memberModelNames && rel.memberModelNames.length) {
+        meta.push('<span class="ellipsis" style="max-width:220px">' + esc(rel.memberModelNames.join(' / ')) + '</span>');
+      }
+    } else {
+      if (rel.channelEnabled === 0) meta.push('<span class="badge badge-muted">渠道停用</span>');
+      if (rel.apiKeyAvailable === 0) meta.push('<span class="badge badge-yellow">无可用 Key</span>');
+      if (rel.contextLength) meta.push('<span>ctx ' + fmtContext(rel.contextLength) + '</span>');
+    }
+    if (rel.ttftMs) meta.push('<span>TTFT ' + fmtDuration(rel.ttftMs) + '</span>');
+    if (rel.outputSpeed) meta.push('<span>' + Number(rel.outputSpeed).toFixed(1) + ' t/s</span>');
+    if (rel.reasoningEffort) meta.push('<span class="badge badge-blue">' + esc(rel.reasoningEffort) + '</span>');
+    if (broken) meta.push('<span class="badge badge-red">熔断中</span>');
+
+    return '<div class="row-item"' +
+        (readonly ? '' : ' draggable="true" data-drag="rel" data-model-id="' + rel.modelId +
+          '" data-ref="' + item.kind + ':' + item.id + '" data-sort-index="' + index + '"') + '>' +
+      '<span class="row-index">' + (index + 1) + '</span>' +
+      '<div class="row-main">' +
+        '<div class="row-name ellipsis">' + esc(item.name) + '</div>' +
+        '<div class="row-meta">' +
+          (isGroup ? '' : '<span>' + esc(item.sub) + '</span>') +
+          meta.join(' ') +
+        '</div>' +
+      '</div>' +
+      (readonly ? '' :
+        '<div class="row-tools">' +
+          '<button class="btn btn-sm btn-ghost" title="移除候选"' +
+            ' data-action="remove-rel" data-model-id="' + rel.modelId + '"' +
+            ' data-ref="' + item.kind + ':' + item.id + '"' +
+            ' data-rel-name="' + esc(item.name) + '">×</button>' +
+        '</div>') +
+    '</div>';
+  }
+
+  /* ══════════════════════════ 7. 三段式拖拽 ══════════════════════════ */
+
+  /**
+   * 拖拽模型：
+   *   pool   → 渠道模型（拖到小组卡片/成员区 = 加入成员）
+   *   group  → 小组（拖到入口模型卡片 = 建立关联）
+   *   member → 小组成员行（组内排序）
+   *   rel    → 入口模型候选行（候选排序）
+   * 用模块级变量承载载荷，dataTransfer 只放一份 JSON 兼容外部拖入。
+   */
+  const drag = { payload: null, overEl: null };
+
+  const DND_MIME = 'application/x-mag-drag';
+
+  function dragPayloadFromEvent(event) {
+    if (drag.payload) return drag.payload;
+    try {
+      const raw = event.dataTransfer.getData(DND_MIME);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function onDragStart(event) {
+    const source = event.target.closest('[data-drag]');
+    if (!source) return;
+    const kind = source.getAttribute('data-drag');
+    const payload = { kind: kind };
+
+    if (kind === 'pool') {
+      payload.channelModelId = Number(source.getAttribute('data-channel-model-id'));
+      payload.label = source.querySelector('.pool-item-name') ? source.querySelector('.pool-item-name').textContent : '';
+    } else if (kind === 'group') {
+      payload.groupId = Number(source.getAttribute('data-group-id'));
+      payload.label = source.getAttribute('data-title') || '';
+    } else if (kind === 'member') {
+      payload.memberId = Number(source.getAttribute('data-member-id'));
+      payload.groupId = Number(source.getAttribute('data-group-id'));
+      payload.index = Number(source.getAttribute('data-sort-index'));
+    } else if (kind === 'rel') {
+      payload.modelId = Number(source.getAttribute('data-model-id'));
+      payload.ref = source.getAttribute('data-ref');
+      payload.index = Number(source.getAttribute('data-sort-index'));
+    } else {
+      return;
+    }
+
+    drag.payload = payload;
+    source.classList.add('is-dragging');
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = 'move';
+      try { event.dataTransfer.setData(DND_MIME, JSON.stringify(payload)); } catch (e) { /* 忽略 */ }
+      try { event.dataTransfer.setData('text/plain', payload.label || ''); } catch (e) { /* 忽略 */ }
+    }
+  }
+
+  function onDragEnd(event) {
+    const source = event.target.closest('[data-drag]');
+    if (source) source.classList.remove('is-dragging');
+    clearDropHighlight();
+    drag.payload = null;
+  }
+
+  function clearDropHighlight() {
+    if (drag.overEl) {
+      drag.overEl.classList.remove('is-drop-target');
+      drag.overEl = null;
+    }
+  }
+
+  /** 计算当前拖拽在目标上是否可放置；返回放置描述或 null。 */
+  function resolveDropTarget(target, payload) {
+    if (!payload || !target) return null;
+
+    // 1) 池里的渠道模型 → 小组卡片
+    if (payload.kind === 'pool') {
+      const groupCard = target.closest('[data-drop="group"]');
+      if (!groupCard) return null;
+      return {
+        action: 'add-member',
+        groupId: Number(groupCard.getAttribute('data-group-id')),
+        el: groupCard
+      };
+    }
+
+    // 2) 小组卡片 → 入口模型卡片
+    if (payload.kind === 'group') {
+      const modelCard = target.closest('[data-drop="model"]');
+      if (!modelCard) return null;
+      // 继承模式的入口模型不允许改关联（后端同样会拒绝）
+      if (modelCard.getAttribute('data-inherit') === '1') return null;
+      return {
+        action: 'add-group-rel',
+        modelId: Number(modelCard.getAttribute('data-model-id')),
+        groupId: payload.groupId,
+        el: modelCard
+      };
+    }
+
+    // 3) 组内成员行 → 同组成员行（排序）
+    if (payload.kind === 'member') {
+      const memberRow = target.closest('[data-drag="member"]');
+      if (!memberRow) return null;
+      const groupId = Number(memberRow.getAttribute('data-group-id'));
+      if (groupId !== payload.groupId) return null;
+      return {
+        action: 'reorder-member',
+        groupId: groupId,
+        toIndex: Number(memberRow.getAttribute('data-sort-index')),
+        el: memberRow
+      };
+    }
+
+    // 4) 候选行 → 同模型候选行（排序）
+    if (payload.kind === 'rel') {
+      const relRow = target.closest('[data-drag="rel"]');
+      if (!relRow) return null;
+      if (Number(relRow.getAttribute('data-model-id')) !== payload.modelId) return null;
+      return {
+        action: 'reorder-rel',
+        modelId: payload.modelId,
+        toIndex: Number(relRow.getAttribute('data-sort-index')),
+        el: relRow
+      };
+    }
+
+    return null;
+  }
+
+  function onDragOver(event) {
+    const payload = drag.payload;
+    if (!payload) return;
+    const resolution = resolveDropTarget(event.target, payload);
+    if (!resolution) {
+      clearDropHighlight();
+      return;
+    }
+    // 必须阻止默认行为，否则 drop 不会触发。
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+
+    if (drag.overEl !== resolution.el) {
+      clearDropHighlight();
+      resolution.el.classList.add('is-drop-target');
+      drag.overEl = resolution.el;
+    }
+  }
+
+  function onDrop(event) {
+    const payload = dragPayloadFromEvent(event);
+    const resolution = resolveDropTarget(event.target, payload);
+    if (!resolution) return;
+    event.preventDefault();
+    clearDropHighlight();
+
+    if (resolution.action === 'add-member') handleAddMember(resolution, payload);
+    else if (resolution.action === 'add-group-rel') handleAddGroupRel(resolution, payload);
+    else if (resolution.action === 'reorder-member') handleReorderMember(resolution, payload);
+    else if (resolution.action === 'reorder-rel') handleReorderRel(resolution, payload);
+  }
+
+  /** 渠道模型 → 小组：POST members，然后刷新该组详情与列表摘要。 */
+  async function handleAddMember(resolution, payload) {
+    const item = state.poolByKey.get(payload.key || '');
+    try {
+      const data = assertSuccess(
+        await api.addGroupMembers(resolution.groupId, [payload.channelModelId]),
+        '加入成员失败'
+      );
+      if (!data.count) {
+        toast('该模型已在此小组中', 'info');
+        return;
+      }
+      toast('已加入小组' + (item ? '：' + item.modelName : ''), 'ok');
+      state.groupExpanded.add(resolution.groupId);
+      await Promise.all([
+        ensureGroupDetail(resolution.groupId, true),
+        loadGroups()
+      ]);
+      renderPool(); // 「已在组内」标记需要跟随刷新
+    } catch (e) {
+      toast('加入成员失败：' + e.message, 'err');
+    }
+  }
+
+  /** 小组 → 入口模型：POST /models/:id/rels，然后刷新该模型候选队列。 */
+  async function handleAddGroupRel(resolution, payload) {
+    try {
+      const data = assertSuccess(
+        await api.addModelRels(resolution.modelId, { groupIds: [payload.groupId] }),
+        '建立关联失败'
+      );
+      if (!data.count) {
+        toast('该入口模型已关联此小组', 'info');
+        return;
+      }
+      toast('已建立关联' + (payload.label ? '：' + payload.label : ''), 'ok');
+      state.modelExpanded.add(resolution.modelId);
+      await ensureModelDetail(resolution.modelId, true);
+    } catch (e) {
+      toast('建立关联失败：' + e.message, 'err');
+    }
+  }
+
+  /** 组内排序：整表提交，后端按数组下标写 sort_order。 */
+  async function handleReorderMember(resolution, payload) {
+    const detail = state.groupDetail.get(resolution.groupId);
+    if (!detail || !detail.members) return;
+    const ids = detail.members.map(m => m.id);
+    const from = ids.indexOf(payload.memberId);
+    const to = resolution.toIndex;
+    if (from < 0 || to < 0 || from === to) return;
+
+    ids.splice(to, 0, ids.splice(from, 1)[0]);
+    // 先本地生效，避免等待网络造成的拖拽迟滞。
+    detail.members = ids.map(id => detail.members.find(m => m.id === id));
+    renderGroups();
+
+    try {
+      assertSuccess(await api.sortGroupMembers(ids), '排序失败');
+    } catch (e) {
+      toast('排序失败：' + e.message, 'err');
+      await ensureGroupDetail(resolution.groupId, true);
+    }
+  }
+
+  /** 候选排序：提交混合引用 "cm:<id>" / "g:<id>"，两张表共用序号空间。 */
+  async function handleReorderRel(resolution, payload) {
+    const detail = state.modelDetail.get(resolution.modelId);
+    if (!detail) return;
+    const queue = buildCandidateQueue(detail);
+    const refs = queue.map(item => item.kind + ':' + item.id);
+    const from = refs.indexOf(payload.ref);
+    const to = resolution.toIndex;
+    if (from < 0 || to < 0 || from === to) return;
+
+    refs.splice(to, 0, refs.splice(from, 1)[0]);
+    try {
+      assertSuccess(await api.sortRels(refs), '排序失败');
+      await ensureModelDetail(resolution.modelId, true);
+    } catch (e) {
+      toast('排序失败：' + e.message, 'err');
+    }
+  }
+
+  /* ══════════════════════════ 8. 日志：数据归一化 ══════════════════════════ */
+
+  /**
+   * 把接口返回的 trace 数组并入本地行存储。
+   * 以 logId 去重：分页可能返回同一 trace 的更新快照（分页边界），SSE 也会重复推送。
+   */
+  function mergeTraces(traces) {
+    (traces || []).forEach(trace => {
+      if (!trace || !trace.traceId) return;
+      let bucket = state.logs.rows.get(trace.traceId);
+      if (!bucket) {
+        bucket = new Map();
+        state.logs.rows.set(trace.traceId, bucket);
+      }
+      (trace.logs || []).forEach(row => {
+        if (!row || row.id === undefined || row.id === null) return;
+        bucket.set(row.id, row);
+      });
+    });
+    rebuildTraceOrder();
+  }
+
+  /** 单条 SSE 行并入（新 trace 由排序规则自然顶到最前）。 */
+  function mergeLiveRow(row) {
+    if (!row || !row.traceId) return;
+    let bucket = state.logs.rows.get(row.traceId);
+    if (!bucket) {
+      bucket = new Map();
+      state.logs.rows.set(row.traceId, bucket);
+    }
+    bucket.set(row.id, row);
+    rebuildTraceOrder();
+  }
+
+  /** 计算 trace 的时间基准：用 responseTimeMs 倒推出每次尝试的起点。 */
+  function spanOfRow(row) {
+    const created = Date.parse(row.createdAt);
+    if (isNaN(created)) return null;
+    const duration = Number(row.responseTimeMs) > 0 ? Number(row.responseTimeMs) : 0;
+    return { start: created - duration, end: created, duration: duration };
+  }
+
+  /** 汇总一个 trace 的展示模型（阶段计数、起止、总耗时、基准时间）。 */
+  function buildTraceView(traceId) {
+    const bucket = state.logs.rows.get(traceId);
+    if (!bucket || !bucket.size) return null;
+    const rows = Array.from(bucket.values())
+      .sort((a, b) => (Date.parse(a.createdAt) - Date.parse(b.createdAt)) || (a.id - b.id));
+
+    const counts = { retry: 0, success: 0, fail: 0, skip: 0, interrupted: 0 };
+    let base = Infinity;
+    let latest = -Infinity;
+    let totalTimeMs = 0;
+    let modelName = '';
+    let protocol = '';
+    let routeSource = '';
+
+    rows.forEach(row => {
+      if (row.phase && counts[row.phase] !== undefined) counts[row.phase] += 1;
+      if (!modelName && row.modelName) modelName = row.modelName;
+      if (!protocol && row.protocol) protocol = row.protocol;
+      if (!routeSource && row.routeSource) routeSource = row.routeSource;
+      if (row.phase === 'success' || row.phase === 'fail' || row.phase === 'interrupted') {
+        if (Number(row.responseTimeMs) > 0) totalTimeMs += Number(row.responseTimeMs);
+      }
+      const span = spanOfRow(row);
+      if (span) {
+        if (span.start < base) base = span.start;
+        if (span.end > latest) latest = span.end;
+      }
+    });
+    if (!isFinite(base)) base = 0;
+    if (!isFinite(latest)) latest = base;
+
+    // 终态优先展示：失败 > 中断 > 成功 > 进行中
+    let terminal = 'pending';
+    if (counts.fail > 0) terminal = 'fail';
+    else if (counts.interrupted > 0) terminal = 'interrupted';
+    else if (counts.success > 0) terminal = 'success';
+
+    const lastRow = rows[rows.length - 1];
+    return {
+      traceId: traceId,
+      rows: rows,
+      counts: counts,
+      modelName: modelName,
+      protocol: protocol,
+      routeSource: routeSource,
+      base: base,
+      span: Math.max(1, latest - base),
+      totalTimeMs: totalTimeMs,
+      terminal: terminal,
+      lastAt: lastRow ? Date.parse(lastRow.createdAt) : 0,
+      hasRequestData: rows.some(r => r.requestHeaders || r.requestBody)
+    };
+  }
+
+  /**
+   * 重建 trace 展示顺序与视图缓存。
+   *
+   * 排序口径统一为「最近一条日志的时间」倒序：SSE 推送的进行中请求会自然顶到
+   * 最前，已完成的则按结束时间排序，不需要为「新 trace 插入头部」单独开分支。
+   */
+  function rebuildTraceOrder() {
+    const views = new Map();
+    state.logs.rows.forEach((bucket, id) => {
+      if (!bucket || !bucket.size) return;
+      const view = buildTraceView(id);
+      if (view) views.set(id, view);
+    });
+    state.logs.order = Array.from(views.keys()).sort((a, b) => views.get(b).lastAt - views.get(a).lastAt);
+    state.traceViews = views;
+  }
+
+  function visibleTraceIds() {
+    const filter = state.logs.filters;
+    const keyword = state.logs.traceFilter.trim().toLowerCase();
+    const startMs = filter.startTime ? Date.parse(filter.startTime) : null;
+    const endMs = filter.endTime ? Date.parse(filter.endTime) : null;
+
+    return state.logs.order.filter(id => {
+      const view = state.traceViews.get(id);
+      if (!view) return false;
+      if (filter.modelName && view.modelName !== filter.modelName) return false;
+      if (keyword && !id.toLowerCase().includes(keyword)) return false;
+      if (startMs !== null && view.lastAt < startMs) return false;
+      if (endMs !== null && view.lastAt > endMs) return false;
+      return true;
+    });
+  }
+
+  /* ══════════════════════════ 9. 日志：加载与实时 ══════════════════════════ */
+
+  async function loadLogs(reset) {
+    const logs = state.logs;
+    if (logs.loading) return;
+    logs.loading = true;
+    if (reset) {
+      logs.rows = new Map();
+      logs.order = [];
+      logs.offset = 0;
+      logs.open.clear();
+      state.traceViews = new Map();
+    }
+    renderLogs();
+
+    try {
+      const data = await api.logs({
+        offset: logs.offset,
+        limit: logs.limit,
+        modelName: logs.filters.modelName,
+        startTime: logs.filters.startTime,
+        endTime: logs.filters.endTime
+      });
+      mergeTraces(data && data.data);
+      logs.total = (data && data.total) || 0;
+      logs.hasMore = !!(data && data.hasMore);
+      logs.offset += (data && data.data ? data.data.length : 0);
+      $('#log-status').textContent = '共 ' + fmtInt(logs.total) + ' 条链路';
+    } catch (e) {
+      if (e.status === 401) return; // 由统一鉴权流程接管
+      toast('加载日志失败：' + e.message, 'err');
+    } finally {
+      logs.loading = false;
+      renderLogs();
+    }
+  }
+
+  /** 日志模型下拉：只填充入口模型名，避免自由输入产生无效过滤。 */
+  async function loadLogModelOptions() {
+    try {
+      if (!state.models.length) await loadModels();
+      const names = state.models.map(m => m.modelName).sort();
+      state.logModels = names;
+      const select = $('#log-model');
+      if (!select) return;
+      const current = select.value;
+      select.innerHTML = '<option value="">全部</option>' +
+        names.map(n => '<option value="' + esc(n) + '">' + esc(n) + '</option>').join('');
+      if (current) select.value = current;
+    } catch (e) {
+      console.warn('加载日志模型下拉失败', e);
+    }
+  }
+
+  function toggleLive(on) {
+    const logs = state.logs;
+    if (logs.liveSource) {
+      logs.liveSource.close();
+      logs.liveSource = null;
+    }
+    if (!on) {
+      $('#log-status').textContent = '已停止实时';
+      return;
+    }
+    if (!api.token) {
+      toast('实时日志需要登录令牌，请重新登录', 'err');
+      $('#log-live').checked = false;
+      return;
+    }
+
+    // EventSource 不能自定义请求头，后端支持 ?token= 形态（与 Java 版一致）。
+    const url = API_BASE + '/logs/stream?token=' + encodeURIComponent(api.token);
+    const source = new EventSource(url);
+    logs.liveSource = source;
+    $('#log-status').textContent = '实时连接中…';
+
+    source.onopen = () => { $('#log-status').textContent = '实时已连接'; };
+    source.addEventListener('log', event => {
+      try {
+        const row = JSON.parse(event.data);
+        mergeLiveRow(row);
+        scheduleLogRender();
+      } catch (e) {
+        console.warn('解析实时日志失败', e);
+      }
+    });
+    source.onerror = () => {
+      $('#log-status').textContent = '实时连接断开，正在重连…';
+    };
+  }
+
+  /** SSE 高频推送合并渲染，避免每行都触发一次整表 DOM 重建。 */
+  const scheduleLogRender = debounce(() => renderLogs(), 250);
+
+  /* ══════════════════════════ 10. 日志：渲染 ══════════════════════════ */
+
+  function renderLogs() {
+    const host = $('#trace-list');
+    if (!host) return;
+    const logs = state.logs;
+
+    if (logs.loading && !logs.order.length) {
+      host.innerHTML = '<div class="empty-state"><span class="spinner"></span> 正在加载日志…</div>';
+      return;
+    }
+
+    const ids = visibleTraceIds();
+    if (!ids.length) {
+      host.innerHTML = '<div class="empty-state">' +
+        (logs.order.length ? '没有匹配的链路，试试放宽筛选条件' : '暂无日志数据') + '</div>';
+      updateLoadMore();
+      return;
+    }
+
+    host.innerHTML = ids.map(id => renderTraceCard(state.traceViews.get(id))).join('');
+    updateLoadMore();
+  }
+
+  function updateLoadMore() {
+    const el = $('#load-more');
+    if (!el) return;
+    const hasMore = state.logs.hasMore;
+    el.classList.toggle('hidden', !hasMore);
+    el.textContent = state.logs.loading ? '加载中…' : '加载更多';
+  }
+
+  function renderTraceCard(view) {
+    const open = state.logs.open.has(view.traceId);
+    const counts = view.counts;
+
+    const badges = [];
+    if (counts.fail) badges.push('<span class="badge badge-red">失败 ' + counts.fail + '</span>');
+    if (counts.success) badges.push('<span class="badge badge-green">成功 ' + counts.success + '</span>');
+    if (counts.retry) badges.push('<span class="badge badge-yellow">重试 ' + counts.retry + '</span>');
+    if (counts.skip) badges.push('<span class="badge badge-muted">跳过 ' + counts.skip + '</span>');
+    if (counts.interrupted) badges.push('<span class="badge badge-muted">中断 ' + counts.interrupted + '</span>');
+    if (view.terminal === 'pending') badges.push('<span class="badge badge-blue">进行中</span>');
+    if (view.protocol) badges.push('<span class="badge badge-purple">' + esc(protocolLabel(view.protocol)) + '</span>');
+    if (view.routeSource) badges.push('<span class="badge badge-blue">' + esc(routeSourceLabel(view.routeSource)) + '</span>');
+
+    return '<div class="trace-card' + (open ? ' is-open' : '') + '" data-trace-id="' + esc(view.traceId) + '">' +
+      '<div class="trace-head" data-action="toggle-trace">' +
+        '<div class="trace-id-wrap">' +
+          '<span class="trace-id" title="' + esc(view.traceId) + '">' + esc(view.traceId) + '</span>' +
+          '<button class="trace-copy" data-action="copy-trace" data-trace-id="' + esc(view.traceId) + '"' +
+            ' title="复制 traceId">复制</button>' +
+        '</div>' +
+        '<div class="trace-summary">' +
+          (view.modelName ? '<span class="badge badge-muted">' + esc(view.modelName) + '</span>' : '') +
+          badges.join(' ') +
+        '</div>' +
+        '<div class="trace-meta">' +
+          '<span>' + esc(fmtDateTime(view.rows[0].createdAt)) + '</span>' +
+          '<span>总计 ' + esc(fmtDuration(view.span)) + '</span>' +
+          '<span>' + view.rows.length + ' 跳</span>' +
+          '<span class="muted">' + (open ? '▾' : '▸') + '</span>' +
+        '</div>' +
+      '</div>' +
+      (open ? renderTimeline(view) : '') +
+    '</div>';
+  }
+
+  /** 链路时间线：瀑布条 + 逐跳明细，是「链路追踪」的核心视图。 */
+  function renderTimeline(view) {
+    const parts = [];
+
+    // 水位条：每跳按真实耗时占位，直观看出慢在哪一次尝试。
+    parts.push('<div class="waterfall">' + view.rows.map(row => {
+      const span = spanOfRow(row);
+      const offset = span ? (span.start - view.base) : 0;
+      const width = span ? Math.max(span.duration, view.span * 0.005, 2) : 2;
+      const leftPct = (offset / view.span) * 100;
+      const widthPct = Math.min(100 - leftPct, (width / view.span) * 100);
+      const label = phaseLabel(row.phase) + ' · ' +
+        (row.channelName || '客户端') + (row.channelModelName ? '/' + row.channelModelName : '') +
+        ' · ' + fmtDuration(span ? span.duration : 0);
+      return '<div class="wf-seg wf-seg--' + esc(row.phase || 'start') + '"' +
+        ' style="position:absolute;left:' + leftPct.toFixed(3) + '%;width:' + Math.max(widthPct, 0.4).toFixed(3) + '%"' +
+        ' title="' + esc(label) + '"></div>';
+    }).join('') + '</div>');
+
+    parts.push('<div class="wf-axis"><span>0ms</span><span>' + esc(fmtDuration(view.span)) + '</span></div>');
+
+    // 逐跳明细
+    view.rows.forEach((row, index) => {
+      parts.push(renderHop(view, row, index));
+    });
+
+    // trace 级操作
+    parts.push('<div class="trace-foot">' +
+      '<button class="btn btn-sm btn-ghost" data-action="copy-trace" data-trace-id="' + esc(view.traceId) + '">复制 traceId</button>' +
+      '<button class="btn btn-sm btn-ghost" data-action="filter-by-trace" data-trace-id="' + esc(view.traceId) + '">按此 traceId 过滤</button>' +
+      (view.hasRequestData
+        ? '<button class="btn btn-sm btn-ghost" data-action="toggle-request-data" data-trace-id="' + esc(view.traceId) + '">查看原始请求</button>'
+        : '') +
+    '</div>');
+
+    return '<div class="trace-timeline">' + parts.join('') + '</div>';
+  }
+
+  function renderHop(view, row, index) {
+    const span = spanOfRow(row);
+    const offset = span ? (span.start - view.base) : 0;
+    const leftPct = (offset / view.span) * 100;
+    const widthPct = span ? Math.min(100 - leftPct, (span.duration / view.span) * 100) : 0;
+
+    const isClient = !row.channelName && !row.channelModelName;
+    const routeName = isClient
+      ? '客户端 → 网关' + (row.modelName ? '（' + row.modelName + '）' : '')
+      : (row.channelName || '-') + ' / ' + (row.channelModelName || row.modelName || '-');
+
+    const metrics = [];
+    if (span && span.duration > 0) metrics.push('<span class="hop-metric" title="本次耗时">' + fmtDuration(span.duration) + '</span>');
+    if (row.firstByteMs) metrics.push('<span class="hop-metric" title="首字节时间">TTFT ' + fmtDuration(row.firstByteMs) + '</span>');
+    if (row.promptTokens || row.completionTokens) {
+      metrics.push('<span class="hop-metric" title="输入/输出 token">' +
+        fmtInt(row.promptTokens || 0) + ' → ' + fmtInt(row.completionTokens || 0) + '</span>');
+    }
+    if (row.retryIndex) metrics.push('<span class="hop-metric" title="第几次重试">#' + row.retryIndex + '</span>');
+
+    const badges = [];
+    badges.push('<span class="' + phaseBadge(row.phase) + '">' + esc(phaseLabel(row.phase)) + '</span>');
+    if (row.status) badges.push('<span class="badge badge-muted">' + esc(row.status) + '</span>');
+    if (row.protocol) badges.push('<span class="badge badge-purple">' + esc(protocolLabel(row.protocol)) + '</span>');
+    if (row.routeSource) {
+      badges.push('<span class="badge badge-blue" title="' + esc(routeSourceTitle(row.routeSource)) + '">' +
+        esc(routeSourceLabel(row.routeSource)) + '</span>');
+    }
+    if (row.reasoningEffort) badges.push('<span class="badge badge-muted">' + esc(row.reasoningEffort) + '</span>');
+
+    return '<div class="hop">' +
+      '<span class="hop-no">' + (index + 1) + '</span>' +
+      '<div style="min-width:0">' + badges.join(' ') + '</div>' +
+      '<div class="hop-route">' +
+        '<div class="hop-route-name ellipsis" title="' + esc(routeName) + '">' + esc(routeName) + '</div>' +
+        '<div class="hop-route-sub">' +
+          esc(fmtClock(row.createdAt)) +
+          (row.apiKeyName ? ' · Key ' + esc(row.apiKeyName) : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="hop-bar" title="' + esc('起点 +' + Math.round(offset) + 'ms，耗时 ' + fmtDuration(span ? span.duration : 0)) + '">' +
+        '<div class="hop-bar-fill hop-bar-fill--' + esc(row.phase || 'start') + '"' +
+          ' style="left:' + leftPct.toFixed(3) + '%;width:' + Math.max(widthPct, 0.4).toFixed(3) + '%"></div>' +
+      '</div>' +
+      '<div class="hop-metrics">' + metrics.join('') + '</div>' +
+      (row.message
+        ? '<div class="hop-message' + (row.phase === 'fail' ? ' is-error' : '') + '">' + esc(row.message) + '</div>'
+        : '') +
+    '</div>';
+  }
+
+  /** 原始请求数据按需加载（列表接口有意不返回大字段）。 */
+  async function toggleRequestData(traceId) {
+    const view = state.traceViews.get(traceId);
+    if (!view) return;
+    const startRow = view.rows.find(r => r.phase === 'start' && (r.requestHeaders || r.requestBody)) ||
+      view.rows.find(r => r.phase === 'start' && r.channelName) ||
+      view.rows[0];
+    const host = $('.trace-card[data-trace-id="' + cssEscapeAttr(traceId) + '"] .trace-timeline');
+    if (!host) return;
+
+    let box = host.querySelector('.request-data[data-trace-id="' + traceId + '"]');
+    if (box) { box.remove(); return; }
+
+    box = document.createElement('div');
+    box.className = 'request-data';
+    box.setAttribute('data-trace-id', traceId);
+    box.innerHTML = '<div class="card-sub"><span class="spinner"></span> 正在读取原始请求…</div>';
+    host.appendChild(box);
+
+    try {
+      const data = await api.requestData(startRow.id);
+      const headers = prettyJson(data && data.requestHeaders);
+      const body = prettyJson(data && data.requestBody);
+      box.innerHTML =
+        '<div class="card-sub">原始请求（日志 #' + esc(startRow.id) + '）</div>' +
+        '<div class="card-sub" style="margin-top:6px">请求头</div>' +
+        '<pre>' + esc(headers || '暂无数据') + '</pre>' +
+        '<div class="card-sub" style="margin-top:6px">请求体</div>' +
+        '<pre>' + esc(body || '暂无数据') + '</pre>';
+    } catch (e) {
+      box.innerHTML = '<div class="card-sub">读取失败：' + esc(e.message) + '</div>';
+    }
+  }
+
+  function prettyJson(raw) {
+    if (!raw) return '';
+    try {
+      return JSON.stringify(JSON.parse(raw), null, 2);
+    } catch (e) {
+      return String(raw);
+    }
+  }
+
+  /** 选择器里的属性值转义（traceId 只含十六进制字符，这里做防御）。 */
+  function cssEscapeAttr(value) {
+    return String(value).replace(/["\\]/g, '\\$&');
+  }
+
+  /* ══════════════════════════ 11. 事件绑定 ══════════════════════════ */
+
+  function bindTopologyEvents() {
+    const topo = $('#view-topology');
+
+    topo.addEventListener('dragstart', onDragStart);
+    topo.addEventListener('dragend', onDragEnd);
+    topo.addEventListener('dragover', onDragOver);
+    topo.addEventListener('drop', onDrop);
+    topo.addEventListener('dragleave', event => {
+      // 只有离开列容器时才清除高亮，避免子元素间移动导致闪烁。
+      if (!topo.contains(event.relatedTarget)) clearDropHighlight();
+    });
+
+    topo.addEventListener('click', async event => {
+      const target = event.target.closest('[data-action]');
+      if (!target) return;
+      const action = target.getAttribute('data-action');
+
+      if (action === 'toggle-channel') {
+        const id = Number(target.getAttribute('data-channel-id'));
+        if (state.poolExpanded.has(id)) state.poolExpanded.delete(id);
+        else state.poolExpanded.add(id);
+        renderPool();
+        return;
+      }
+
+      if (action === 'toggle-group') {
+        const id = Number(target.getAttribute('data-group-id'));
+        if (state.groupExpanded.has(id)) {
+          state.groupExpanded.delete(id);
+          renderGroups();
+        } else {
+          state.groupExpanded.add(id);
+          renderGroups();
+          ensureGroupDetail(id).then(() => renderGroups());
+        }
+        return;
+      }
+
+      if (action === 'toggle-model') {
+        const id = Number(target.getAttribute('data-model-id'));
+        if (state.modelExpanded.has(id)) {
+          state.modelExpanded.delete(id);
+          renderModels();
+        } else {
+          state.modelExpanded.add(id);
+          renderModels();
+          ensureModelDetail(id).then(() => renderModels());
+        }
+        return;
+      }
+
+      if (action === 'cancel-new-group') {
+        state.newGroupOpen = false;
+        renderGroups();
+        return;
+      }
+
+      if (action === 'create-group') {
+        await createGroup();
+        return;
+      }
+
+      if (action === 'remove-member') {
+        const memberId = Number(target.getAttribute('data-member-id'));
+        const groupId = Number(target.getAttribute('data-group-id'));
+        const name = target.getAttribute('data-member-name') || '';
+        if (!confirm('确认把「' + name + '」移出该小组？')) return;
+        try {
+          assertSuccess(await api.removeGroupMember(memberId), '移出失败');
+          toast('已移出小组', 'ok');
+          await Promise.all([ensureGroupDetail(groupId, true), loadGroups()]);
+          renderPool();
+        } catch (e) {
+          toast('移出失败：' + e.message, 'err');
+        }
+        return;
+      }
+
+      if (action === 'toggle-member') {
+        const memberId = Number(target.getAttribute('data-member-id'));
+        const nextEnabled = Number(target.getAttribute('data-member-enabled'));
+        try {
+          assertSuccess(await api.updateGroupMember(memberId, { enabled: nextEnabled }), '更新失败');
+          await refreshOpenGroups();
+        } catch (e) {
+          toast('更新失败：' + e.message, 'err');
+        }
+        return;
+      }
+
+      if (action === 'remove-rel') {
+        const ref = target.getAttribute('data-ref') || '';
+        const parts = ref.split(':');
+        const kind = parts[0];
+        const relId = Number(parts[1]);
+        const modelId = Number(target.getAttribute('data-model-id'));
+        const name = target.getAttribute('data-rel-name') || '';
+        if (!confirm('确认移除候选「' + name + '」？')) return;
+        try {
+          const res = kind === 'g' ? await api.removeGroupRel(relId) : await api.removeChannelRel(relId);
+          assertSuccess(res, '移除失败');
+          toast('已移除候选', 'ok');
+          await ensureModelDetail(modelId, true);
+        } catch (e) {
+          toast('移除失败：' + e.message, 'err');
+        }
+        return;
+      }
+
+      if (action === 'group-delete') {
+        const id = Number(target.getAttribute('data-group-id'));
+        const name = target.getAttribute('data-group-name') || '';
+        if (!confirm('确认删除小组「' + name + '」？被入口模型引用时后端会拒绝删除。')) return;
+        try {
+          assertSuccess(await api.deleteGroup(id), '删除失败');
+          toast('小组已删除', 'ok');
+          state.groupDetail.delete(id);
+          state.groupExpanded.delete(id);
+          await loadGroups();
+          renderPool();
+        } catch (e) {
+          toast('删除失败：' + e.message, 'err');
+        }
+        return;
+      }
+    });
+
+    // 下拉/复选/权重等改动统一走 change 事件
+    topo.addEventListener('change', async event => {
+      const target = event.target.closest('[data-action]');
+      if (!target) return;
+      const action = target.getAttribute('data-action');
+
+      if (action === 'group-strategy') {
+        const id = Number(target.getAttribute('data-group-id'));
+        try {
+          assertSuccess(await api.updateGroup(id, { strategy: target.value }), '更新失败');
+          toast('路由方式已更新', 'ok');
+          await loadGroups();
+        } catch (e) {
+          toast('更新失败：' + e.message, 'err');
+        }
+        return;
+      }
+
+      if (action === 'group-sticky') {
+        const id = Number(target.getAttribute('data-group-id'));
+        try {
+          assertSuccess(await api.updateGroup(id, { sticky: target.checked ? 1 : 0 }), '更新失败');
+          await loadGroups();
+          await refreshOpenGroups();
+        } catch (e) {
+          toast('更新失败：' + e.message, 'err');
+        }
+        return;
+      }
+
+      if (action === 'member-weight') {
+        const memberId = Number(target.getAttribute('data-member-id'));
+        const weight = Math.max(1, Math.min(1000, Number(target.value) || 1));
+        target.value = weight;
+        try {
+          assertSuccess(await api.updateGroupMember(memberId, { weight: weight }), '更新失败');
+          toast('权重已更新为 ' + weight, 'ok');
+          await refreshOpenGroups();
+        } catch (e) {
+          toast('更新失败：' + e.message, 'err');
+        }
+        return;
+      }
+    });
+
+    $('#pool-search').addEventListener('input', debounce(event => {
+      state.filters.pool = event.target.value;
+      renderPool();
+    }, 200));
+
+    $('#model-search').addEventListener('input', debounce(event => {
+      state.filters.model = event.target.value;
+      renderModels();
+    }, 200));
+
+    $('#group-strategy-filter').addEventListener('change', event => {
+      state.filters.strategy = event.target.value;
+      renderGroups();
+    });
+
+    $('#btn-new-group').addEventListener('click', () => {
+      state.newGroupOpen = !state.newGroupOpen;
+      renderGroups();
+      const input = $('#new-group-name');
+      if (input) input.focus();
+    });
+
+    $('#groups-body').addEventListener('keydown', event => {
+      if (event.key === 'Enter' && event.target.id === 'new-group-name') {
+        event.preventDefault();
+        createGroup();
+      }
+    });
+  }
+
+  /** 已展开的小组统一刷新详情（策略/权重变更后保持一致视图）。 */
+  async function refreshOpenGroups() {
+    const ids = Array.from(state.groupExpanded);
+    await Promise.all(ids.map(id => ensureGroupDetail(id, true)));
+    renderGroups();
+  }
+
+  async function createGroup() {
+    const nameInput = $('#new-group-name');
+    const strategyInput = $('#new-group-strategy');
+    const stickyInput = $('#new-group-sticky');
+    if (!nameInput) return;
+
+    const name = nameInput.value.trim();
+    if (!name) {
+      toast('请填写小组名称', 'err');
+      nameInput.focus();
+      return;
+    }
+    try {
+      assertSuccess(await api.createGroup({
+        name: name,
+        strategy: strategyInput ? strategyInput.value : 'random',
+        sticky: stickyInput && stickyInput.checked ? 1 : 0
+      }), '创建失败');
+      toast('小组已创建：' + name, 'ok');
+      state.newGroupOpen = false;
+      await loadGroups();
+    } catch (e) {
+      toast('创建失败：' + e.message, 'err');
+    }
+  }
+
+  function bindLogEvents() {
+    const view = $('#view-logs');
+
+    view.addEventListener('click', async event => {
+      const target = event.target.closest('[data-action]');
+      if (!target) return;
+      const action = target.getAttribute('data-action');
+
+      if (action === 'toggle-trace') {
+        const card = target.closest('.trace-card');
+        const traceId = card ? card.getAttribute('data-trace-id') : '';
+        if (!traceId) return;
+        if (state.logs.open.has(traceId)) state.logs.open.delete(traceId);
+        else state.logs.open.add(traceId);
+        renderLogs();
+        return;
+      }
+
+      if (action === 'copy-trace') {
+        const traceId = target.getAttribute('data-trace-id') || '';
+        await copyText(traceId);
+        return;
+      }
+
+      if (action === 'filter-by-trace') {
+        const traceId = target.getAttribute('data-trace-id') || '';
+        state.logs.traceFilter = traceId;
+        $('#log-trace-search').value = traceId;
+        renderLogs();
+        return;
+      }
+
+      if (action === 'toggle-request-data') {
+        const traceId = target.getAttribute('data-trace-id') || '';
+        await toggleRequestData(traceId);
+        return;
+      }
+    });
+
+    $('#btn-log-query').addEventListener('click', () => {
+      applyLogFilters();
+      loadLogs(true);
+    });
+
+    $('#btn-log-reset').addEventListener('click', () => {
+      $('#log-model').value = '';
+      $('#log-start').value = '';
+      $('#log-end').value = '';
+      $('#log-trace-search').value = '';
+      state.logs.traceFilter = '';
+      state.logs.filters = { modelName: '', startTime: '', endTime: '' };
+      loadLogs(true);
+    });
+
+    $('#log-trace-search').addEventListener('input', debounce(event => {
+      state.logs.traceFilter = event.target.value;
+      renderLogs();
+    }, 200));
+
+    $('#log-live').addEventListener('change', event => toggleLive(event.target.checked));
+
+    $('#load-more').addEventListener('click', () => {
+      if (!state.logs.loading && state.logs.hasMore) loadLogs(false);
+    });
+
+    // 滚动到底自动续页，避免大列表频繁点按
+    window.addEventListener('scroll', debounce(() => {
+      if (state.view !== 'logs') return;
+      if (!state.logs.hasMore || state.logs.loading) return;
+      const remain = document.documentElement.scrollHeight - window.scrollY - window.innerHeight;
+      if (remain < 400) loadLogs(false);
+    }, 200));
+  }
+
+  function applyLogFilters() {
+    const toIso = value => (value ? new Date(value).toISOString() : '');
+    state.logs.filters = {
+      modelName: $('#log-model').value,
+      startTime: toIso($('#log-start').value),
+      endTime: toIso($('#log-end').value)
+    };
+  }
+
+  async function copyText(text) {
+    if (!text) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      toast('已复制：' + text, 'ok');
+    } catch (e) {
+      toast('复制失败，请手动选择文本', 'err');
+    }
+  }
+
+  /* ══════════════════════════ 12. 视图切换 / 登录 / 启动 ══════════════════════════ */
+
+  function switchView(name) {
+    state.view = name;
+    $all('.tab').forEach(tab => tab.classList.toggle('is-active', tab.getAttribute('data-view') === name));
+    $('#view-topology').classList.toggle('is-active', name === 'topology');
+    $('#view-logs').classList.toggle('is-active', name === 'logs');
+
+    if (name === 'logs') {
+      if (!state.logs.order.length) {
+        loadLogModelOptions();
+        loadLogs(true);
+      }
+    }
+  }
+
+  function openLogin(message) {
+    $('#login-mask').classList.add('is-open');
+    $('#login-error').textContent = message || '';
+    const user = $('#login-user');
+    if (user) user.focus();
+  }
+
+  function closeLogin() {
+    $('#login-mask').classList.remove('is-open');
+    $('#login-error').textContent = '';
+    $('#login-pass').value = '';
+  }
+
+  function bindAuthEvents() {
+    $('#login-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const username = $('#login-user').value.trim();
+      const password = $('#login-pass').value;
+      const submit = $('#login-submit');
+      if (!username || !password) {
+        $('#login-error').textContent = '请填写用户名和密码';
+        return;
+      }
+      submit.disabled = true;
+      submit.textContent = '登录中…';
+      try {
+        await api.login(username, password);
+        $('#whoami').textContent = username;
+        closeLogin();
+        await bootstrap();
+      } catch (e) {
+        $('#login-error').textContent = e.message;
+      } finally {
+        submit.disabled = false;
+        submit.textContent = '登录';
+      }
+    });
+
+    $('#btn-logout').addEventListener('click', async () => {
+      await api.logout();
+      $('#whoami').textContent = '';
+      if (state.logs.liveSource) toggleLive(false);
+      openLogin('已退出登录');
+    });
+
+    $('#btn-refresh').addEventListener('click', () => {
+      if (state.view === 'logs') loadLogs(true);
+      else loadAllTopology();
+    });
+
+    $('#btn-theme').addEventListener('click', () => {
+      const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('admin_theme', next); } catch (e) { /* 忽略 */ }
+    });
+
+    $all('.tab').forEach(tab => {
+      tab.addEventListener('click', () => switchView(tab.getAttribute('data-view')));
+    });
+  }
+
+  function initTheme() {
+    let theme = 'light';
+    try {
+      theme = localStorage.getItem('admin_theme') ||
+        (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    } catch (e) { /* 忽略 */ }
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+
+  async function loadAllTopology() {
+    await Promise.all([loadPool(), loadGroups(), loadModels()]);
+    // 默认展开第一个小组，让「拖拽配置」一进来就可操作。
+    if (!state.groupExpanded.size && state.groups.length) {
+      const first = state.groups[0];
+      state.groupExpanded.add(first.id);
+      await ensureGroupDetail(first.id);
+      renderGroups();
+    }
+  }
+
+  /** 鉴权探活：/auth/check 免拦截，可判断是否已登录。 */
+  async function checkAuth() {
+    try {
+      const data = await api.request('GET', '/auth/check');
+      return !!(data && data.authenticated);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  async function bootstrap() {
+    try {
+      await loadAllTopology();
+    } catch (e) {
+      toast('初始化失败：' + e.message, 'err');
+    }
+  }
+
+  async function init() {
+    initTheme();
+    bindTopologyEvents();
+    bindLogEvents();
+    bindAuthEvents();
+
+    api.onUnauthorized = () => {
+      if (state.logs.liveSource) toggleLive(false);
+      openLogin('登录已过期，请重新登录');
+    };
+
+    const authenticated = await checkAuth();
+    if (!authenticated) {
+      api.setToken('');
+      openLogin('请登录后使用');
+      return;
+    }
+    $('#whoami').textContent = '已登录';
+    await bootstrap();
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+})();
+</script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092" integrity="sha512-UKNk8GbxkABxKcXYuLkO16EleLGUkcvJWtpSNmExE0Too3ZaFAxTscNWEc1OdAv5/BikHawapSCaiD2XCmp+Bw==" data-cf-beacon='{"version":"2024.11.0","token":"95d2228501f94695b7b9929a63f8eb8a","r":1,"spa":2}' crossorigin="anonymous"></script>
+</body>
+</html>

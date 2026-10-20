@@ -11,8 +11,12 @@ services:
     environment:
       # 数据库路径（兼容旧版 SPRING_DATASOURCE_URL，新版优先使用 MAG_DB_PATH）
       MAG_DB_PATH: /app/data/gateway.db
+      # Vue 构建产物由后端直接托管；镜像内已设置同样的默认值
+      MAG_STATIC_DIR: /app/static
       # 内存上限（Go：GOMEMLIMIT 控制 GC 触发时机，数值略低于容器内存限制）
       GOMEMLIMIT: 480MiB
+    ports:
+      - "${FRONTEND_PORT:-3990}:1399"
     volumes:
       - ./data:/app/data
     healthcheck:
@@ -21,15 +25,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-
-  my-ai-frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-    image: my-ai-api/frontend:local
-    container_name: my-ai-frontend
-    restart: unless-stopped
-    depends_on:
-      - my-ai-gateway
-    ports:
-      - "${FRONTEND_PORT:-3990}:80"
