@@ -1,18 +1,20 @@
 <template>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title">{{ t('promptInjection.title').replace('{name}', modelName || '') }}</div>
-      <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
-    </div>
-
-    <div class="action-bar">
-      <div class="left">
-        <button class="btn btn-primary btn-sm" @click="openCreateForm">
+  <div class="pi-page">
+    <div class="page-header cfg-page-header">
+      <div class="page-header-main">
+        <div class="title-row">
+          <router-link to="/admin/model/list" class="back-link" :title="t('common.back')">
+            <SvgIcon name="arrow-left" :size="16" />
+          </router-link>
+          <h2>{{ t('promptInjection.title').replace('{name}', modelName || '') }}</h2>
+          <span class="badge badge-muted">{{ t('promptInjection.ruleCount').replace('{count}', String(rules.length)) }}</span>
+        </div>
+        <p>{{ t('promptInjection.subtitle') }}</p>
+      </div>
+      <div class="header-actions">
+        <button class="btn btn-primary" @click="openCreateForm">
           <SvgIcon name="plus" :size="14" /> {{ t('promptInjection.addRule') }}
         </button>
-      </div>
-      <div class="right">
-        <span class="rule-count">{{ t('promptInjection.ruleCount').replace('{count}', String(rules.length)) }}</span>
       </div>
     </div>
 
@@ -23,6 +25,7 @@
 
     <template v-else>
     <!-- Injection Rules Table -->
+    <div class="card detail-card">
     <div class="table-container">
       <table>
         <thead>
@@ -75,12 +78,19 @@
             </td>
           </tr>
           <tr v-if="!rules.length">
-            <td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;">
-              {{ t('promptInjection.noRules') }}
+            <td colspan="7">
+              <div class="empty-state">
+                <SvgIcon name="bot" :size="28" />
+                <p>{{ t('promptInjection.noRules') }}</p>
+                <button class="btn btn-primary btn-sm" @click="openCreateForm">
+                  <SvgIcon name="plus" :size="14" /> {{ t('promptInjection.addRule') }}
+                </button>
+              </div>
             </td>
           </tr>
         </tbody>
       </table>
+    </div>
     </div>
 
     <!-- Mobile card list -->
@@ -398,6 +408,37 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.cfg-page-header {
+  align-items: flex-start;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  transition: all var(--dur-1);
+  flex-shrink: 0;
+}
+
+.back-link:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
 /* Page loading state */
 .page-loading {
   display: flex;
@@ -461,11 +502,6 @@ onMounted(async () => {
   border: 1px solid var(--border-color);
   border-radius: 6px;
   color: var(--text-secondary);
-}
-
-.rule-count {
-  font-size: 12px;
-  color: var(--text-muted);
 }
 
 /* Content preview */

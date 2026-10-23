@@ -411,7 +411,7 @@ async function handleSetup() {
   color: var(--text-muted);
   cursor: pointer;
   border-radius: var(--radius-sm);
-  transition: color 0.15s ease, background 0.15s ease;
+  transition: color var(--dur-1), background var(--dur-1);
 }
 
 .toggle-pwd:hover {
@@ -441,7 +441,7 @@ async function handleSetup() {
 
   .form-panel {
     align-items: center;
-    padding: 40px 20px 30vh;
+    padding: 40px 20px 12vh;
   }
 }
 

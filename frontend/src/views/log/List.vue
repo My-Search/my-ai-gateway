@@ -1,4 +1,13 @@
 <template>
+  <div class="log-page">
+  <PageHeader :title="t('nav.logs')" :subtitle="t('log.page.subtitle')">
+    <template #actions>
+      <button class="btn btn-secondary" @click="loadLogs" :disabled="loading" :title="t('common.refresh')">
+        <SvgIcon name="refresh" :size="14" /> {{ t('common.refresh') }}
+      </button>
+    </template>
+  </PageHeader>
+
   <!-- 使用历史（堆叠柱状图） -->
   <div class="card usage-history-card">
     <div class="card-header">
@@ -130,19 +139,14 @@
     </div>
   </div>
 
-  <div class="card">
+  <div class="card log-card">
     <div class="card-header">
       <div class="card-title">
         {{ t('log.list.title') }}
         <span v-if="sseReconnecting" class="badge badge-sse-connecting">{{ t('log.list.connecting') }}</span>
         <span v-else-if="sseConnected" class="badge badge-sse">{{ t('log.list.realtime') }}</span>
-        <span class="log-filter-summary" :title="t('log.list.filterSummaryTitle')">{{ logFilterSummary }}</span>
       </div>
-      <div style="display:flex;gap:8px;">
-        <button class="btn btn-sm btn-ghost" @click="loadLogs" :disabled="loading" :title="t('common.refresh')">
-          <SvgIcon name="refresh" :size="14" />
-        </button>
-      </div>
+      <span class="log-filter-summary" :title="t('log.list.filterSummaryTitle')">{{ logFilterSummary }}</span>
     </div>
     <div v-if="loading" style="text-align:center;padding:40px;color:var(--text-muted);">{{ t('common.loading') }}</div>
 
@@ -213,6 +217,7 @@
       {{ t('log.list.loadedAll').replace('{total}', total) }}
     </div>
   </div>
+  </div>
 
   <Dialog
     v-model="visible"
@@ -270,6 +275,7 @@ import { systemApi } from '@/api/system'
 import Dialog from '@/components/common/Dialog.vue'
 import JsonTreeViewer from '@/components/common/JsonTreeViewer.vue'
 import TabSwitch from '@/components/common/TabSwitch.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
@@ -1063,13 +1069,27 @@ function getCurrentFilters(): import('@/api/log').LogFilters {
   return filters
 }
 
+/**
+ * 列表请求序号 + 取消句柄：
+ * 翻月/换筛选会立刻重新拉第一页，如果上一页请求还在路上（大库上可能几秒），
+ * 它的响应可能后到并覆盖新筛选的数据。这里用序号丢弃过期响应，
+ * 并用 AbortController 直接取消旧请求，避免服务端白白跑完一次大查询。
+ */
+let logsRequestSeq = 0
+let logsAbort: AbortController | null = null
+
 async function loadLogs() {
+  const seq = ++logsRequestSeq
+  logsAbort?.abort()
+  const controller = new AbortController()
+  logsAbort = controller
   loading.value = true
   offset.value = 0
   hasMore.value = true
   try {
     const filters = getCurrentFilters()
-    const res = await logApi.list(0, limit, filters)
+    const res = await logApi.list(0, limit, filters, controller.signal)
+    if (seq !== logsRequestSeq) return
     traces.value = res.data.data
     total.value = res.data.total
     hasMore.value = res.data.hasMore
@@ -1082,18 +1102,24 @@ async function loadLogs() {
       hydrateTrace(t)
     }
   } catch (e: any) {
+    // 主动取消不是错误，也不该弹窗
+    if (seq !== logsRequestSeq || e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return
     open({ title: t('error.loadFailed'), message: e.message })
   } finally {
-    loading.value = false
+    if (seq === logsRequestSeq) loading.value = false
   }
 }
 
 async function loadMoreLogs() {
   if (loadingMore.value || !hasMore.value) return
+  // 记录发起时的筛选序号：翻月/换筛选期间旧分页请求的结果必须丢弃，
+  // 否则会把上一筛选的下一页数据追加到新列表里。
+  const seq = logsRequestSeq
   loadingMore.value = true
   try {
     const filters = getCurrentFilters()
     const res = await logApi.list(offset.value, limit, filters)
+    if (seq !== logsRequestSeq) return
     const newTraces = res.data.data
     // 避免重复添加（SSE 可能已提前插入相同 trace）
     const existingIds = new Set(traces.value.map(t => t.traceId))
@@ -1189,6 +1215,31 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.log-page {
+  min-width: 0;
+}
+
+/* 筛选摘要：从卡片标题行挪到卡片头部右侧，单独一行不再挤标题 */
+.log-filter-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 52%;
+  text-align: right;
+}
+
+.log-card {
+  padding: 0;
+}
+
+.log-card > .card-header {
+  padding: 15px 18px 13px;
+  margin-bottom: 0;
+}
+
 .log-trace {
   cursor: pointer; border-bottom: 1px solid var(--border-color);
   transition: background 0.15s;
@@ -1396,22 +1447,6 @@ onUnmounted(() => {
 
 /* ========== 移动端适配 ========== */
 /* 旧的 .filter-bar / .filter-item / .form-input-sm 等样式已删除：日志列表改用图表筛选 */
-.log-filter-summary {
-  margin-left: 8px;
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-muted);
-  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
-  padding: 2px 8px;
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 360px;
-  display: inline-block;
-  vertical-align: middle;
-}
 .btn-ghost {
   background: transparent;
   border: 1px solid transparent;
@@ -1424,11 +1459,6 @@ onUnmounted(() => {
 .btn-ghost:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
-}
-
-
-.log-list-card .log-filter-summary {
-  flex-shrink: 0;
 }
 
 @media (max-width: 768px) {
@@ -1451,7 +1481,11 @@ onUnmounted(() => {
   }
   .log-filter-summary {
     max-width: 100%;
-    margin-top: 4px;
+    white-space: normal;
+    text-align: left;
+  }
+  .log-card > .card-header {
+    flex-wrap: wrap;
   }
 }
 

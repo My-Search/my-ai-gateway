@@ -1,262 +1,168 @@
 <template>
-  <div>
-    <div class="card">
-      <div class="card-header">
-        <div class="card-title"><SvgIcon name="settings" :size="18" /> {{ t('systemConfig.title') }}</div>
+  <div class="page-header cfg-page-header">
+    <div class="page-header-main">
+      <div class="title-row">
+        <h2>{{ t('systemConfig.title') }}</h2>
+        <span class="badge" :class="hasChanges ? 'badge-warning' : 'badge-success'">
+          {{ hasChanges ? t('cfg.unsaved') : t('cfg.saved') }}
+        </span>
       </div>
+      <p>{{ t('systemConfig.logManagementDesc') }}</p>
+    </div>
+  </div>
 
-      <!-- Error alert -->
-      <div v-if="error" class="alert alert-error">
-        <SvgIcon name="alert" :size="16" /> {{ error }}
-      </div>
+  <!-- Error alert -->
+  <div v-if="error" class="alert alert-error">
+    <SvgIcon name="alert" :size="16" /> {{ error }}
+  </div>
 
-      <!-- Loading state -->
-      <div v-if="loading" class="page-loading">
-        <LoadingSpinner :size="18" :text="t('common.loading')" />
-      </div>
+  <!-- Loading state -->
+  <div v-if="loading" class="page-loading">
+    <LoadingSpinner :size="18" :text="t('common.loading')" />
+  </div>
 
-      <template v-else>
-      <!-- Log Management -->
-      <div class="section">
-        <div class="section-header">
-          <SvgIcon name="log" :size="18" />
-          <span>{{ t('systemConfig.logManagement') }}</span>
+  <ConfigShell v-else :sections="sections" :railTitle="t('cfg.nav')">
+    <!-- ══ 日志管理 ══ -->
+    <ConfigSection id="sc-logs" :title="t('systemConfig.logManagement')"
+                   :desc="t('systemConfig.logManagementDesc')" icon="log">
+      <ConfigField :label="t('systemConfig.cleanupEnabled')" :hint="t('systemConfig.cleanupEnabledHint')">
+        <div class="inline-control">
+          <ToggleSwitch :model-value="form.log_cleanup_enabled === '1'" :show-label="false" @update:model-value="toggleCleanup" />
+          <span class="inline-hint">
+            {{ form.log_cleanup_enabled === '1' ? t('common.enabled') : t('common.disabled') }}
+          </span>
         </div>
-        <div class="section-desc">{{ t('systemConfig.logManagementDesc') }}</div>
+      </ConfigField>
 
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.cleanupEnabled') }}</div>
-            <div class="config-hint">{{ t('systemConfig.cleanupEnabledHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <button class="toggle-btn" :class="{ active: form.log_cleanup_enabled === '1' }"
-                    @click="toggleCleanup">
-              <span class="toggle-track">
-                <span class="toggle-thumb"></span>
-              </span>
-              <span class="toggle-label">{{ form.log_cleanup_enabled === '1' ? t('common.enabled') : t('common.disabled') }}</span>
-            </button>
-          </div>
+      <ConfigField :label="t('systemConfig.retentionDays')" :hint="t('systemConfig.retentionDaysHint')">
+        <div class="unit-input">
+          <input type="number" class="form-control" v-model.number="form.log_retention_days"
+                 :min="1" :max="365" :disabled="form.log_cleanup_enabled !== '1'" />
+          <span class="unit">{{ t('cfg.unitDays') }}</span>
         </div>
+      </ConfigField>
+    </ConfigSection>
 
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.retentionDays') }}</div>
-            <div class="config-hint">{{ t('systemConfig.retentionDaysHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <input type="number" class="form-control" style="width:120px;"
-                   v-model.number="form.log_retention_days"
-                   :min="1" :max="365"
-                   :disabled="form.log_cleanup_enabled !== '1'" />
-          </div>
-        </div>
-
-      </div>
-      <!-- End Log Management -->
-
-      <!-- Request Data Management -->
-      <div class="section">
-        <div class="section-header">
-          <SvgIcon name="log" :size="18" />
-          <span>{{ t('systemConfig.requestDataManagement') }}</span>
-        </div>
-        <div class="section-desc">{{ t('systemConfig.requestDataManagementDesc') }}</div>
-
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.requestBodyTtl') }}</div>
-            <div class="config-hint">{{ t('systemConfig.requestBodyTtlHint') }}</div>
-            <div class="config-hint">{{ t('systemConfig.retryFailTtlHint') }}</div>
-          </div>
-          <div class="config-row-control ttl-group">
+    <!-- ══ 原始请求数据 ══ -->
+    <ConfigSection id="sc-request" :title="t('systemConfig.requestDataManagement')"
+                   :desc="t('systemConfig.requestDataManagementDesc')" icon="detail">
+      <ConfigField :label="t('systemConfig.requestBodyTtl')" :hint="t('systemConfig.retryFailTtlHint')">
+        <div class="ttl-grid">
+          <label class="ttl-item">
             <span class="ttl-label">{{ t('systemConfig.ttlNormalLabel') }}</span>
-            <input type="number" class="form-control" style="width:90px;"
-                   v-model.number="form.request_body_ttl_hours"
+            <input type="number" class="form-control ttl-input" v-model.number="form.request_body_ttl_hours"
                    :min="0" :max="8760" />
+          </label>
+          <label class="ttl-item">
             <span class="ttl-label">{{ t('systemConfig.ttlRetryFailLabel') }}</span>
-            <input type="number" class="form-control" style="width:90px;"
-                   v-model.number="form.retry_fail_ttl_hours"
-                   :placeholder="t('systemConfig.retryFailTtlPlaceholder')"
-                   :min="0" :max="8760" />
-          </div>
+            <input type="number" class="form-control ttl-input" v-model.number="form.retry_fail_ttl_hours"
+                   :placeholder="t('systemConfig.retryFailTtlPlaceholder')" :min="0" :max="8760" />
+          </label>
+          <span class="unit">{{ t('cfg.unitHours') }}</span>
         </div>
+        <p class="cfg-field-hint">{{ t('systemConfig.requestBodyTtlHint') }}</p>
+      </ConfigField>
 
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.requestDataSaveLevel') }}</div>
-            <div class="config-hint">{{ t('systemConfig.requestDataSaveLevelHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <select class="form-control" style="width:140px;" v-model="form.request_data_save_level">
-              <option value="none">{{ t('systemConfig.saveLevelNone') }}</option>
-              <option value="info">{{ t('systemConfig.saveLevelInfo') }}</option>
-              <option value="warn">{{ t('systemConfig.saveLevelWarn') }}</option>
-              <option value="error">{{ t('systemConfig.saveLevelError') }}</option>
-            </select>
-          </div>
+      <ConfigField :label="t('systemConfig.requestDataSaveLevel')" :hint="t('systemConfig.requestDataSaveLevelHint')">
+        <select class="form-control" style="max-width:180px;" v-model="form.request_data_save_level">
+          <option value="none">{{ t('systemConfig.saveLevelNone') }}</option>
+          <option value="info">{{ t('systemConfig.saveLevelInfo') }}</option>
+          <option value="warn">{{ t('systemConfig.saveLevelWarn') }}</option>
+          <option value="error">{{ t('systemConfig.saveLevelError') }}</option>
+        </select>
+      </ConfigField>
+    </ConfigSection>
+
+    <!-- ══ 超时配置 ══ -->
+    <ConfigSection id="sc-timeout" :title="t('systemConfig.timeoutManagement')"
+                   :desc="t('systemConfig.timeoutManagementDesc')" icon="clock">
+      <ConfigField :label="t('systemConfig.timeoutMin')" :hint="t('systemConfig.timeoutMinHint')">
+        <div class="unit-input">
+          <input type="number" class="form-control" v-model.number="form.timeout_min_seconds" :min="1" :max="600" />
+          <span class="unit">{{ t('cfg.unitSeconds') }}</span>
         </div>
-      </div>
+      </ConfigField>
 
-      <!-- Timeout Configuration -->
-      <div class="section">
-        <div class="section-header">
-          <SvgIcon name="settings" :size="18" />
-          <span>{{ t('systemConfig.timeoutManagement') }}</span>
+      <ConfigField :label="t('systemConfig.timeoutMax')" :hint="t('systemConfig.timeoutMaxHint')">
+        <div class="unit-input">
+          <input type="number" class="form-control" v-model.number="form.timeout_max_seconds" :min="1" :max="600" />
+          <span class="unit">{{ t('cfg.unitSeconds') }}</span>
         </div>
-        <div class="section-desc">{{ t('systemConfig.timeoutManagementDesc') }}</div>
+      </ConfigField>
+    </ConfigSection>
 
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.timeoutMin') }}</div>
-            <div class="config-hint">{{ t('systemConfig.timeoutMinHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <input type="number" class="form-control" style="width:120px;"
-                   v-model.number="form.timeout_min_seconds"
-                   :min="1" :max="600" />
-          </div>
+    <!-- ══ 熔断恢复探测 ══ -->
+    <ConfigSection id="sc-probe" :title="t('systemConfig.probeManagement')"
+                   :desc="t('systemConfig.probeManagementDesc')" icon="monitor">
+      <ConfigField :label="t('systemConfig.probeInterval')" :hint="t('systemConfig.probeIntervalHint')">
+        <div class="unit-input">
+          <input type="number" class="form-control" v-model.number="form.circuit_breaker_probe_interval_minutes" :min="1" :max="1440" />
+          <span class="unit">{{ t('cfg.unitMinutes') }}</span>
         </div>
+      </ConfigField>
 
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.timeoutMax') }}</div>
-            <div class="config-hint">{{ t('systemConfig.timeoutMaxHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <input type="number" class="form-control" style="width:120px;"
-                   v-model.number="form.timeout_max_seconds"
-                   :min="1" :max="600" />
-          </div>
+      <ConfigField :label="t('systemConfig.probeThrottle')" :hint="t('systemConfig.probeThrottleHint')">
+        <div class="unit-input">
+          <input type="number" class="form-control" v-model.number="form.circuit_breaker_probe_throttle_seconds" :min="0" :max="30" :step="0.1" />
+          <span class="unit">{{ t('cfg.unitSeconds') }}</span>
         </div>
-      </div>
+      </ConfigField>
+    </ConfigSection>
 
-      <!-- Circuit Breaker Recovery Probe -->
-      <div class="section">
-        <div class="section-header">
-          <SvgIcon name="settings" :size="18" />
-          <span>{{ t('systemConfig.probeManagement') }}</span>
+    <!-- ══ 渠道模型自动刷新 ══ -->
+    <ConfigSection id="sc-refresh" :title="t('systemConfig.modelRefreshManagement')"
+                   :desc="t('systemConfig.modelRefreshManagementDesc')" icon="refresh">
+      <ConfigField :label="t('systemConfig.modelRefreshInterval')" :hint="t('systemConfig.modelRefreshIntervalHint')">
+        <div class="unit-input">
+          <input type="number" class="form-control" v-model.number="form.channel_model_refresh_interval_minutes" :min="1" :max="1440" />
+          <span class="unit">{{ t('cfg.unitMinutes') }}</span>
         </div>
-        <div class="section-desc">{{ t('systemConfig.probeManagementDesc') }}</div>
+      </ConfigField>
+    </ConfigSection>
 
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.probeInterval') }}</div>
-            <div class="config-hint">{{ t('systemConfig.probeIntervalHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <input type="number" class="form-control" style="width:120px;"
-                   v-model.number="form.circuit_breaker_probe_interval_minutes"
-                   :min="1" :max="1440" />
-          </div>
+    <!-- ══ models.dev 同步 ══ -->
+    <ConfigSection id="sc-models-dev" :title="t('systemConfig.modelsDevManagement')"
+                   :desc="t('systemConfig.modelsDevManagementDesc')" icon="download">
+      <ConfigField :label="t('systemConfig.modelsDevEnabled')" :hint="t('systemConfig.modelsDevEnabledHint')">
+        <div class="inline-control">
+          <ToggleSwitch :model-value="form.models_dev_enabled === '1'" :show-label="false" @update:model-value="toggleModelsDev" />
+          <span class="inline-hint">
+            {{ form.models_dev_enabled === '1' ? t('common.enabled') : t('common.disabled') }}
+          </span>
         </div>
+      </ConfigField>
 
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.probeThrottle') }}</div>
-            <div class="config-hint">{{ t('systemConfig.probeThrottleHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <input type="number" class="form-control" style="width:120px;"
-                   v-model.number="form.circuit_breaker_probe_throttle_seconds"
-                   :min="0" :max="30" :step="0.1" />
-          </div>
+      <ConfigField :label="t('systemConfig.modelsDevFile')" :hint="t('systemConfig.modelsDevFileHint')" wide>
+        <input type="text" class="form-control mono-input" v-model="form.models_dev_file"
+               :disabled="form.models_dev_enabled !== '1'" />
+      </ConfigField>
+
+      <ConfigField :label="t('systemConfig.modelsDevSourceUrl')" :hint="t('systemConfig.modelsDevSourceUrlHint')" wide>
+        <input type="text" class="form-control mono-input" v-model="form.models_dev_source_url"
+               :disabled="form.models_dev_enabled !== '1'" />
+      </ConfigField>
+
+      <ConfigField :label="t('systemConfig.modelsDevInterval')" :hint="t('systemConfig.modelsDevIntervalHint')">
+        <div class="unit-input">
+          <input type="number" class="form-control" v-model.number="form.models_dev_refresh_interval_minutes"
+                 :min="1" :max="1440" :disabled="form.models_dev_enabled !== '1'" />
+          <span class="unit">{{ t('cfg.unitMinutes') }}</span>
         </div>
-      </div>
+      </ConfigField>
+    </ConfigSection>
 
-      <!-- Channel Model Auto Refresh -->
-      <div class="section">
-        <div class="section-header">
-          <SvgIcon name="refresh" :size="18" />
-          <span>{{ t('systemConfig.modelRefreshManagement') }}</span>
-        </div>
-        <div class="section-desc">{{ t('systemConfig.modelRefreshManagementDesc') }}</div>
-
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.modelRefreshInterval') }}</div>
-            <div class="config-hint">{{ t('systemConfig.modelRefreshIntervalHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <input type="number" class="form-control" style="width:120px;"
-                   v-model.number="form.channel_model_refresh_interval_minutes"
-                   :min="1" :max="1440" />
-          </div>
-        </div>
-      </div>
-
-      <!-- models.dev Metadata Sync -->
-      <div class="section">
-        <div class="section-header">
-          <SvgIcon name="refresh" :size="18" />
-          <span>{{ t('systemConfig.modelsDevManagement') }}</span>
-        </div>
-        <div class="section-desc">{{ t('systemConfig.modelsDevManagementDesc') }}</div>
-
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.modelsDevEnabled') }}</div>
-            <div class="config-hint">{{ t('systemConfig.modelsDevEnabledHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <button class="toggle-btn" :class="{ active: form.models_dev_enabled === '1' }"
-                    @click="toggleModelsDev">
-              <span class="toggle-track">
-                <span class="toggle-thumb"></span>
-              </span>
-              <span class="toggle-label">{{ form.models_dev_enabled === '1' ? t('common.enabled') : t('common.disabled') }}</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.modelsDevFile') }}</div>
-            <div class="config-hint">{{ t('systemConfig.modelsDevFileHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <input type="text" class="form-control" style="width:280px;"
-                   v-model="form.models_dev_file"
-                   :disabled="form.models_dev_enabled !== '1'" />
-          </div>
-        </div>
-
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.modelsDevSourceUrl') }}</div>
-            <div class="config-hint">{{ t('systemConfig.modelsDevSourceUrlHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <input type="text" class="form-control" style="width:280px;"
-                   v-model="form.models_dev_source_url"
-                   :disabled="form.models_dev_enabled !== '1'" />
-          </div>
-        </div>
-
-        <div class="config-row">
-          <div class="config-row-label">
-            <div class="config-label">{{ t('systemConfig.modelsDevInterval') }}</div>
-            <div class="config-hint">{{ t('systemConfig.modelsDevIntervalHint') }}</div>
-          </div>
-          <div class="config-row-control">
-            <input type="number" class="form-control" style="width:120px;"
-                   v-model.number="form.models_dev_refresh_interval_minutes"
-                   :min="1" :max="1440"
-                   :disabled="form.models_dev_enabled !== '1'" />
-          </div>
-        </div>
-      </div>
-
-      <!-- Save -->
-      <div class="section-footer">
-        <button class="btn btn-primary" @click="handleSave" :disabled="saving">
+    <template #footer>
+      <span class="footer-hint">
+        <SvgIcon :name="hasChanges ? 'alert' : 'check'" :size="13" />
+        {{ hasChanges ? t('cfg.unsaved') : t('cfg.saved') }}
+      </span>
+      <div class="footer-actions">
+        <button class="btn btn-primary" @click="handleSave" :disabled="saving || !hasChanges">
           <SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('common.save') }}
         </button>
       </div>
-      </template>
-    </div>
-  </div>
+    </template>
+  </ConfigShell>
 
   <Dialog
     v-model="visible"
@@ -277,6 +183,10 @@ import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import ConfigShell from '@/components/common/ConfigShell.vue'
+import ConfigSection from '@/components/common/ConfigSection.vue'
+import ConfigField from '@/components/common/ConfigField.vue'
 
 const { t } = useI18n()
 const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
@@ -284,8 +194,18 @@ const { visible, title, message, type, confirmClass, onConfirm, open } = useDial
 // 初始为 true：首次渲染即显示加载态，避免表单默认值闪现
 const loading = ref(true)
 const saving = ref(false)
-const error = ref('')/** 用于检测表单是否变更的初始快照（JSON 字符串） */
+const error = ref('')
+/** 用于检测表单是否变更的初始快照（JSON 字符串） */
 const originalForm = ref('')
+
+const sections = computed(() => [
+  { id: 'sc-logs', label: t('systemConfig.logManagement'), icon: 'log' },
+  { id: 'sc-request', label: t('systemConfig.requestDataManagement'), icon: 'detail' },
+  { id: 'sc-timeout', label: t('systemConfig.timeoutManagement'), icon: 'clock' },
+  { id: 'sc-probe', label: t('systemConfig.probeManagement'), icon: 'monitor' },
+  { id: 'sc-refresh', label: t('systemConfig.modelRefreshManagement'), icon: 'refresh' },
+  { id: 'sc-models-dev', label: t('systemConfig.modelsDevManagement'), icon: 'download' },
+])
 
 const form = reactive({
   log_retention_days: 30,
@@ -362,12 +282,12 @@ async function loadConfig() {
   }
 }
 
-function toggleCleanup() {
-  form.log_cleanup_enabled = form.log_cleanup_enabled === '1' ? '0' : '1'
+function toggleCleanup(v: boolean) {
+  form.log_cleanup_enabled = v ? '1' : '0'
 }
 
-function toggleModelsDev() {
-  form.models_dev_enabled = form.models_dev_enabled === '1' ? '0' : '1'
+function toggleModelsDev(v: boolean) {
+  form.models_dev_enabled = v ? '1' : '0'
 }
 
 async function handleSave() {
@@ -471,7 +391,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* Page loading state */
 .page-loading {
   display: flex;
   align-items: center;
@@ -481,158 +400,89 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 
-.section {
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 20px;
-  margin-top: 16px;
+.cfg-page-header {
+  align-items: flex-start;
 }
 
-.section:first-of-type {
-  margin-top: 0;
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.section-header {
+.inline-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+}
+
+.inline-hint {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.unit-input {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 4px;
 }
 
-.section-desc {
-  font-size: 13px;
+.unit-input .form-control {
+  width: 118px;
+  max-width: 118px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.unit {
+  font-size: 12.5px;
   color: var(--text-muted);
-  margin-bottom: 20px;
+  white-space: nowrap;
 }
 
-.section-footer {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border-color);
-}
-
-.config-row {
+.ttl-grid {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border-color);
-  gap: 16px;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 
-.config-row:last-of-type {
-  border-bottom: none;
-}
-
-.config-row-label {
-  flex: 1;
-  min-width: 0;
-}
-
-.config-label {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.config-hint {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-
-.config-row-control {
-  flex-shrink: 0;
+.ttl-item {
   display: flex;
   align-items: center;
-}
-
-/* 合并行的双输入框组（普通 / 重试失败） */
-.ttl-group {
-  gap: 6px;
+  gap: 7px;
 }
 
 .ttl-label {
   font-size: 12px;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
-/* Toggle switch */
-.toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: 4px;
-  font-family: inherit;
+.ttl-input {
+  width: 92px;
+  max-width: 92px !important;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
-.toggle-track {
-  display: inline-block;
-  width: 40px;
-  height: 22px;
-  background: var(--bg-hover);
-  border-radius: 11px;
-  position: relative;
-  transition: background 0.2s;
+.mono-input {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
 }
 
-.toggle-btn.active .toggle-track {
-  background: var(--accent-green);
-}
-
-.toggle-thumb {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
-  background: #fff;
-  border-radius: 50%;
-  transition: transform 0.2s;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
-}
-
-.toggle-btn.active .toggle-thumb {
-  transform: translateX(18px);
-}
-
-.toggle-label {
-  font-size: 13px;
-  color: var(--text-muted);
-  min-width: 32px;
-}
-
-/* 移动端适配：行内横向布局改为纵向堆叠，避免溢出 */
-@media (max-width: 640px) {
-  .config-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
+@media (max-width: 768px) {
+  .ttl-grid {
+    gap: 10px;
   }
-
-  .config-row-control {
-    flex-shrink: 1;
-    width: 100%;
+  .ttl-item {
+    flex: 1 1 140px;
   }
-
-  .ttl-group {
-    flex-wrap: wrap;
-  }
-
-  .ttl-group .form-control {
-    width: auto !important;
-    flex: 1 1 0;
+  .ttl-input {
+    flex: 1;
     min-width: 0;
-  }
-
-  .ttl-group .ttl-label {
-    flex-shrink: 0;
   }
 }
 </style>

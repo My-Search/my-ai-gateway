@@ -1,46 +1,77 @@
 <template>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title">{{ t('cb.title').replace('{name}', model?.modelName || '') }}</div>
-      <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
+  <div class="page-header cfg-page-header">
+    <div class="page-header-main">
+      <div class="title-row">
+        <router-link to="/admin/model/list" class="back-link" :title="t('common.back')">
+          <SvgIcon name="arrow-left" :size="16" />
+        </router-link>
+        <h2>{{ t('cb.title').replace('{name}', model?.modelName || '') }}</h2>
+        <span class="badge" :class="config.enabled === 1 ? 'badge-success' : 'badge-muted'">
+          {{ config.enabled === 1 ? t('cb.on') : t('cb.off') }}
+        </span>
+      </div>
+      <p>{{ t('cb.subtitle') }}</p>
     </div>
-
-    <!-- Loading state -->
-    <div v-if="loading" class="page-loading">
-      <LoadingSpinner :size="18" :text="t('common.loading')" />
-    </div>
-
-    <form v-else @submit.prevent="handleSave" style="max-width:600px;">
-      <div class="form-group">
-        <label>{{ t('cb.enabled') }}</label>
-        <select v-model.number="config.enabled" class="form-control">
-          <option :value="1">{{ t('cb.on') }}</option>
-          <option :value="0">{{ t('cb.off') }}</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>{{ t('cb.scope') }}</label>
-        <select v-model="config.circuitBreakScope" class="form-control">
-          <option value="channel">{{ t('cb.scopeChannel') }}</option>
-          <option value="model">{{ t('cb.scopeModel') }}</option>
-        </select>
-      </div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>{{ t('cb.retryCount') }}</label>
-          <input v-model.number="config.retryCount" type="number" class="form-control" min="0" />
-        </div>
-        <div class="form-group">
-          <label>{{ t('cb.duration') }}</label>
-          <input v-model.number="config.circuitBreakDuration" type="number" class="form-control" min="1" />
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:24px;">
-        <button type="submit" class="btn btn-primary" :disabled="saving"><SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('cb.save') }}</button>
-        <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="x" :size="14" /> {{ t('cb.cancel') }}</router-link>
-      </div>
-    </form>
   </div>
+
+  <!-- Loading state -->
+  <div v-if="loading" class="page-loading">
+    <LoadingSpinner :size="18" :text="t('common.loading')" />
+  </div>
+
+  <form v-else @submit.prevent="handleSave">
+    <ConfigShell :sections="sections" :railTitle="t('cfg.nav')">
+      <!-- ══ 熔断开关 ══ -->
+      <ConfigSection id="cb-basic" :title="t('cb.sectionBasic')" :desc="t('cb.sectionBasicDesc')" icon="zap">
+        <ConfigField :label="t('cb.enabled')" :hint="t('cb.enabledHint')">
+          <div class="inline-control">
+            <ToggleSwitch v-model="enabledBool" :show-label="false" />
+            <span class="inline-hint">
+              {{ config.enabled === 1 ? t('cb.on') : t('cb.off') }}
+            </span>
+          </div>
+        </ConfigField>
+
+        <ConfigField :label="t('cb.scope')" :hint="t('cb.scopeHint')">
+          <select v-model="config.circuitBreakScope" class="form-control">
+            <option value="channel">{{ t('cb.scopeChannel') }}</option>
+            <option value="model">{{ t('cb.scopeModel') }}</option>
+          </select>
+        </ConfigField>
+      </ConfigSection>
+
+      <!-- ══ 触发策略 ══ -->
+      <ConfigSection id="cb-policy" :title="t('cb.sectionPolicy')" :desc="t('cb.sectionPolicyDesc')" icon="refresh">
+        <ConfigField :label="t('cb.retryCount')" :hint="t('cb.retryCountHint')">
+          <div class="unit-input">
+            <input v-model.number="config.retryCount" type="number" class="form-control" min="0" />
+            <span class="unit">{{ t('cfg.unitTimes') }}</span>
+          </div>
+        </ConfigField>
+
+        <ConfigField :label="t('cb.duration')" :hint="t('cb.durationHint')">
+          <div class="unit-input">
+            <input v-model.number="config.circuitBreakDuration" type="number" class="form-control" min="1" />
+            <span class="unit">{{ t('cfg.unitSeconds') }}</span>
+          </div>
+        </ConfigField>
+      </ConfigSection>
+
+      <template #footer>
+        <span class="footer-hint">
+          <SvgIcon name="info" :size="13" /> {{ t('cfg.stickyFooterHint') }}
+        </span>
+        <div class="footer-actions">
+          <router-link :to="'/admin/model/list'" class="btn btn-secondary">
+            <SvgIcon name="x" :size="14" /> {{ t('cb.cancel') }}
+          </router-link>
+          <button type="submit" class="btn btn-primary" :disabled="saving">
+            <SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('cb.save') }}
+          </button>
+        </div>
+      </template>
+    </ConfigShell>
+  </form>
 
   <!-- Common Dialog -->
   <Dialog
@@ -54,13 +85,18 @@
   </Dialog>
 </template>
 
-<script setup lang="ts">import { ref, onMounted } from 'vue'
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel, type CircuitBreakerConfig } from '@/api/model'
 import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import ConfigShell from '@/components/common/ConfigShell.vue'
+import ConfigSection from '@/components/common/ConfigSection.vue'
+import ConfigField from '@/components/common/ConfigField.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -73,6 +109,17 @@ const config = ref<CircuitBreakerConfig>({
   modelId: 0, enabled: 0, retryCount: 3,
   circuitBreakDuration: 60, circuitBreakScope: 'model'
 })
+
+/** 熔断开关：后端存 1/0，开关组件用布尔值 */
+const enabledBool = computed({
+  get: () => config.value.enabled === 1,
+  set: (v: boolean) => { config.value.enabled = v ? 1 : 0 }
+})
+
+const sections = computed(() => [
+  { id: 'cb-basic', label: t('cb.sectionBasic'), icon: 'zap' },
+  { id: 'cb-policy', label: t('cb.sectionPolicy'), icon: 'refresh' },
+])
 
 onMounted(async () => {
   const id = Number(route.params.id)
@@ -106,7 +153,68 @@ async function handleSave() {
 </script>
 
 <style scoped>
-/* Page loading state */
+.cfg-page-header {
+  align-items: flex-start;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  transition: all var(--dur-1);
+  flex-shrink: 0;
+}
+
+.back-link:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.inline-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+}
+
+.inline-hint {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.unit-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.unit-input .form-control {
+  width: 118px;
+  max-width: 118px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.unit {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .page-loading {
   display: flex;
   align-items: center;

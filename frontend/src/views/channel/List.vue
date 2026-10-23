@@ -1,22 +1,22 @@
 <template>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title"><SvgIcon name="channel" :size="18" /> {{ t('channel.list.title') }}</div>
-      <div style="display:flex;gap:6px;align-items:center;">
-        <button class="btn-mm-rule" @click="showModelConfigRule = true">
+  <div class="ch-list">
+    <PageHeader :title="t('channel.list.title')" :subtitle="t('channel.list.subtitle')">
+      <template #actions>
+        <button class="btn btn-secondary" @click="showModelConfigRule = true">
           <SvgIcon name="eye" :size="13" /> {{ t('modelConfigRule.title') }}
         </button>
         <router-link to="/admin/channel/form" class="btn btn-primary"><SvgIcon name="plus" :size="14" /> {{ t('channel.list.add') }}</router-link>
+      </template>
+    </PageHeader>
+
+    <div class="card ch-card">
+      <!-- Loading state -->
+      <div v-if="loading" class="loading-container">
+        <LoadingSpinner :size="32" />
       </div>
-    </div>
 
-    <!-- Loading state -->
-    <div v-if="loading" class="loading-container">
-      <LoadingSpinner size="32" />
-    </div>
-
-    <template v-else>
-    <div class="table-container">
+      <template v-else>
+      <div class="table-container">
       <table>
         <thead>
           <tr>
@@ -24,22 +24,24 @@
             <th>{{ t('channel.list.type') }}</th>
             <th>{{ t('channel.list.endpoint') }}</th>
             <th>{{ t('channel.list.status') }}</th>
-            <th>{{ t('channel.list.modelCount') }}</th>
+            <th class="th-center">{{ t('channel.list.modelCount') }}</th>
             <th>{{ t('channel.list.createdAt') }}</th>
-            <th>{{ t('channel.list.actions') }}</th>
+            <th class="th-actions">{{ t('channel.list.actions') }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="ch in channels" :key="ch.id">
             <td>
-              <strong>
-                <router-link :to="`/admin/channel/models/${ch.id}`" class="channel-name-link">{{ ch.name }}</router-link>
-              </strong>
+              <div class="ch-name-cell">
+                <span class="ch-avatar" :style="{ background: iconGradient(ch.name) }">{{ (ch.name || '?').charAt(0).toUpperCase() }}</span>
+                <div class="ch-name-text">
+                  <router-link :to="`/admin/channel/models/${ch.id}`" class="channel-name-link">{{ ch.name }}</router-link>
+                  <span class="ch-name-sub">{{ t('channel.list.idLabel', { id: String(ch.id ?? '') }) }}</span>
+                </div>
+              </div>
             </td>
             <td><span class="badge badge-info">{{ protocolLabel(ch.channelType) }}</span></td>
-            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;font-size:12px;color:var(--text-muted);">
-              {{ ch.baseUrl }}
-            </td>
+            <td class="ch-endpoint" :title="ch.baseUrl">{{ ch.baseUrl }}</td>
             <td>
               <ToggleSwitch
                 :model-value="ch.enabled === 1"
@@ -49,9 +51,9 @@
                 @update:model-value="() => toggleEnabled(ch)"
                 :disabled="toggleLoading === ch.id"
               />
-              <LoadingSpinner v-if="toggleLoading === ch.id" size="14" />
+              <LoadingSpinner v-if="toggleLoading === ch.id" :size="14" />
             </td>
-            <td>
+            <td class="td-center">
               <div class="model-count-cell">
                 <span class="model-count-num">{{ formatNumber(ch.modelCount ?? 0) }}</span>
                 <button
@@ -67,9 +69,9 @@
                 </button>
               </div>
             </td>
-            <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(ch.createdAt) }}</td>
-            <td>
-              <div style="display:flex;gap:6px;flex-wrap:nowrap;">
+            <td class="ch-date">{{ formatLocalDateTimeFull(ch.createdAt) }}</td>
+            <td class="td-actions">
+              <div class="row-actions">
                 <router-link :to="`/admin/channel/models/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="detail" :size="14" /> {{ t('channel.list.view') }}</router-link>
                 <button class="btn btn-sm btn-success" @click="quickTest(ch)"><SvgIcon name="zap" :size="14" /> {{ t('channel.list.quickTest') }}</button>
                 <router-link :to="`/admin/channel/form/${ch.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="edit" :size="14" /> {{ t('common.edit') }}</router-link>
@@ -78,8 +80,14 @@
             </td>
           </tr>
           <tr v-if="!channels.length">
-            <td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;">
-              {{ t('channel.list.empty') }}
+            <td colspan="7">
+              <div class="empty-state">
+                <SvgIcon name="channel" :size="28" />
+                <p>{{ t('channel.list.empty') }}</p>
+                <router-link to="/admin/channel/form" class="btn btn-primary btn-sm">
+                  <SvgIcon name="plus" :size="14" /> {{ t('channel.list.add') }}
+                </router-link>
+              </div>
             </td>
           </tr>
         </tbody>
@@ -150,6 +158,7 @@
       </div>
     </div>
     </template>
+    </div>
 
     <!-- Quick Test Modal -->
     <div v-if="showTestModal" class="modal-overlay" @click.self="closeTestModal">
@@ -234,7 +243,6 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onActivated } from 'vue'
-import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { channelApi, type Channel, type ChannelModel, type ChannelApiKey } from '@/api/channel'
@@ -245,8 +253,8 @@ import SearchableSelect from '@/components/common/SearchableSelect.vue'
 import ModelConfigRuleDialog from '@/components/channel/ModelConfigRuleDialog.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 
-const router = useRouter()
 const { t } = useI18n()
 const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 
@@ -274,7 +282,28 @@ const apiKeySelectOptions = computed(() =>
   }))
 )
 
-/* 对接协议友好名：未知协议回退原始值 */
+/* 渠道首字母色块：与模型列表同一套配色算法 */
+const iconPalette = [
+  'linear-gradient(135deg, #58a6ff, #1a5fb4)',
+  'linear-gradient(135deg, #98c379, #3b6e22)',
+  'linear-gradient(135deg, #e5c07b, #b8860b)',
+  'linear-gradient(135deg, #c678dd, #7c3a9e)',
+  'linear-gradient(135deg, #56b6c2, #1a7a8a)',
+  'linear-gradient(135deg, #e06c75, #b33b3b)',
+  'linear-gradient(135deg, #d4a0f0, #8b5cf6)',
+  'linear-gradient(135deg, #7ee787, #2d7d46)',
+]
+
+function iconGradient(name: string): string {
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = ((hash << 5) - hash) + name.charCodeAt(i)
+    hash |= 0
+  }
+  return iconPalette[Math.abs(hash) % iconPalette.length]
+}
+
+/* 对接协议友好名：未知协议回退原值 */
 function protocolLabel(type: string): string {
   switch (type) {
     case 'openai': return t('channel.protocolOpenai')
@@ -468,6 +497,113 @@ onActivated(() => {
 </script>
 
 <style scoped>
+/* ── Page shell ── */
+.ch-card {
+  padding: 0;
+  overflow: hidden;
+  margin-bottom: 0;
+}
+
+.ch-card:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.loading-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+}
+
+.ch-card .table-container {
+  border-radius: 0;
+}
+
+/* ── Table cells ── */
+.ch-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ch-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.16);
+}
+
+.ch-name-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.ch-name-text .channel-name-link {
+  font-weight: 600;
+  color: var(--text-primary);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ch-name-text .channel-name-link:hover {
+  color: var(--accent-blue);
+}
+
+.ch-name-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.ch-endpoint {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.ch-date {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.th-center,
+.td-center {
+  text-align: center;
+}
+
+.th-actions,
+.td-actions {
+  text-align: right;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  flex-wrap: nowrap;
+}
+
+/* ── Modal ── */
 .modal-overlay {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,0.6); z-index: 1000;

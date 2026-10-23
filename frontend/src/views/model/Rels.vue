@@ -1,16 +1,21 @@
 <template>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title">
-        {{ t('model.rels.title').replace('{name}', model?.modelName || '') }}
-        <span v-if="model" class="mode-badge" :class="`mode-${model.relMode || 'self_add'}`">
-          {{ (model.relMode || 'self_add') === 'inherit' ? t('model.rels.modeInherit') : t('model.rels.modeSelfAdd') }}
-        </span>
+  <div class="rels-page">
+    <div class="page-header cfg-page-header">
+      <div class="page-header-main">
+        <div class="title-row">
+          <router-link to="/admin/model/list" class="back-link" :title="t('common.back')">
+            <SvgIcon name="arrow-left" :size="16" />
+          </router-link>
+          <h2>{{ t('model.rels.title').replace('{name}', model?.modelName || '') }}</h2>
+          <span v-if="model" class="mode-badge" :class="`mode-${model.relMode || 'self_add'}`">
+            {{ (model.relMode || 'self_add') === 'inherit' ? t('model.rels.modeInherit') : t('model.rels.modeSelfAdd') }}
+          </span>
+        </div>
+        <p>{{ t('model.rels.subtitle') }}</p>
       </div>
-      <router-link :to="'/admin/model/list'" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
     </div>
 
-    <div class="action-bar">
+    <div class="action-bar filter-bar">
       <!-- 左侧：模式相关控件（自添加=添加/排序；继承=只读提示；源选择器独立显示） -->
       <div class="left">
         <!-- 自添加模式：添加 + 排序 -->
@@ -134,6 +139,7 @@
     </div>
 
     <template v-else>
+    <div class="card detail-card">
     <div class="table-container">
       <table>
         <thead>
@@ -352,10 +358,16 @@
             </template>
           </tr>
           <tr v-if="!combinedEntries.length">
-            <td :colspan="selectionMode ? 12 : 11" style="text-align:center;color:var(--text-muted);padding:40px;">{{ t('model.rels.noRels') }}</td>
+            <td :colspan="selectionMode ? 12 : 11">
+              <div class="empty-state">
+                <SvgIcon name="link" :size="28" />
+                <p>{{ t('model.rels.noRels') }}</p>
+              </div>
+            </td>
           </tr>
         </tbody>
       </table>
+    </div>
     </div>
     <!-- 思考强度预设选项：输入框仍可输入任意自定义值 -->
     <datalist :id="effortDatalistId">
@@ -1161,6 +1173,37 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.cfg-page-header {
+  align-items: flex-start;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  transition: all var(--dur-1);
+  flex-shrink: 0;
+}
+
+.back-link:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
 /* Page loading state */
 .page-loading {
   display: flex;
@@ -1218,7 +1261,6 @@ td.rel-channel-cell {
 
 /* Mode badge in title */
 .mode-badge {
-  margin-left: 10px;
   font-size: 11px;
   padding: 3px 8px;
   border-radius: 10px;

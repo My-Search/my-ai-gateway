@@ -232,8 +232,9 @@ async function copyText(text: string, label: string = '') {
 }
 
 .share-header h1 {
-  font-size: 24px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 680;
+  letter-spacing: -0.022em;
   margin-bottom: 8px;
 }
 
@@ -245,8 +246,9 @@ async function copyText(text: string, label: string = '') {
 .card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   margin-bottom: 20px;
+  box-shadow: var(--shadow-sm);
 }
 
 .card-header {
@@ -261,8 +263,14 @@ async function copyText(text: string, label: string = '') {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 640;
+  color: var(--text-primary);
+  letter-spacing: -0.012em;
+}
+
+.card-title .svg-icon {
+  color: var(--text-muted);
 }
 
 .model-count {
@@ -270,7 +278,7 @@ async function copyText(text: string, label: string = '') {
   color: var(--text-muted);
   background: var(--bg-tertiary);
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-full);
 }
 
 .card-body {

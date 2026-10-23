@@ -137,6 +137,8 @@ export default {
 
   /* ========== Channel List ========== */
   'channel.list.title': '渠道列表',
+  'channel.list.subtitle': '管理上游渠道、对接协议与可用模型；点击渠道名称可查看其模型清单。',
+  'channel.list.idLabel': 'ID {id}',
   'channel.list.add': '添加渠道',
   'channel.list.name': '渠道名称',
   'channel.list.type': '对接协议',
@@ -252,6 +254,7 @@ export default {
 
   /* ========== Channel Models ========== */
   'channel.models.title': '渠道模型 - {name}',
+  'channel.models.subtitle': '该渠道对外提供的模型清单，以及每个模型近期的调用与耗时表现。',
   'channel.models.totalRequests': '总请求次数',
   'channel.models.totalTokens': '总 Token 用量',
   'channel.models.inputTokens': '输入 Token',
@@ -340,6 +343,7 @@ export default {
 
   /* ========== Model Rels ========== */
   'model.rels.title': '模型关联 - {name}',
+  'model.rels.subtitle': '入口模型可用的渠道模型与模型小组，按顺序决定每次请求优先走哪个上游。',
   'model.rels.addRel': '添加关联',
   'model.rels.saveOrder': '保存顺序',
   'model.rels.sort': '排序',
@@ -412,6 +416,15 @@ export default {
 
   /* ========== Circuit Breaker ========== */
   'cb.title': '熔断配置 - {name}',
+  'cb.subtitle': '当上游连续失败时自动跳过该渠道或模型，避免持续放大故障。',
+  'cb.sectionBasic': '熔断开关',
+  'cb.sectionBasicDesc': '决定是否启用熔断，以及熔断生效的粒度。',
+  'cb.sectionPolicy': '触发策略',
+  'cb.sectionPolicyDesc': '连续失败多少次后打开熔断，以及打开后多久重新尝试。',
+  'cb.enabledHint': '关闭后不再统计失败次数，也不会自动跳过上游',
+  'cb.scopeHint': '渠道级按单个 API Key 熔断，模型级对该模型的所有渠道生效',
+  'cb.retryCountHint': '单个请求在上游失败后最多重试的次数',
+  'cb.durationHint': '熔断打开后经过该时长会放行一次探测请求',
   'cb.enabled': '熔断开关',
   'cb.on': '开启',
   'cb.off': '关闭',
@@ -445,6 +458,7 @@ export default {
 
   /* ========== Prompt Injections ========== */
   'promptInjection.title': 'Prompt 注入配置 - {name}',
+  'promptInjection.subtitle': '在请求发往上游前按优先级改写消息：追加系统指令、补充上下文或替换默认提示词。',
   'promptInjection.addRule': '添加规则',
   'promptInjection.editRule': '编辑规则',
   'promptInjection.ruleCount': '共 {count} 条规则',
@@ -506,6 +520,7 @@ export default {
 
   /* ========== API Key Usage Detail ========== */
   'apikey.usage.title': '密钥用量 - {name}',
+  'apikey.usage.subtitle': '该密钥下每个模型的调用次数、Token 消耗与响应速度。',
   'apikey.usage.totalRequests': '总请求次数',
   'apikey.usage.totalTokens': '总 Token 用量',
   'apikey.usage.avgResponse': '近 30 次首字节平均时间',
@@ -515,6 +530,12 @@ export default {
   /* ========== API Key Form ========== */
   'apikey.form.editTitle': '编辑密钥',
   'apikey.form.addTitle': '添加密钥',
+  'apikey.form.subtitle': '密钥用于调用网关 API，可单独启用、分享或查看用量。',
+  'apikey.form.sectionBasic': '密钥信息',
+  'apikey.form.sectionBasicDesc': '密钥名称仅用于后台识别；密钥值创建后不可修改。',
+  'apikey.form.keyNameHint': '便于识别的名称，会显示在日志与用量统计中',
+  'apikey.form.statusHint': '禁用后该密钥的请求会被网关直接拒绝',
+  'apikey.form.footerHint': '保存后立即生效',
   'apikey.form.keyName': '密钥名称 *',
   'apikey.form.keyNamePlaceholder': '如：生产密钥',
   'apikey.form.keyValue': '密钥值',
@@ -539,6 +560,7 @@ export default {
   'log.phase.interrupted': '中断',
 
   /* ========== Log List ========== */
+  'log.page.subtitle': '按请求链路查看每次调用的走向、耗时与失败原因，图表统计当月用量。',
   'log.list.title': '请求日志',
   'log.list.realtime': '实时',
   'log.list.connecting': '连接中',
@@ -832,6 +854,7 @@ export default {
 
   /* ========== Model Group Detail ========== */
   'group.detail.title': '小组成员 - {name}',
+  'group.detail.subtitle': '小组内成员的顺序与权重决定每次请求的候选次序，可直接拖拽调整。',
   'group.detail.editGroup': '编辑小组',
   'group.detail.usedBy': '被以下入口模型关联',
   'group.detail.selectModel': '选择要加入的渠道模型…',
@@ -859,4 +882,31 @@ export default {
   'model.rels.typeGroup': '小组',
   'model.rels.groupEmptyHint': '小组暂无可用成员，请求将跳过该小组',
   'model.rels.selectGroup': '选择要关联的模型小组…',
+
+  /* ========== Config shell (方案配置) ========== */
+  'cfg.nav': '配置分区',
+  'cfg.unsaved': '有未保存的修改',
+  'cfg.saved': '所有修改已保存',
+  'cfg.basic': '基础信息',
+  'cfg.keys': 'API Keys',
+  'cfg.models': '渠道模型',
+  'cfg.advanced': '高级选项',
+  'cfg.summary': '配置概览',
+  'cfg.stickyFooterHint': '保存后立即生效，正在处理的请求不受影响',
+  'cfg.fieldName': '渠道名称',
+  'cfg.fieldProtocol': '对接协议',
+  'cfg.fieldEndpoint': '接口地址',
+  'cfg.fieldStatus': '启用状态',
+  'cfg.sectionBasicDesc': '渠道的身份标识与上游协议，决定请求发往哪里、以什么格式发送。',
+  'cfg.sectionKeysDesc': '同一渠道可配置多把密钥，请求失败时在它们之间自动切换。',
+  'cfg.sectionModelsDesc': '该渠道对外提供的模型清单，可自动拉取或手动维护。',
+  'cfg.sectionAdvancedDesc': '仅在对接非标准服务时需要调整的选项。',
+  'cfg.strategyFailoverDesc': '按成员顺序逐一尝试，成功即停，适合有明确主备关系时使用。',
+  'cfg.strategyRandomDesc': '每次请求按权重打乱候选顺序，流量均匀分散到各成员。',
+  'cfg.strategyRoundRobinDesc': '按权重轮转挑选起点，长期看每个成员的请求量最均衡。',
+  'cfg.unitDays': '天',
+  'cfg.unitHours': '小时',
+  'cfg.unitMinutes': '分钟',
+  'cfg.unitSeconds': '秒',
+  'cfg.unitTimes': '次',
 }

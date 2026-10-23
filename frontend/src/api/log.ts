@@ -71,14 +71,14 @@ export interface LogsResponse {
 }
 
 export const logApi = {
-  list(offset = 0, limit = 50, filters?: LogFilters) {
+  list(offset = 0, limit = 50, filters?: LogFilters, signal?: AbortSignal) {
     const params: Record<string, string | number> = { offset, limit }
     if (filters?.modelName) params.modelName = filters.modelName
     if (filters?.gatewayApiKeyId != null) params.gatewayApiKeyId = filters.gatewayApiKeyId
     if (filters?.apiKeyName) params.apiKeyName = filters.apiKeyName
     if (filters?.startTime) params.startTime = filters.startTime
     if (filters?.endTime) params.endTime = filters.endTime
-    return http.get<LogsResponse>('/logs', { params })
+    return http.get<LogsResponse>('/logs', { params, signal })
   },
   clean() {
     return http.post<{ success: boolean; message: string }>('/logs/clean')
@@ -107,7 +107,10 @@ export const logApi = {
     if (params.modelName) query.modelName = params.modelName
     if (params.gatewayApiKeyId != null) query.gatewayApiKeyId = params.gatewayApiKeyId
     if (params.apiKeyName) query.apiKeyName = params.apiKeyName
-    return http.get<LogUsageChart>('/logs/usage-chart', { params: query })
+    // 月度聚合在百万级 request_logs 上首次可能要几十秒（缓存未命中时）。
+    // 默认 30s 会在服务端返回前中断，页面只能显示「使用历史加载失败」；
+    // 这里单独放宽超时。命中服务端缓存时依然是毫秒级返回。
+    return http.get<LogUsageChart>('/logs/usage-chart', { params: query, timeout: 120_000 })
   }
 }
 

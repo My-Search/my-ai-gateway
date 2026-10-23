@@ -1,30 +1,61 @@
 <template>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title">{{ isEdit ? t('apikey.form.editTitle') : t('apikey.form.addTitle') }}</div>
-      <router-link to="/admin/apikey/list" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
+  <div class="key-form">
+    <div class="page-header cfg-page-header">
+      <div class="page-header-main">
+        <div class="title-row">
+          <router-link to="/admin/apikey/list" class="back-link" :aria-label="t('common.back')">
+            <SvgIcon name="arrow-left" :size="16" />
+          </router-link>
+          <h2>{{ isEdit ? t('apikey.form.editTitle') : t('apikey.form.addTitle') }}</h2>
+          <span v-if="isEdit" class="badge badge-muted">#{{ route.params.id }}</span>
+          <span class="badge" :class="form.enabled === 1 ? 'badge-success' : 'badge-muted'">
+            {{ form.enabled === 1 ? t('common.enabled') : t('common.disabled') }}
+          </span>
+        </div>
+        <p>{{ t('apikey.form.subtitle') }}</p>
+      </div>
     </div>
-    <form @submit.prevent="handleSave" style="max-width:600px;">
-      <div class="form-group">
-        <label for="keyName">{{ t('apikey.form.keyName') }}</label>
-        <input id="keyName" v-model="form.keyName" class="form-control" :placeholder="t('apikey.form.keyNamePlaceholder')" required />
-      </div>
-      <div class="form-group">
-        <label for="keyValue">{{ t('apikey.form.keyValue') }}</label>
-        <input id="keyValue" v-model="form.keyValue" class="form-control" :disabled="isEdit" :placeholder="isEdit ? t('apikey.form.keyValueDisabledHint') : t('apikey.form.keyValuePlaceholder')" />
-        <div class="form-hint">{{ t('apikey.form.keyValueHint') }}, {{ isEdit ? t('apikey.form.editNoModify') : t('apikey.form.autoGenerate') }}</div>
-      </div>
-      <div class="form-group">
-        <label for="enabled">{{ t('apikey.list.status') }}</label>
-        <select id="enabled" v-model.number="form.enabled" class="form-control">
-          <option :value="1">{{ t('common.enabled') }}</option>
-          <option :value="0">{{ t('common.disabled') }}</option>
-        </select>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:24px;">
-        <button type="submit" class="btn btn-primary" :disabled="saving"><SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('apikey.form.save') }}</button>
-        <router-link to="/admin/apikey/list" class="btn btn-secondary"><SvgIcon name="x" :size="14" /> {{ t('apikey.form.cancel') }}</router-link>
-      </div>
+
+    <form @submit.prevent="handleSave">
+      <ConfigShell :sections="sections" :railTitle="t('cfg.nav')">
+        <!-- ══ 密钥信息 ══ -->
+        <ConfigSection id="key-basic" :title="t('apikey.form.sectionBasic')"
+                       :desc="t('apikey.form.sectionBasicDesc')" icon="key">
+          <ConfigField :label="t('apikey.form.keyName')" :hint="t('apikey.form.keyNameHint')" required>
+            <input id="keyName" v-model="form.keyName" class="form-control"
+                   :placeholder="t('apikey.form.keyNamePlaceholder')" required />
+          </ConfigField>
+
+          <ConfigField :label="t('apikey.form.keyValue')" :hint="keyValueHint" wide>
+            <input id="keyValue" v-model="form.keyValue" class="form-control mono-input"
+                   :disabled="isEdit"
+                   :placeholder="isEdit ? t('apikey.form.keyValueDisabledHint') : t('apikey.form.keyValuePlaceholder')" />
+          </ConfigField>
+
+          <ConfigField :label="t('apikey.list.status')" :hint="t('apikey.form.statusHint')">
+            <div class="inline-control">
+              <ToggleSwitch v-model="enabledBool" :show-label="false" />
+              <span class="inline-hint">
+                {{ form.enabled === 1 ? t('common.enabled') : t('common.disabled') }}
+              </span>
+            </div>
+          </ConfigField>
+        </ConfigSection>
+
+        <template #footer>
+          <span class="footer-hint">
+            <SvgIcon name="info" :size="13" /> {{ t('apikey.form.footerHint') }}
+          </span>
+          <div class="footer-actions">
+            <router-link to="/admin/apikey/list" class="btn btn-secondary">
+              <SvgIcon name="x" :size="14" /> {{ t('apikey.form.cancel') }}
+            </router-link>
+            <button type="submit" class="btn btn-primary" :disabled="saving">
+              <SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('apikey.form.save') }}
+            </button>
+          </div>
+        </template>
+      </ConfigShell>
     </form>
   </div>
 
@@ -47,6 +78,10 @@ import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import Dialog from '@/components/common/Dialog.vue'
+import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import ConfigShell from '@/components/common/ConfigShell.vue'
+import ConfigSection from '@/components/common/ConfigSection.vue'
+import ConfigField from '@/components/common/ConfigField.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -55,6 +90,22 @@ const { visible, title, message, type, confirmClass, onConfirm, open } = useDial
 const isEdit = computed(() => !!route.params.id)
 const saving = ref(false)
 const form = ref<Partial<ApiKey>>({ keyName: '', keyValue: '', enabled: 1 })
+
+/** 启用状态：表单里是 1/0，开关组件用布尔值 */
+const enabledBool = computed({
+  get: () => form.value.enabled === 1,
+  set: (v: boolean) => { form.value.enabled = v ? 1 : 0 }
+})
+
+const sections = computed(() => [
+  { id: 'key-basic', label: t('apikey.form.sectionBasic'), icon: 'key' },
+])
+
+/** 密钥输入说明：编辑态强调不可修改，新增态说明留空即自动生成 */
+const keyValueHint = computed(() =>
+  isEdit.value
+    ? `${t('apikey.form.keyValueHint')}, ${t('apikey.form.editNoModify')}`
+    : `${t('apikey.form.keyValueHint')}, ${t('apikey.form.autoGenerate')}`)
 
 onMounted(async () => {
   if (isEdit.value) {
@@ -90,3 +141,53 @@ async function handleSave() {
   }
 }
 </script>
+
+<style scoped>
+.cfg-page-header {
+  align-items: flex-start;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  transition: all var(--dur-1);
+  flex-shrink: 0;
+}
+
+.back-link:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.mono-input {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.inline-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+}
+
+.inline-hint {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+</style>

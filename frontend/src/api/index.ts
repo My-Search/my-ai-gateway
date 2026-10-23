@@ -29,6 +29,11 @@ let isRedirectingToLogin = false
 http.interceptors.response.use(
   (response) => response,
   (error) => {
+    // 主动取消（翻月/换筛选时废弃的旧请求）不是故障：原样抛出，
+    // 让调用方用 ERR_CANCELED 判断并静默忽略。
+    if (axios.isCancel(error)) {
+      return Promise.reject(error)
+    }
     if (error.response) {
       // 401 未登录 → 客户端导航到登录页，避免 full page reload 导致死循环
       if (error.response.status === 401 && !isRedirectingToLogin) {

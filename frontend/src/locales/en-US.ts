@@ -137,6 +137,8 @@ export default {
 
   /* ========== Channel List ========== */
   'channel.list.title': 'Channels',
+  'channel.list.subtitle': 'Manage upstream channels, protocols and their model catalogue — click a name to inspect its models.',
+  'channel.list.idLabel': 'ID {id}',
   'channel.list.add': 'Add Channel',
   'channel.list.name': 'Name',
   'channel.list.type': 'Protocol',
@@ -252,6 +254,7 @@ export default {
 
   /* ========== Channel Models ========== */
   'channel.models.title': 'Channel Models - {name}',
+  'channel.models.subtitle': 'Models this channel exposes, with recent traffic and latency for each.',
   'channel.models.totalRequests': 'Total Requests',
   'channel.models.totalTokens': 'Total Token Usage',
   'channel.models.inputTokens': 'Input Tokens',
@@ -340,6 +343,7 @@ export default {
 
   /* ========== Model Rels ========== */
   'model.rels.title': 'Model Links - {name}',
+  'model.rels.subtitle': 'Channel models and groups this entry model can use, ordered by which upstream a request tries first.',
   'model.rels.addRel': 'Add Link',
   'model.rels.saveOrder': 'Save Order',
   'model.rels.sort': 'Sort',
@@ -412,6 +416,15 @@ export default {
 
   /* ========== Circuit Breaker ========== */
   'cb.title': 'Circuit Breaker - {name}',
+  'cb.subtitle': 'Skip a channel or model automatically after repeated upstream failures, so one outage does not cascade.',
+  'cb.sectionBasic': 'Breaker Switch',
+  'cb.sectionBasicDesc': 'Whether the breaker is active, and at which granularity it trips.',
+  'cb.sectionPolicy': 'Trigger Policy',
+  'cb.sectionPolicyDesc': 'How many failures open the breaker, and how long before a retry is allowed.',
+  'cb.enabledHint': 'When off, failures are not counted and upstreams are never skipped',
+  'cb.scopeHint': 'Channel-level trips per API key; model-level trips across every channel serving that model',
+  'cb.retryCountHint': 'Maximum retries for a single request after an upstream failure',
+  'cb.durationHint': 'After this delay the breaker lets one probe request through',
   'cb.enabled': 'Circuit Breaker',
   'cb.on': 'On',
   'cb.off': 'Off',
@@ -445,6 +458,7 @@ export default {
 
   /* ========== Prompt Injections ========== */
   'promptInjection.title': 'Prompt Injection - {name}',
+  'promptInjection.subtitle': 'Rewrite messages before they reach the upstream: prepend system instructions, add context, or replace the default prompt.',
   'promptInjection.addRule': 'Add Rule',
   'promptInjection.editRule': 'Edit Rule',
   'promptInjection.ruleCount': '{count} rule(s)',
@@ -506,6 +520,7 @@ export default {
 
   /* ========== API Key Usage Detail ========== */
   'apikey.usage.title': 'Key Usage - {name}',
+  'apikey.usage.subtitle': 'Requests, token spend and latency per model for this key.',
   'apikey.usage.totalRequests': 'Total Requests',
   'apikey.usage.totalTokens': 'Total Token Usage',
   'apikey.usage.avgResponse': 'Avg TTFB (last 30)',
@@ -515,6 +530,12 @@ export default {
   /* ========== API Key Form ========== */
   'apikey.form.editTitle': 'Edit Key',
   'apikey.form.addTitle': 'Add Key',
+  'apikey.form.subtitle': 'Keys authenticate calls to the gateway; each can be enabled, shared or inspected separately.',
+  'apikey.form.sectionBasic': 'Key Details',
+  'apikey.form.sectionBasicDesc': 'The name is for your own reference; the key value cannot change after creation.',
+  'apikey.form.keyNameHint': 'A recognisable label shown in logs and usage stats',
+  'apikey.form.statusHint': 'Disabled keys are rejected by the gateway immediately',
+  'apikey.form.footerHint': 'Takes effect immediately',
   'apikey.form.keyName': 'Key Name *',
   'apikey.form.keyNamePlaceholder': 'e.g. Production Key',
   'apikey.form.keyValue': 'Key Value',
@@ -539,6 +560,7 @@ export default {
   'log.phase.interrupted': 'Interrupted',
 
   /* ========== Log List ========== */
+  'log.page.subtitle': 'Trace every call end to end — routing, latency and failure reason — with monthly usage above.',
   'log.list.title': 'Request Logs',
   'log.list.realtime': 'Live',
   'log.list.connecting': 'Connecting',
@@ -832,6 +854,7 @@ export default {
 
   /* ========== Model Group Detail ========== */
   'group.detail.title': 'Group Members - {name}',
+  'group.detail.subtitle': 'Member order and weight decide the candidate sequence for each request; drag to reorder.',
   'group.detail.editGroup': 'Edit Group',
   'group.detail.usedBy': 'Referenced by entry models',
   'group.detail.selectModel': 'Pick channel models to add…',
@@ -859,4 +882,31 @@ export default {
   'model.rels.typeGroup': 'Group',
   'model.rels.groupEmptyHint': 'Group has no available members; requests will skip it',
   'model.rels.selectGroup': 'Pick groups to relate…',
+
+  /* ========== Config shell ========== */
+  'cfg.nav': 'Sections',
+  'cfg.unsaved': 'Unsaved changes',
+  'cfg.saved': 'All changes saved',
+  'cfg.basic': 'Basics',
+  'cfg.keys': 'API Keys',
+  'cfg.models': 'Channel Models',
+  'cfg.advanced': 'Advanced',
+  'cfg.summary': 'Overview',
+  'cfg.stickyFooterHint': 'Takes effect immediately; in-flight requests are unaffected',
+  'cfg.fieldName': 'Channel name',
+  'cfg.fieldProtocol': 'Protocol',
+  'cfg.fieldEndpoint': 'Endpoint',
+  'cfg.fieldStatus': 'Status',
+  'cfg.sectionBasicDesc': 'Identity and upstream protocol — where requests go and how they are encoded.',
+  'cfg.sectionKeysDesc': 'Multiple keys per channel; requests fail over between them automatically.',
+  'cfg.sectionModelsDesc': 'The model catalogue this channel exposes — fetch it automatically or maintain it by hand.',
+  'cfg.sectionAdvancedDesc': 'Only needed when talking to a non-standard upstream service.',
+  'cfg.strategyFailoverDesc': 'Try members in order and stop at the first success — for clear primary/backup setups.',
+  'cfg.strategyRandomDesc': 'Shuffle candidates by weight on every request, spreading load evenly.',
+  'cfg.strategyRoundRobinDesc': 'Rotate the starting point by weight so long-run traffic is evenly balanced.',
+  'cfg.unitDays': 'days',
+  'cfg.unitHours': 'hours',
+  'cfg.unitMinutes': 'minutes',
+  'cfg.unitSeconds': 'seconds',
+  'cfg.unitTimes': 'times',
 }

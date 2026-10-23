@@ -1,63 +1,43 @@
 <template>
   <aside class="sidebar" :class="{ 'sidebar-open': isOpen }">
+    <!-- Brand -->
     <div class="sidebar-header">
-      <div class="sidebar-logo">
-        <div class="logo-icon">
-          <img src="/favicon.svg" alt="logo" />
-        </div>
-        <div class="logo-text">
-          <h1>My AI Gateway</h1>
-          <div class="subtitle">{{ t('nav.subtitle') }}</div>
-        </div>
-      </div>
+      <router-link to="/admin/dashboard" class="brand" @click="$emit('close')">
+        <span class="brand-mark">
+          <img src="/favicon.svg" alt="" />
+        </span>
+        <span class="brand-text">
+          <strong>My AI Gateway</strong>
+          <small>{{ t('nav.subtitle') }}</small>
+        </span>
+      </router-link>
     </div>
+
+    <!-- Navigation -->
     <nav class="sidebar-nav">
-      <div class="nav-section">{{ t('nav.overview') }}</div>
-      <router-link to="/admin/dashboard" @click="$emit('close')" class="nav-link">
-        <SvgIcon name="home" :size="16" class="nav-icon" />
-        <span>{{ t('nav.dashboard') }}</span>
-      </router-link>
-
-      <div class="nav-section">{{ t('nav.resources') }}</div>
-      <router-link to="/admin/channel/list" @click="$emit('close')" class="nav-link">
-        <SvgIcon name="channel" :size="16" class="nav-icon" />
-        <span>{{ t('nav.channels') }}</span>
-      </router-link>
-      <router-link to="/admin/model/group/list" @click="$emit('close')" class="nav-link">
-        <SvgIcon name="grid" :size="16" class="nav-icon" />
-        <span>{{ t('nav.modelGroups') }}</span>
-      </router-link>
-      <router-link to="/admin/model/list" @click="$emit('close')" class="nav-link">
-        <SvgIcon name="model" :size="16" class="nav-icon" />
-        <span>{{ t('nav.models') }}</span>
-      </router-link>
-      <router-link to="/admin/apikey/list" @click="$emit('close')" class="nav-link">
-        <SvgIcon name="key" :size="16" class="nav-icon" />
-        <span>{{ t('nav.apiKeys') }}</span>
-      </router-link>
-
-      <div class="nav-section">{{ t('nav.monitoring') }}</div>
-      <router-link to="/admin/log/list" @click="$emit('close')" class="nav-link">
-        <SvgIcon name="log" :size="16" class="nav-icon" />
-        <span>{{ t('nav.logs') }}</span>
-      </router-link>
-
-      <div class="nav-section">{{ t('nav.tools') }}</div>
-      <router-link to="/admin/playground" @click="$emit('close')" class="nav-link">
-        <SvgIcon name="chat" :size="16" class="nav-icon" />
-        <span>{{ t('nav.playground') }}</span>
-      </router-link>
-      <router-link to="/admin/setting/system" @click="$emit('close')" class="nav-link">
-        <SvgIcon name="settings" :size="16" class="nav-icon" />
-        <span>{{ t('nav.systemConfig') }}</span>
-      </router-link>
+      <div v-for="group in navGroups" :key="group.label" class="nav-group">
+        <div class="nav-section">{{ t(group.label) }}</div>
+        <router-link
+          v-for="item in group.items"
+          :key="item.to"
+          :to="item.to"
+          class="nav-link"
+          @click="$emit('close')"
+        >
+          <span class="nav-icon-wrap">
+            <SvgIcon :name="item.icon" :size="16" class="nav-icon" />
+          </span>
+          <span class="nav-label">{{ t(item.label) }}</span>
+        </router-link>
+      </div>
     </nav>
 
+    <!-- Footer -->
     <div class="sidebar-footer">
-      <div class="sidebar-footer-info">
-        <span class="status-dot active"></span>
-        <span class="footer-text">v1.0</span>
-      </div>
+      <span class="status-dot active"></span>
+      <span class="footer-text">v1.0</span>
+      <span class="footer-sep">·</span>
+      <span class="footer-text">{{ t('login.serviceOnline') }}</span>
     </div>
   </aside>
 </template>
@@ -74,95 +54,150 @@ defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+/**
+ * 导航分组。结构与原有菜单保持一致，只按使用频率重新归组：
+ * 总览 / 接入（渠道、模型、小组、密钥）/ 可观测（日志）/ 工具（测试、配置）
+ */
+const navGroups = [
+  {
+    label: 'nav.overview',
+    items: [{ to: '/admin/dashboard', label: 'nav.dashboard', icon: 'home' }],
+  },
+  {
+    label: 'nav.resources',
+    items: [
+      { to: '/admin/channel/list', label: 'nav.channels', icon: 'channel' },
+      { to: '/admin/model/group/list', label: 'nav.modelGroups', icon: 'grid' },
+      { to: '/admin/model/list', label: 'nav.models', icon: 'model' },
+      { to: '/admin/apikey/list', label: 'nav.apiKeys', icon: 'key' },
+    ],
+  },
+  {
+    label: 'nav.monitoring',
+    items: [{ to: '/admin/log/list', label: 'nav.logs', icon: 'log' }],
+  },
+  {
+    label: 'nav.tools',
+    items: [
+      { to: '/admin/playground', label: 'nav.playground', icon: 'chat' },
+      { to: '/admin/setting/system', label: 'nav.systemConfig', icon: 'settings' },
+    ],
+  },
+]
 </script>
 
 <style scoped>
 .sidebar {
   width: var(--sidebar-width);
-  background: var(--bg-secondary);
+  background: var(--sidebar-bg);
   border-right: 1px solid var(--border-color);
   position: fixed;
   top: 0;
   left: 0;
   height: 100vh;
-  overflow-y: auto;
   z-index: 100;
   display: flex;
   flex-direction: column;
 }
 
-/* ── Sidebar Header (Modern logo area) ── */
+/* ── Brand ── */
 .sidebar-header {
-  padding: 20px;
-  border-bottom: 1px solid var(--border-color);
+  padding: 16px 14px 14px;
+  flex-shrink: 0;
 }
 
-.sidebar-logo {
+.brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 11px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  transition: background var(--dur-1);
 }
 
-.logo-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-md, 12px);
+.brand:hover {
+  background: var(--bg-hover);
+}
+
+.brand-mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  overflow: hidden;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
 }
 
-.logo-icon img {
-  width: 36px;
-  height: 36px;
+.brand-mark img {
+  width: 22px;
+  height: 22px;
 }
 
-.logo-text {
+.brand-text {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-}
-
-.sidebar-header h1 {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--text-primary);
   line-height: 1.3;
-  letter-spacing: -0.02em;
 }
 
-.sidebar-header .subtitle {
+.brand-text strong {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.brand-text small {
   font-size: 11px;
   color: var(--text-muted);
-  margin-top: 1px;
   font-weight: 500;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── Navigation ── */
 .sidebar-nav {
   flex: 1;
-  padding: 8px 0;
+  padding: 4px 10px 12px;
   overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.nav-group + .nav-group {
+  margin-top: 4px;
 }
 
 .sidebar-nav .nav-section {
-  padding: 14px 20px 6px;
+  padding: 14px 10px 6px;
   font-size: 10px;
   text-transform: uppercase;
   color: var(--text-muted);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.085em;
+  opacity: 0.9;
 }
 
 .nav-link {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 20px;
-  margin: 1px 8px;
+  padding: 8px 10px;
+  margin-bottom: 1px;
   color: var(--text-secondary);
-  font-size: 14px;
-  transition: all 0.15s ease;
+  font-size: 13.5px;
+  font-weight: 500;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
   border-radius: var(--radius);
   text-decoration: none;
 }
@@ -172,17 +207,43 @@ const { t } = useI18n()
   color: var(--text-primary);
 }
 
-.nav-link.router-link-exact-active,
-.nav-link.router-link-active {
-  background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
-  color: var(--accent-blue);
-  font-weight: 500;
+.nav-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  flex-shrink: 0;
+  transition: background var(--dur-1), color var(--dur-1);
 }
 
 .nav-icon {
-  opacity: 0.8;
-  flex-shrink: 0;
-  line-height: 1;
+  opacity: 0.72;
+}
+
+.nav-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-badge {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+
+.nav-link.router-link-exact-active,
+.nav-link.router-link-active {
+  background: var(--sidebar-active-bg);
+  color: var(--accent-blue);
+  font-weight: 620;
 }
 
 .nav-link.router-link-exact-active .nav-icon,
@@ -190,34 +251,57 @@ const { t } = useI18n()
   opacity: 1;
 }
 
-/* ── Sidebar Footer ── */
-.sidebar-footer {
-  padding: 12px 20px;
-  border-top: 1px solid var(--border-color);
+.nav-link.router-link-exact-active .nav-icon-wrap,
+.nav-link.router-link-active .nav-icon-wrap {
+  background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 
-.sidebar-footer-info {
+.nav-link.router-link-exact-active::before,
+.nav-link.router-link-active::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent-blue);
+}
+
+/* ── Footer ── */
+.sidebar-footer {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 12px 20px 14px;
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
 }
 
 .footer-text {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-muted);
   font-weight: 500;
 }
 
-/* ── Mobile responsive ── */
+.footer-sep {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+/* ── Mobile ── */
 @media (max-width: 768px) {
   .sidebar {
     transform: translateX(-100%);
-    transition: transform 0.25s ease;
+    transition: transform 0.26s var(--ease-out);
     box-shadow: none;
+    z-index: 101;
   }
   .sidebar.sidebar-open {
     transform: translateX(0);
-    box-shadow: 4px 0 24px rgba(0,0,0,0.3);
+    box-shadow: 24px 0 60px -20px rgba(0, 0, 0, 0.45);
   }
 }
 </style>

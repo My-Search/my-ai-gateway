@@ -4,22 +4,25 @@
     <Sidebar :isOpen="sidebarOpen" @close="sidebarOpen = false" />
 
     <!-- Mobile overlay -->
-    <div v-if="sidebarOpen" class="sidebar-overlay" @click="sidebarOpen = false"></div>
+    <Transition name="overlay">
+      <div v-if="sidebarOpen" class="sidebar-overlay" @click="sidebarOpen = false"></div>
+    </Transition>
 
     <!-- Main content -->
     <div class="main-content">
       <!-- Mobile header -->
       <div class="mobile-header">
         <div class="mobile-header-left">
-          <button class="mobile-menu-btn" @click="sidebarOpen = !sidebarOpen">
+          <button class="mobile-menu-btn" @click="sidebarOpen = !sidebarOpen" :aria-label="t('layout.console')">
             <SvgIcon name="menu" :size="20" />
           </button>
+          <span class="mobile-title">{{ currentTitle }}</span>
         </div>
         <div class="mobile-header-right">
           <button class="btn-icon-mobile" @click="toggleTheme" :title="isDark ? t('layout.switchLight') : t('layout.switchDark')">
             <SvgIcon :name="isDark ? 'sun' : 'moon'" :size="18" />
           </button>
-          <button class="btn-icon-mobile" @click="toggleLang" :title="t('layout.switchLang')">
+          <button class="btn-icon-mobile lang-btn" @click="toggleLang" :title="t('layout.switchLang')">
             {{ localeStore.locale === 'zh-CN' ? '中' : 'EN' }}
           </button>
           <button class="btn-icon-mobile" @click="handleLogout" :title="t('layout.logout')">
@@ -30,16 +33,21 @@
 
       <!-- Top header -->
       <header class="top-header">
-        <div class="header-left"></div>
+        <div class="header-left">
+          <span class="crumb-root">{{ t('layout.console') }}</span>
+          <SvgIcon name="chevron-down" :size="12" class="crumb-sep" />
+          <span class="crumb-current">{{ currentTitle }}</span>
+        </div>
         <div class="header-right">
-          <button class="btn-icon" @click="toggleTheme" :title="isDark ? t('layout.switchLight') : t('layout.switchDark')">
+          <button class="btn-icon" @click="toggleTheme" :title="isDark ? t('layout.switchLight') : t('layout.switchDark')" :aria-label="isDark ? t('layout.switchLight') : t('layout.switchDark')">
             <SvgIcon :name="isDark ? 'sun' : 'moon'" :size="16" />
           </button>
-          <button class="btn-icon" @click="toggleLang" :title="t('layout.switchLang')">
+          <button class="lang-chip" @click="toggleLang" :title="t('layout.switchLang')">
             {{ localeStore.locale === 'zh-CN' ? '中' : 'EN' }}
           </button>
+          <span class="header-divider"></span>
           <button class="btn-logout" @click="handleLogout">
-            <SvgIcon name="logout" :size="16" />
+            <SvgIcon name="logout" :size="15" />
             <span>{{ t('layout.logout') }}</span>
           </button>
         </div>
@@ -53,7 +61,6 @@
         </keep-alive>
       </div>
     </div>
-
   </div>
 </template>
 
@@ -114,39 +121,39 @@ async function handleLogout() {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 /* Sidebar overlay (mobile) */
 .sidebar-overlay {
-  display: none;
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0,0,0,0.6);
-  z-index: 99;
+  inset: 0;
+  background: rgba(6, 8, 12, 0.55);
+  backdrop-filter: blur(2px);
+  z-index: 100;
 }
 
-@media (max-width: 768px) {
-  .sidebar-overlay {
-    display: block;
-  }
+.overlay-enter-active,
+.overlay-leave-active {
+  transition: opacity 0.22s ease;
 }
 
-/* ── Top Header (Modern) ──
- * Subtle backdrop blur for depth, sticky behavior.
- */
+.overlay-enter-from,
+.overlay-leave-to {
+  opacity: 0;
+}
+
+/* ── Top Header ── */
 .top-header {
   height: var(--header-height);
-  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: color-mix(in srgb, var(--bg-primary) 84%, transparent);
+  backdrop-filter: saturate(180%) blur(16px);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
   border-bottom: 1px solid var(--border-color);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 32px;
   position: sticky;
   top: 0;
   z-index: 50;
@@ -155,16 +162,40 @@ async function handleLogout() {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 7px;
+  min-width: 0;
+}
+
+.crumb-root {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.crumb-sep {
+  color: var(--text-muted);
+  opacity: 0.5;
+  transform: rotate(-90deg);
+  flex-shrink: 0;
+}
+
+.crumb-current {
+  font-size: 13px;
+  font-weight: 620;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-/* Icon-only button in header */
 .btn-icon {
   display: inline-flex;
   align-items: center;
@@ -174,8 +205,7 @@ async function handleLogout() {
   border-radius: var(--radius);
   color: var(--text-secondary);
   background: transparent;
-  text-decoration: none;
-  transition: all 0.15s;
+  transition: background var(--dur-1), color var(--dur-1);
   border: none;
   cursor: pointer;
 }
@@ -185,37 +215,59 @@ async function handleLogout() {
   color: var(--text-primary);
 }
 
+.lang-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 650;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--dur-1), color var(--dur-1), border-color var(--dur-1);
+}
+
+.lang-chip:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--text-muted) 45%, var(--border-strong));
+}
+
+.header-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-color);
+  margin: 0 4px;
+}
+
 .btn-logout {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 6px 11px;
   border-radius: var(--radius);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 12.5px;
+  font-weight: 550;
   color: var(--text-secondary);
   background: transparent;
-  text-decoration: none;
-  transition: all 0.18s ease;
+  transition: background var(--dur-1), color var(--dur-1);
   border: 1px solid transparent;
   cursor: pointer;
   font-family: inherit;
 }
 
 .btn-logout:hover {
-  background: color-mix(in srgb, var(--accent-red) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-red) 10%, transparent);
   color: var(--accent-red);
-  border-color: color-mix(in srgb, var(--accent-red) 20%, transparent);
 }
 
-.content-area {
-  flex: 1;
-  padding: 24px;
-  display: flex;
-  flex-direction: column;
-}
-
-/* Mobile header */
+/* ── Mobile header ── */
 .mobile-header {
   display: none;
 }
@@ -224,27 +276,38 @@ async function handleLogout() {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+
+.mobile-title {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mobile-header-right {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .btn-icon-mobile {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   border-radius: var(--radius);
   color: var(--text-secondary);
   background: transparent;
-  text-decoration: none;
-  transition: all 0.15s;
+  transition: background var(--dur-1), color var(--dur-1);
   border: none;
   cursor: pointer;
+  font-family: inherit;
 }
 
 .btn-icon-mobile:hover {
@@ -252,14 +315,24 @@ async function handleLogout() {
   color: var(--text-primary);
 }
 
+.lang-btn {
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .mobile-menu-btn {
   background: none;
   border: none;
   color: var(--text-primary);
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 4px 6px;
   display: flex;
   align-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.mobile-menu-btn:hover {
+  background: var(--bg-hover);
 }
 
 @media (max-width: 768px) {
@@ -273,17 +346,14 @@ async function handleLogout() {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 16px;
-    background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    padding: 9px 12px;
+    background: color-mix(in srgb, var(--bg-primary) 88%, transparent);
+    backdrop-filter: saturate(180%) blur(16px);
+    -webkit-backdrop-filter: saturate(180%) blur(16px);
     border-bottom: 1px solid var(--border-color);
     position: sticky;
     top: 0;
     z-index: 50;
-  }
-  .content-area {
-    padding: 16px;
   }
 }
 </style>

@@ -8,6 +8,9 @@ export {}
 declare module 'vue' {
   export interface GlobalComponents {
     ChatPlayground: typeof import('./components/chat/ChatPlayground.vue')['default']
+    ConfigField: typeof import('./components/common/ConfigField.vue')['default']
+    ConfigSection: typeof import('./components/common/ConfigSection.vue')['default']
+    ConfigShell: typeof import('./components/common/ConfigShell.vue')['default']
     CopyButton: typeof import('./components/common/CopyButton.vue')['default']
     Dialog: typeof import('./components/common/Dialog.vue')['default']
     JsonNode: typeof import('./components/common/JsonNode.vue')['default']
@@ -16,6 +19,7 @@ declare module 'vue' {
     LoadingModal: typeof import('./components/common/LoadingModal.vue')['default']
     LoadingSpinner: typeof import('./components/common/LoadingSpinner.vue')['default']
     ModelConfigRuleDialog: typeof import('./components/channel/ModelConfigRuleDialog.vue')['default']
+    PageHeader: typeof import('./components/common/PageHeader.vue')['default']
     PhaseBadge: typeof import('./components/common/PhaseBadge.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']

@@ -1,17 +1,20 @@
 <template>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title">
-        {{ t('group.detail.title').replace('{name}', group?.name || '') }}
-        <span v-if="group" class="badge badge-strategy">{{ strategyLabel(group.strategy || 'random') }}</span>
-        <span v-if="group?.sticky === 1" class="badge badge-sticky">{{ t('group.list.stickyOn') }}</span>
+  <div class="group-detail">
+    <div class="page-header cfg-page-header">
+      <div class="page-header-main">
+        <div class="title-row">
+          <router-link to="/admin/model/group/list" class="back-link" :title="t('common.back')">
+            <SvgIcon name="arrow-left" :size="16" />
+          </router-link>
+          <h2>{{ t('group.detail.title').replace('{name}', group?.name || '') }}</h2>
+          <span v-if="group" class="badge badge-info">{{ strategyLabel(group.strategy || 'random') }}</span>
+          <span v-if="group?.sticky === 1" class="badge badge-success">{{ t('group.list.stickyOn') }}</span>
+        </div>
+        <p>{{ t('group.detail.subtitle') }}</p>
       </div>
       <div class="header-actions">
-        <router-link :to="'/admin/model/group/form/' + (group?.id || '')" class="btn btn-secondary btn-sm">
+        <router-link :to="'/admin/model/group/form/' + (group?.id || '')" class="btn btn-secondary">
           <SvgIcon name="edit" :size="14" /> {{ t('group.detail.editGroup') }}
-        </router-link>
-        <router-link to="/admin/model/group/list" class="btn btn-secondary">
-          <SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}
         </router-link>
       </div>
     </div>
@@ -28,7 +31,7 @@
       >{{ m.modelName }}</router-link>
     </div>
 
-    <div class="action-bar">
+    <div class="action-bar filter-bar">
       <SearchableSelect
         v-model="selectedModelIds"
         :options="selectOptions"
@@ -53,7 +56,8 @@
       <LoadingSpinner :size="18" :text="t('common.loading')" />
     </div>
 
-    <div v-else class="table-container">
+    <div v-else class="card detail-card">
+    <div class="table-container">
       <table>
         <thead>
           <tr>
@@ -152,10 +156,16 @@
             </td>
           </tr>
           <tr v-if="!members.length">
-            <td colspan="11" class="empty-cell">{{ t('group.detail.noMembers') }}</td>
+            <td colspan="11">
+              <div class="empty-state">
+                <SvgIcon name="grid" :size="28" />
+                <p>{{ t('group.detail.noMembers') }}</p>
+              </div>
+            </td>
           </tr>
         </tbody>
       </table>
+    </div>
     </div>
     <datalist :id="effortDatalistId">
       <option v-for="e in EFFORT_PRESETS" :key="e" :value="e" />
@@ -535,23 +545,38 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.cfg-page-header {
+  align-items: flex-start;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  transition: all var(--dur-1);
+  flex-shrink: 0;
+}
+
+.back-link:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
 .header-actions { display: flex; gap: 8px; }
-.badge-strategy {
-  margin-left: 10px;
-  font-size: 11px;
-  padding: 3px 8px;
-  border-radius: 10px;
-  background: rgba(88, 166, 255, 0.15);
-  color: var(--accent-blue, #58a6ff);
-}
-.badge-sticky {
-  margin-left: 6px;
-  font-size: 11px;
-  padding: 3px 8px;
-  border-radius: 10px;
-  background: rgba(63, 185, 80, 0.15);
-  color: #3fb950;
-}
 .used-by {
   display: flex;
   align-items: center;
@@ -745,6 +770,5 @@ table td { vertical-align: middle; }
 .input-tag--text { background: rgba(88, 166, 255, 0.12); color: var(--accent-blue, #58a6ff); }
 .input-tag--image { background: rgba(46, 160, 67, 0.12); color: #2ea043; }
 .input-tag--ctx { background: rgba(198, 120, 221, 0.12); color: var(--accent-purple, #c678dd); text-transform: none; }
-.empty-cell { text-align: center; color: var(--text-muted); padding: 40px; }
 .sortable-fallback { opacity: 0.8; background-color: var(--bg-card); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12); }
 </style>

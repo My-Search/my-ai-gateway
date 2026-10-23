@@ -1,40 +1,46 @@
 <template>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title"><SvgIcon name="key" :size="18" /> {{ t('apikey.list.title') }}</div>
-      <button class="btn btn-primary" @click="openForm()"><SvgIcon name="plus" :size="14" /> {{ t('apikey.list.add') }}</button>
-    </div>
-    <div class="alert alert-info">
-      {{ t('apikey.list.desc') }}
-    </div>
+  <div class="key-list">
+    <PageHeader :title="t('apikey.list.title')" :subtitle="t('apikey.list.desc')">
+      <template #actions>
+        <button class="btn btn-primary" @click="openForm()"><SvgIcon name="plus" :size="14" /> {{ t('apikey.list.add') }}</button>
+      </template>
+    </PageHeader>
 
-    <!-- Loading state -->
-    <div v-if="loading" class="loading-container">
-      <LoadingSpinner :size="32" />
-    </div>
+    <div class="card key-card">
+      <!-- Loading state -->
+      <div v-if="loading" class="loading-container">
+        <LoadingSpinner :size="32" />
+      </div>
 
-    <template v-else>
-    <div class="table-container">
+      <template v-else>
+      <div class="table-container">
       <table>
         <thead>
           <tr>
             <th>{{ t('apikey.list.keyName') }}</th>
             <th>{{ t('apikey.list.keyValue') }}</th>
             <th>{{ t('apikey.list.status') }}</th>
-            <th>{{ t('apikey.list.share') }}</th>
+            <th class="th-center">{{ t('apikey.list.share') }}</th>
             <th>{{ t('apikey.list.lastUsed') }}</th>
             <th>{{ t('apikey.list.createdAt') }}</th>
-            <th>{{ t('apikey.list.actions') }}</th>
+            <th class="th-actions">{{ t('apikey.list.actions') }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="key in apiKeys" :key="key.id">
-            <td><strong>{{ key.keyName }}</strong></td>
             <td>
-              <code class="model-tag" style="user-select:all;cursor:pointer;" @click="copyKey(key.keyValue)">
-                {{ maskKey(key.keyValue) }}
-              </code>
-              <CopyButton :text="key.keyValue" :title="t('apikey.list.copy')" />
+              <div class="key-name-cell">
+                <span class="key-avatar"><SvgIcon name="key" :size="14" /></span>
+                <strong class="key-name-text">{{ key.keyName }}</strong>
+              </div>
+            </td>
+            <td>
+              <div class="key-value-cell">
+                <code class="model-tag key-code" @click="copyKey(key.keyValue)">
+                  {{ maskKey(key.keyValue) }}
+                </code>
+                <CopyButton :text="key.keyValue" :title="t('apikey.list.copy')" />
+              </div>
             </td>
             <td>
               <span v-if="key.enabled === 1" class="badge badge-success">
@@ -44,8 +50,8 @@
                 <span class="status-dot inactive"></span>{{ t('common.disabled') }}
               </span>
             </td>
-            <td>
-              <div style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
+            <td class="td-center">
+              <div class="share-cell">
                 <ToggleSwitch
                   :model-value="key.shared === 1"
                   size="sm"
@@ -64,10 +70,10 @@
                 </button>
               </div>
             </td>
-            <td style="font-size:12px;color:var(--text-muted);">{{ key.lastUsedAt ? formatLocalDateTimeFull(key.lastUsedAt) : t('apikey.list.neverUsed') }}</td>
-            <td style="font-size:12px;color:var(--text-muted);">{{ formatLocalDateTimeFull(key.createdAt) }}</td>
-            <td>
-              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+            <td class="key-date">{{ key.lastUsedAt ? formatLocalDateTimeFull(key.lastUsedAt) : t('apikey.list.neverUsed') }}</td>
+            <td class="key-date">{{ formatLocalDateTimeFull(key.createdAt) }}</td>
+            <td class="td-actions">
+              <div class="row-actions">
                 <router-link :to="`/admin/apikey/usage/${key.id}`" class="btn btn-sm btn-secondary"><SvgIcon name="detail" :size="14" /> {{ t('apikey.list.view') }}</router-link>
                 <button class="btn btn-sm btn-secondary" @click="openForm(key)"><SvgIcon name="edit" :size="14" /> {{ t('apikey.list.edit') }}</button>
                 <button class="btn btn-sm btn-danger" @click="confirmDelete(key)"><SvgIcon name="trash" :size="14" /> {{ t('apikey.list.delete') }}</button>
@@ -75,13 +81,19 @@
             </td>
           </tr>
           <tr v-if="!apiKeys.length">
-            <td colspan="7" style="text-align:center;color:var(--text-muted);padding:40px;">
-              {{ t('apikey.list.empty') }}
+            <td colspan="7">
+              <div class="empty-state">
+                <SvgIcon name="key" :size="28" />
+                <p>{{ t('apikey.list.empty') }}</p>
+                <button class="btn btn-primary btn-sm" @click="openForm()">
+                  <SvgIcon name="plus" :size="14" /> {{ t('apikey.list.add') }}
+                </button>
+              </div>
             </td>
           </tr>
         </tbody>
       </table>
-    </div>
+      </div>
 
     <!-- Mobile card list -->
     <div class="mobile-card-list">
@@ -142,6 +154,7 @@
       </div>
     </div>
     </template>
+    </div>
   </div>
 
   <!-- Common Dialog -->
@@ -189,13 +202,13 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onActivated } from 'vue'
-import { useRouter } from 'vue-router'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import { shareApi } from '@/api/share'
 import Dialog from '@/components/common/Dialog.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
@@ -205,7 +218,6 @@ const { t } = useI18n()
 const { visible, title, message, type, confirmClass, confirmText, onConfirm, open } = useDialog()
 const { showToast } = useToast()
 
-const router = useRouter()
 
 const apiKeys = ref<ApiKey[]>([])
 const loading = ref(true)
@@ -404,12 +416,111 @@ onActivated(() => {
 </script>
 
 <style scoped>
+/* ── Page shell ── */
+.key-card {
+  padding: 0;
+  overflow: hidden;
+  margin-bottom: 0;
+}
+
+.key-card:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.key-card .table-container {
+  border-radius: 0;
+}
+
 /* Loading state */
 .loading-container {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 60px 0;
+  padding: 60px 20px;
+}
+
+/* ── Table cells ── */
+.key-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.key-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+  color: var(--accent-blue);
+  flex-shrink: 0;
+}
+
+.key-name-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.key-value-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.key-code {
+  cursor: pointer;
+  user-select: all;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: border-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
+}
+
+.key-code:hover {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.share-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.key-date {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.th-center,
+.td-center {
+  text-align: center;
+}
+
+.th-actions,
+.td-actions {
+  text-align: right;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  flex-wrap: nowrap;
 }
 
 /* Warning button (revoke share) */
@@ -428,10 +539,10 @@ onActivated(() => {
   padding: 4px 6px;
   background: transparent;
   border: 1px solid var(--border-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--accent-blue);
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
 }
 .btn-icon-link:hover {
   background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
@@ -497,10 +608,14 @@ onActivated(() => {
 }
 
 .mobile-card-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   text-align: center;
   color: var(--text-muted);
   padding: 40px 16px;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 @media (max-width: 768px) {

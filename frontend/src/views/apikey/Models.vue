@@ -1,8 +1,17 @@
 <template>
-  <div class="card">
-    <div class="card-header">
-      <div class="card-title">{{ t('apikey.usage.title').replace('{name}', keyName) }}</div>
-      <div style="display:flex;gap:12px;align-items:center;">
+  <div class="key-usage">
+    <div class="page-header cfg-page-header">
+      <div class="page-header-main">
+        <div class="title-row">
+          <router-link to="/admin/apikey/list" class="back-link" :title="t('common.back')">
+            <SvgIcon name="arrow-left" :size="16" />
+          </router-link>
+          <h2>{{ t('apikey.usage.title').replace('{name}', keyName) }}</h2>
+          <span v-if="sortedModels.length" class="badge badge-muted">{{ sortedModels.length }}</span>
+        </div>
+        <p>{{ t('apikey.usage.subtitle') }}</p>
+      </div>
+      <div class="header-actions">
         <TabSwitch
           v-if="modelStats.length"
           v-model="period"
@@ -14,7 +23,6 @@
             { value: 'month', label: t('dashboard.periodMonth') },
           ]"
         />
-        <router-link to="/admin/apikey/list" class="btn btn-secondary"><SvgIcon name="arrow-left" :size="14" /> {{ t('common.back') }}</router-link>
       </div>
     </div>
 
@@ -24,35 +32,38 @@
 
     <template v-else>
     <!-- Summary stats -->
-    <div v-if="modelStats.length" class="usage-summary">
-      <div class="stat-item">
-        <div class="stat-label">{{ t('apikey.usage.totalRequests') }}</div>
-        <div class="stat-value">{{ formatNumber(totalRequestCount) }}</div>
+    <div v-if="modelStats.length" class="stat-strip">
+      <div class="stat-cell">
+        <div class="stat-cell-label">{{ t('apikey.usage.totalRequests') }}</div>
+        <div class="stat-cell-value">{{ formatNumber(totalRequestCount) }}</div>
       </div>
-      <div class="stat-item">
-        <div class="stat-label">{{ t('apikey.usage.totalTokens') }}</div>
-        <div class="stat-value">{{ formatTokens(totalTokens) }}</div>
+      <div class="stat-cell">
+        <div class="stat-cell-label">{{ t('apikey.usage.totalTokens') }}</div>
+        <div class="stat-cell-value">{{ formatTokens(totalTokens) }}</div>
       </div>
-      <div class="stat-item">
-        <div class="stat-label">{{ t('channel.models.inputTokens') }}</div>
-        <div class="stat-value">{{ formatTokens(totalPromptTokens) }}</div>
+      <div class="stat-cell">
+        <div class="stat-cell-label">{{ t('channel.models.inputTokens') }}</div>
+        <div class="stat-cell-value">{{ formatTokens(totalPromptTokens) }}</div>
       </div>
-      <div class="stat-item">
-        <div class="stat-label">{{ t('channel.models.outputTokens') }}</div>
-        <div class="stat-value">{{ formatTokens(totalCompletionTokens) }}</div>
+      <div class="stat-cell">
+        <div class="stat-cell-label">{{ t('channel.models.outputTokens') }}</div>
+        <div class="stat-cell-value">{{ formatTokens(totalCompletionTokens) }}</div>
       </div>
-      <div class="stat-item">
-        <div class="stat-label">{{ t('apikey.usage.avgResponse') }}</div>
-        <div class="stat-value">{{ formatResponseTime(keyAvgResponseTimeRecent30) }}</div>
+      <div class="stat-cell">
+        <div class="stat-cell-label">{{ t('apikey.usage.avgResponse') }}</div>
+        <div class="stat-cell-value">{{ formatResponseTime(keyAvgResponseTimeRecent30) }}</div>
       </div>
-      <div class="stat-item">
-        <div class="stat-label">{{ t('apikey.usage.avgOutputSpeed') }}</div>
-        <div class="stat-value">{{ formatOutputSpeed(keyAvgOutputSpeedRecent30) }}</div>
+      <div class="stat-cell">
+        <div class="stat-cell-label">{{ t('apikey.usage.avgOutputSpeed') }}</div>
+        <div class="stat-cell-value">{{ formatOutputSpeed(keyAvgOutputSpeedRecent30) }}</div>
       </div>
     </div>
 
-    <div v-if="!sortedModels.length" class="empty-state">{{ t('apikey.usage.noData') }}</div>
-    <div class="table-container" v-else>
+    <div v-if="!sortedModels.length" class="card">
+      <div class="empty-state">{{ t('apikey.usage.noData') }}</div>
+    </div>
+    <div v-else class="card detail-card">
+      <div class="table-container">
       <!-- Desktop table view -->
       <table class="desktop-table">
         <thead>
@@ -126,6 +137,7 @@
           </div>
         </div>
       </div>
+    </div>
     </div>
     </template>
   </div>
@@ -236,30 +248,39 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.desktop-table td {
-  vertical-align: middle;
+.cfg-page-header {
+  align-items: flex-start;
 }
 
-.usage-summary {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 16px;
-  padding: 16px 0;
-  margin-bottom: 16px;
-  border-bottom: 1px solid var(--border-color);
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
-.stat-item {
-  text-align: center;
-}
-.stat-label {
-  font-size: 12px;
+
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
-  margin-bottom: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  transition: all var(--dur-1);
+  flex-shrink: 0;
 }
-.stat-value {
-  font-size: 20px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
+
+.back-link:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.desktop-table td {
+  vertical-align: middle;
 }
 
 .mobile-card-list {
@@ -312,9 +333,6 @@ onMounted(async () => {
 }
 
 @media (max-width: 768px) {
-  .usage-summary {
-    grid-template-columns: repeat(3, 1fr);
-  }
   .desktop-table {
     display: none;
   }
@@ -326,8 +344,8 @@ onMounted(async () => {
 }
 
 @media (max-width: 480px) {
-  .usage-summary {
-    grid-template-columns: repeat(2, 1fr);
+  .mobile-card-stats {
+    flex-wrap: wrap;
   }
 }
 

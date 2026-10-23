@@ -1,15 +1,13 @@
 <template>
   <div class="group-mgr">
     <!-- ── Page Header ── -->
-    <div class="mgr-header">
-      <div class="header-left">
-        <h2>{{ t('group.list.title') }}</h2>
-        <p class="header-subtitle">{{ t('group.list.subtitle') }}</p>
-      </div>
-      <router-link to="/admin/model/group/form" class="btn btn-primary">
-        <SvgIcon name="plus" :size="14" /> {{ t('group.list.add') }}
-      </router-link>
-    </div>
+    <PageHeader :title="t('group.list.title')" :subtitle="t('group.list.subtitle')">
+      <template #actions>
+        <router-link to="/admin/model/group/form" class="btn btn-primary">
+          <SvgIcon name="plus" :size="14" /> {{ t('group.list.add') }}
+        </router-link>
+      </template>
+    </PageHeader>
 
     <!-- ── Filter Bar ── -->
     <div class="mgr-filter-bar">
@@ -61,7 +59,11 @@
     <!-- ── Card Grid ── -->
     <template v-else>
       <div v-if="filteredGroups.length === 0" class="mgr-empty">
-        {{ t('group.list.empty') }}
+        <SvgIcon name="grid" :size="26" />
+        <p>{{ t('group.list.empty') }}</p>
+        <router-link to="/admin/model/group/form" class="btn btn-primary btn-sm">
+          <SvgIcon name="plus" :size="14" /> {{ t('group.list.add') }}
+        </router-link>
       </div>
 
       <div v-else :class="['mgr-grid', viewMode === 'list' ? 'mgr-list' : '']">
@@ -183,6 +185,7 @@ import { formatSeconds } from '@/utils/format'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 
 /* ══════════════════════════════════════
    State
@@ -407,68 +410,51 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-/* ── Header ── */
-.mgr-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.header-left h2 {
-  margin: 0 0 4px;
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.header-subtitle {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-muted);
-  line-height: 1.4;
-}
-
 /* ── Filter Bar ── */
 .mgr-filter-bar {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
 }
 
 .filter-search {
   position: relative;
   display: flex;
   align-items: center;
-  flex: 1;
+  flex: 1 1 240px;
   min-width: 180px;
-  max-width: 320px;
+  max-width: 340px;
 }
 
 .filter-search .search-icon {
   position: absolute;
-  left: 10px;
+  left: 11px;
   color: var(--text-muted);
   pointer-events: none;
 }
 
 .filter-input {
   width: 100%;
-  padding: 7px 10px 7px 32px;
+  padding: 8px 12px 8px 33px;
   font-size: 13px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   color: var(--text-primary);
   font-family: inherit;
   outline: none;
-  transition: border-color 0.15s;
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
 
 .filter-input:focus {
   border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--accent-blue) 15%, transparent);
 }
 
 .filter-input::placeholder {
@@ -481,33 +467,35 @@ onUnmounted(() => {
 }
 
 .filter-select {
-  padding: 7px 28px 7px 10px;
+  height: 35px;
+  padding: 0 30px 0 11px;
   font-size: 13px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   color: var(--text-primary);
   font-family: inherit;
   outline: none;
   cursor: pointer;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%237b8497' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
-  transition: border-color 0.15s;
+  transition: border-color var(--dur-1) var(--ease-out), box-shadow var(--dur-1) var(--ease-out);
 }
 
 .filter-select:focus {
   border-color: var(--accent-blue);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--accent-blue) 15%, transparent);
 }
 
 /* ── View Toggle ── */
 .filter-view {
   display: flex;
   gap: 2px;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
+  margin-left: auto;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   padding: 2px;
 }
@@ -522,18 +510,18 @@ onUnmounted(() => {
   background: none;
   color: var(--text-muted);
   cursor: pointer;
-  border-radius: 4px;
-  transition: all 0.15s;
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
 .view-btn:hover {
   color: var(--text-primary);
-  background: var(--bg-hover);
 }
 
 .view-btn.active {
   color: var(--accent-blue);
-  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+  background: var(--bg-secondary);
+  box-shadow: var(--shadow-sm);
 }
 
 /* ── Loading ── */
@@ -545,11 +533,20 @@ onUnmounted(() => {
 
 /* ── Empty ── */
 .mgr-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
   text-align: center;
-  padding: 60px 20px;
+  padding: 56px 20px;
   color: var(--text-muted);
-  font-size: 14px;
+  font-size: 13px;
+  background: var(--bg-secondary);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
 }
+
+.mgr-empty p { margin: 0; }
 
 /* ══════════════════════════════════════
    Card Grid
@@ -564,21 +561,24 @@ onUnmounted(() => {
 .model-card {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md, 10px);
-  padding: 16px;
+  border-radius: var(--radius-md);
+  padding: 15px 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--dur-2) var(--ease-out),
+              box-shadow var(--dur-2) var(--ease-out),
+              transform var(--dur-2) var(--ease-out);
 }
 
 .model-card:hover {
-  border-color: color-mix(in srgb, var(--accent-blue) 35%, var(--border-color));
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  border-color: color-mix(in srgb, var(--accent-blue) 32%, var(--border-color));
+  box-shadow: var(--shadow-md);
 }
 
 .card-disabled {
-  opacity: 0.65;
+  opacity: 0.62;
 }
 
 /* ── Color Block（小组卡片专属：与入口模型页的中性灰底不同，整卡按哈希色着色）──
@@ -721,11 +721,11 @@ onUnmounted(() => {
 }
 
 .tag {
-  font-size: 11px;
-  padding: 1px 8px;
-  border-radius: 8px;
-  font-weight: 500;
-  letter-spacing: 0.2px;
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   white-space: nowrap;
 }
 
@@ -767,15 +767,17 @@ onUnmounted(() => {
   font-size: 10px;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.05em;
   white-space: nowrap;
+  font-weight: 550;
 }
 
 .stat-value {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13.5px;
+  font-weight: 650;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 
 /* 熔断成员数：跟在可路由数后面的小红标，悬停出提示 */

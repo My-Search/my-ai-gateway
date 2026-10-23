@@ -1,36 +1,31 @@
 <template>
   <div class="dashboard">
     <!-- Page Header -->
-    <div class="dashboard-header">
-      <div class="header-left">
-        <div class="title-row">
-          <h2>{{ t('nav.dashboard') }}</h2>
-          <div class="header-controls">
-            <!-- 时间段下拉选择器 -->
-            <div class="period-dropdown" ref="periodDropdownRef">
-              <button class="period-trigger" @click="openPeriod">
-                <SvgIcon name="calendar" :size="14" />
-                <span>{{ periodOptions.find(o => o.value === rangeKey)?.label }}</span>
-                <SvgIcon name="chevron-down" :size="12" :class="{ rotated: periodOpen }" />
+    <PageHeader :title="t('nav.dashboard')" :subtitle="t('dashboard.subtitle')">
+      <template #actions>
+        <!-- 时间段下拉选择器 -->
+        <div class="period-dropdown" ref="periodDropdownRef">
+          <button class="period-trigger" :class="{ open: periodOpen }" @click="openPeriod">
+            <SvgIcon name="calendar" :size="14" />
+            <span>{{ periodOptions.find(o => o.value === rangeKey)?.label }}</span>
+            <SvgIcon name="chevron-down" :size="12" :class="{ rotated: periodOpen }" />
+          </button>
+          <Transition name="fade">
+            <div v-if="periodOpen" class="period-menu">
+              <button
+                v-for="opt in periodOptions"
+                :key="opt.value"
+                :class="['period-option', { active: rangeKey === opt.value }]"
+                @click="selectPeriod(opt.value)"
+              >
+                <SvgIcon v-if="rangeKey === opt.value" name="check" :size="13" class="opt-check" />
+                {{ opt.label }}
               </button>
-              <Transition name="fade">
-                <div v-if="periodOpen" class="period-menu">
-                  <button
-                    v-for="opt in periodOptions"
-                    :key="opt.value"
-                    :class="['period-option', { active: rangeKey === opt.value }]"
-                    @click="selectPeriod(opt.value)"
-                  >
-                    {{ opt.label }}
-                  </button>
-                </div>
-              </Transition>
             </div>
-          </div>
+          </Transition>
         </div>
-        <p>{{ t('dashboard.subtitle') }}</p>
-      </div>
-    </div>
+      </template>
+    </PageHeader>
 
     <!-- 自定义时间段选择弹框：日期可就地选择或手动输入，时间默认 00:00:00 / 23:59:59 -->
     <Dialog
@@ -206,7 +201,7 @@
           </thead>
           <tbody>
             <tr v-for="(ch, idx) in stats.channelRank" :key="ch.name">
-              <td class="col-idx">{{ idx + 1 }}</td>
+              <td class="col-idx"><span class="rank-idx" :class="{ 'rank-idx--top': idx < 3 }" :data-rank="idx + 1">{{ idx + 1 }}</span></td>
               <td>
                 <div class="rank-name-cell">
                   <span class="rank-avatar" :style="{ background: iconGradient(ch.name) }">{{ (ch.name || '?').charAt(0).toUpperCase() }}</span>
@@ -251,7 +246,7 @@
           </thead>
           <tbody>
             <tr v-for="(m, idx) in currentModelRank" :key="m.name + (m.channelName || '')">
-              <td class="col-idx">{{ idx + 1 }}</td>
+              <td class="col-idx"><span class="rank-idx" :class="{ 'rank-idx--top': idx < 3 }" :data-rank="idx + 1">{{ idx + 1 }}</span></td>
               <td>
                 <div class="rank-name-cell">
                   <span class="rank-avatar" :style="{ background: iconGradient(m.name) }">{{ (m.name || '?').charAt(0).toUpperCase() }}</span>
@@ -295,7 +290,7 @@
             </thead>
             <tbody>
               <tr v-for="(k, idx) in stats.keyRank" :key="k.name">
-                <td class="col-idx">{{ idx + 1 }}</td>
+                <td class="col-idx"><span class="rank-idx" :class="{ 'rank-idx--top': idx < 3 }" :data-rank="idx + 1">{{ idx + 1 }}</span></td>
                 <td>
                   <div class="rank-name-cell">
                     <span class="rank-avatar" :style="{ background: iconGradient(k.name) }">{{ (k.name || '?').charAt(0).toUpperCase() }}</span>
@@ -567,17 +562,6 @@ async function fetchStats() {
   }
 }
 
-// 时间段切换时的加载：先置 loading 再拉取，避免旧数据残留（脏读）；
-// 120s 轮询与 keep-alive 恢复仍走原始 fetchStats，保持静默不闪烁
-async function refreshStatsOnSwitch() {
-  loading.value = true
-  try {
-    await fetchStats()
-  } finally {
-    loading.value = false
-  }
-}
-
 // 快捷时间段切换时同步起止时间，便于切到「自定义」时以此为初始区间。
 // 快捷项按整天处理：开始 00:00:00、结束 23:59:59（与后端一致）。
 function syncRangeDates() {
@@ -651,44 +635,7 @@ onUnmounted(() => {
 
 /* ── Header ── */
 .dashboard-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   margin-bottom: 20px;
-  gap: 16px;
-  flex-wrap: nowrap;
-}
-
-.dashboard-header .header-left h2 {
-  font-size: 24px;
-  font-weight: 700;
-  color: var(--text-primary);
-  letter-spacing: -0.02em;
-}
-
-.dashboard-header .header-left p {
-  font-size: 13px;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-
-.header-left {
-  width: 100%;
-  min-width: 0;
-}
-.header-left .title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: nowrap;
-}
-
-.header-controls {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
 }
 
 /* ── 时间段下拉选择器 ── */
@@ -699,54 +646,63 @@ onUnmounted(() => {
 .period-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
+  gap: 7px;
+  height: 34px;
+  padding: 0 12px;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius, 6px);
+  border-radius: var(--radius);
   background: var(--bg-secondary);
   color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 12.5px;
+  font-weight: 550;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: border-color var(--dur-1) var(--ease-out),
+              color var(--dur-1) var(--ease-out),
+              box-shadow var(--dur-1) var(--ease-out);
   font-family: inherit;
   line-height: 1.5;
+  box-shadow: var(--shadow-sm);
 }
 .period-trigger:hover {
-  border-color: color-mix(in srgb, var(--text-muted) 40%, var(--border-color));
+  border-color: var(--border-strong);
   color: var(--text-primary);
+}
+.period-trigger.open {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 .period-trigger .rotated {
   transform: rotate(180deg);
-  transition: transform 0.2s ease;
+  transition: transform var(--dur-2) var(--ease-out);
 }
 
 .period-menu {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + 6px);
   right: 0;
-  min-width: 120px;
+  min-width: 148px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius, 6px);
-  box-shadow: var(--shadow-md);
-  padding: 4px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg, var(--shadow-md));
+  padding: 5px;
   z-index: 100;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 .period-option {
   display: flex;
   align-items: center;
-  padding: 6px 10px;
+  gap: 6px;
+  padding: 7px 9px;
   border: none;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12.5px;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
   font-family: inherit;
   text-align: left;
   white-space: nowrap;
@@ -756,9 +712,12 @@ onUnmounted(() => {
   color: var(--text-primary);
 }
 .period-option.active {
-  background: var(--bg-hover);
   color: var(--accent-blue);
   font-weight: 600;
+}
+.period-option .opt-check {
+  flex-shrink: 0;
+  color: var(--accent-blue);
 }
 
 /* 下拉菜单过渡动画 */
@@ -801,19 +760,21 @@ onUnmounted(() => {
 /* ── Stats Grid：桌面宽度下四张卡片保持同一行 ── */
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 20px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
 }
 
 .stat-card {
   position: relative;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md, 12px);
-  padding: 16px 18px;
+  border-radius: var(--radius-md);
+  padding: 16px 18px 14px;
   box-shadow: var(--shadow-sm);
-  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+  transition: box-shadow var(--dur-2) var(--ease-out),
+              transform var(--dur-2) var(--ease-out),
+              border-color var(--dur-2) var(--ease-out);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -821,54 +782,87 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+/* 顶部品牌色细边，作为卡片的身份标识 */
+.stat-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  opacity: 0.85;
+}
+.stat-card--blue::before { background: linear-gradient(90deg, transparent, var(--accent-blue), transparent); }
+.stat-card--green::before { background: linear-gradient(90deg, transparent, var(--accent-green), transparent); }
+.stat-card--purple::before { background: linear-gradient(90deg, transparent, var(--accent-purple), transparent); }
+.stat-card--yellow::before { background: linear-gradient(90deg, transparent, var(--accent-yellow), transparent); }
+
 .stat-card:hover {
   box-shadow: var(--shadow-md);
   transform: translateY(-2px);
+  border-color: var(--border-strong);
 }
 
 .stat-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   min-width: 0;
 }
 
 .stat-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 10px;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
-.stat-card--blue .stat-icon { background: color-mix(in srgb, var(--accent-blue) 16%, transparent); color: var(--accent-blue); }
-.stat-card--green .stat-icon { background: color-mix(in srgb, var(--accent-green) 16%, transparent); color: var(--accent-green); }
-.stat-card--purple .stat-icon { background: rgba(188,140,255,0.16); color: #bc8cff; }
-.stat-card--yellow .stat-icon { background: color-mix(in srgb, var(--accent-yellow, #d29922) 16%, transparent); color: var(--accent-yellow, #d29922); }
+.stat-card--blue .stat-icon { background: color-mix(in srgb, var(--accent-blue) 13%, transparent); color: var(--accent-blue); }
+.stat-card--green .stat-icon { background: color-mix(in srgb, var(--accent-green) 13%, transparent); color: var(--accent-green); }
+.stat-card--purple .stat-icon { background: color-mix(in srgb, var(--accent-purple) 14%, transparent); color: var(--accent-purple); }
+.stat-card--yellow .stat-icon { background: color-mix(in srgb, var(--accent-yellow) 14%, transparent); color: color-mix(in srgb, var(--accent-yellow) 88%, var(--text-primary)); }
 
 .stat-head { min-width: 0; flex: 1; }
-.stat-label { font-size: 12px; color: var(--text-muted); margin-bottom: 2px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.stat-value { font-size: 26px; font-weight: 700; line-height: 1.15; color: var(--text-primary); white-space: nowrap; }
-.stat-value small { font-size: 13px; font-weight: 400; color: var(--text-muted); margin-left: 2px; }
+.stat-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stat-value {
+  font-size: 25px;
+  font-weight: 680;
+  line-height: 1.12;
+  color: var(--text-primary);
+  letter-spacing: -0.028em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.stat-value small { font-size: 12px; font-weight: 500; color: var(--text-muted); margin-left: 3px; letter-spacing: 0; }
 
 /* 卡片右侧迷你趋势线（随时间段变化的稀疏折线） */
 .stat-spark {
-  width: 92px;
-  height: 34px;
+  width: 80px;
+  height: 30px;
   flex-shrink: 0;
   overflow: visible;
+  margin-top: 3px;
+  opacity: 0.9;
 }
 .stat-spark .spark-line { fill: none; stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 .stat-spark .spark-area { stroke: none; }
 .stat-card--blue .spark-line { stroke: var(--accent-blue); }
-.stat-card--blue .spark-area { fill: color-mix(in srgb, var(--accent-blue) 14%, transparent); }
+.stat-card--blue .spark-area { fill: color-mix(in srgb, var(--accent-blue) 13%, transparent); }
 .stat-card--green .spark-line { stroke: var(--accent-green); }
-.stat-card--green .spark-area { fill: color-mix(in srgb, var(--accent-green) 14%, transparent); }
-.stat-card--purple .spark-line { stroke: #bc8cff; }
-.stat-card--purple .spark-area { fill: rgba(188,140,255,0.14); }
-.stat-card--yellow .spark-line { stroke: var(--accent-yellow, #d29922); }
-.stat-card--yellow .spark-area { fill: color-mix(in srgb, var(--accent-yellow, #d29922) 14%, transparent); }
+.stat-card--green .spark-area { fill: color-mix(in srgb, var(--accent-green) 13%, transparent); }
+.stat-card--purple .spark-line { stroke: var(--accent-purple); }
+.stat-card--purple .spark-area { fill: color-mix(in srgb, var(--accent-purple) 13%, transparent); }
+.stat-card--yellow .spark-line { stroke: var(--accent-yellow); }
+.stat-card--yellow .spark-area { fill: color-mix(in srgb, var(--accent-yellow) 13%, transparent); }
 
 .stat-bottom {
   display: flex;
@@ -877,15 +871,17 @@ onUnmounted(() => {
   gap: 8px;
   flex-wrap: wrap;
   min-height: 20px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
 }
 .stat-meta {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-muted);
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
-.stat-badges { display: inline-flex; gap: 4px; }
+.stat-badges { display: inline-flex; gap: 5px; }
 
 /* 环比（较昨日 / 较上周同期 / 较上月同期 / 较上期） */
 .stat-change {
@@ -905,67 +901,121 @@ onUnmounted(() => {
 }
 
 /* ── Rankings ── */
-.rank-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.rank-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 
-.rank-card { display: flex; flex-direction: column; }
+.rank-card {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.rank-card .card-header {
+  padding: 15px 18px;
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--bg-sunken) 60%, var(--bg-secondary));
+}
+
+.rank-card .card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.rank-card .card-title :deep(svg) { color: var(--text-muted); }
 
 .view-all-link {
   margin-left: auto;
-  font-size: 13px;
-  color: var(--accent-blue);
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--text-secondary);
   text-decoration: none;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
-.view-all-link:hover { text-decoration: underline; }
+.view-all-link:hover {
+  background: var(--bg-hover);
+  color: var(--accent-blue);
+}
 
 .rank-state {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px 0;
+  padding: 46px 0;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .table-scroll {
   overflow-y: auto;
-  max-height: 320px;
+  max-height: 328px;
 }
 .table-scroll::-webkit-scrollbar {
-  width: 6px;
+  width: 8px;
 }
 .table-scroll::-webkit-scrollbar-thumb {
-  background: var(--bg-hover);
-  border-radius: 3px;
+  background: var(--border-strong);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 .rank-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 .rank-table thead th {
   text-align: left;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
   color: var(--text-muted);
-  padding: 10px 12px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--border-color);
   white-space: nowrap;
+  background: var(--bg-sunken);
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
-.rank-table thead th.col-num,
-.rank-table thead th.col-rate { text-align: left; }
 .rank-table tbody td {
-  padding: 10px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  padding: 9px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 55%, transparent);
   color: var(--text-primary);
   vertical-align: middle;
 }
 .rank-table tbody tr:last-child td { border-bottom: none; }
+.rank-table tbody tr { transition: background var(--dur-1) var(--ease-out); }
 .rank-table tbody tr:hover { background: var(--bg-hover); }
 
-.col-idx { width: 34px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.col-num { width: 84px; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: left; }
-.col-rate { width: 150px; }
+.col-idx { width: 40px; }
+.col-num { width: 84px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.col-rate { width: 148px; }
+
+.rank-idx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  background: var(--bg-sunken);
+}
+.rank-idx--top {
+  color: var(--accent-blue);
+  background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
+}
 
 .btn-icon {
   display: inline-flex;
@@ -997,58 +1047,61 @@ onUnmounted(() => {
   to { transform: rotate(360deg); }
 }
 
-.rank-name-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rank-name-cell { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .rank-avatar {
-  width: 22px; height: 22px;
-  border-radius: 6px;
+  width: 24px; height: 24px;
+  border-radius: 7px;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 700; color: #fff;
   flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.14);
 }
-.rank-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rank-channel-tag { color: var(--text-muted); font-size: 12px; }
+.rank-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.rank-channel-tag { color: var(--text-muted); font-size: 11.5px; font-weight: 400; }
 
 .rate-cell { display: flex; align-items: center; gap: 8px; }
-.rate-text { width: 46px; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.rate-text {
+  width: 44px;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
 .rate-bar {
   flex: 1;
-  height: 6px;
+  height: 5px;
   border-radius: 9999px;
-  background: var(--bg-primary);
+  background: var(--bg-sunken);
   overflow: hidden;
   min-width: 40px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border-color) 60%, transparent);
 }
 .rate-bar-fill {
   display: block;
   height: 100%;
   border-radius: 9999px;
-  background: linear-gradient(90deg, #3fb950, #56d364);
-  transition: width 0.3s;
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--accent-green) 78%, var(--accent-blue)),
+    var(--accent-green));
+  transition: width var(--dur-2) var(--ease-out);
 }
 
 /* ── Responsive ── */
 @media (max-width: 1200px) {
-  .stats-grid { grid-template-columns: repeat(2, 1fr); }
-  .rank-grid { grid-template-columns: 1fr; }
+  .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rank-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 768px) {
-  .stats-grid { grid-template-columns: 1fr; }
-  .dashboard-header {
-    align-items: center;
-    gap: 8px;
-  }
-  .dashboard-header .header-left {
-    min-width: 0;
-  }
-  .dashboard-header .header-left h2 {
-    font-size: 20px;
-  }
-  .period-trigger {
-    padding: 4px 8px;
-    font-size: 12px;
-    gap: 4px;
-  }
-  .stat-spark { width: 70px; }
-  .col-rate { width: 110px; }
+  .stats-grid { grid-template-columns: minmax(0, 1fr); }
+  .stat-spark { width: 68px; }
+  .col-rate { width: 108px; }
+  .col-num { width: 68px; }
+  .rank-table thead th,
+  .rank-table tbody td { padding: 9px 10px; }
 }
 </style>
