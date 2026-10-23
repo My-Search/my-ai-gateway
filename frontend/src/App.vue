@@ -1,6 +1,5 @@
 <template>
   <router-view />
-  <LoadingModal />
   <ToastContainer />
 </template>
 
@@ -10,7 +9,6 @@
 import { onMounted } from 'vue'
 import { useThemeStore } from '@/stores/theme'
 import { useLocaleStore } from '@/stores/locale'
-import LoadingModal from '@/components/common/LoadingModal.vue'
 import ToastContainer from '@/components/common/ToastContainer.vue'
 
 const themeStore = useThemeStore()

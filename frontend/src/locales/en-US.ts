@@ -803,6 +803,11 @@ export default {
   'error.deleteFailed': 'Delete failed',
   'error.updateFailed': 'Update failed',
   'error.unknown': 'Operation failed',
+
+  /* ========== 404 ========== */
+  'notFound.title': 'Page not found',
+  'notFound.desc': 'The address you visited may have been moved, deleted, or never existed.',
+  'notFound.back': 'Back to console',
   /* ========== Nav: Model Groups ========== */
   'nav.modelGroups': 'Model Groups',
 

@@ -12,7 +12,12 @@
     </div>
   </div>
 
-  <ConfigShell :sections="sections" :railTitle="t('cfg.nav')">
+  <!-- 编辑态先显示行内加载态，避免空表单闪现 -->
+  <div v-if="loading" class="page-loading">
+    <LoadingSpinner :size="18" :text="t('common.loading')" />
+  </div>
+
+  <ConfigShell v-else :sections="sections" :railTitle="t('cfg.nav')">
     <!-- ══ 基础信息 ══ -->
     <ConfigSection id="grp-basic" :title="t('cfg.basic')" :desc="t('group.form.namePlaceholder')" icon="grid">
       <ConfigField :label="t('group.form.name')" required>
@@ -73,6 +78,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useToast } from '@/composables/useToast'
 import { groupApi, type GroupStrategy } from '@/api/group'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import ConfigShell from '@/components/common/ConfigShell.vue'
 import ConfigSection from '@/components/common/ConfigSection.vue'
@@ -85,6 +91,8 @@ const { showToast } = useToast()
 
 const isEdit = computed(() => !!route.params.id)
 const saving = ref(false)
+// 编辑态初始即加载中（数据到达前显示骨架），新建态直接渲染表单
+const loading = ref(isEdit.value)
 
 const sections = computed(() => [
   { id: 'grp-basic', label: t('cfg.basic'), icon: 'grid' },
@@ -121,6 +129,8 @@ onMounted(async () => {
   } catch (e: any) {
     showToast(e.message || t('error.loadFailed'), { type: 'error' })
     router.push('/admin/model/group/list')
+  } finally {
+    loading.value = false
   }
 })
 
@@ -270,4 +280,5 @@ async function save() {
     grid-template-columns: 1fr;
   }
 }
+
 </style>

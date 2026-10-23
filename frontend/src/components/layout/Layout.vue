@@ -71,13 +71,20 @@ import { authApi } from '@/api/auth'
 import { useThemeStore } from '@/stores/theme'
 import { useI18n } from '@/composables/useI18n'
 import { useLocaleStore } from '@/stores/locale'
+import { useRoutePrefetch } from '@/composables/useRoutePrefetch'
 import Sidebar from './Sidebar.vue'
 
 /**
  * 需要 keep-alive 缓存的主菜单页面组件名（与各视图 defineOptions name 对应）。
  * 仅缓存轮询轻量、状态值得保留的列表/仪表盘页；带 SSE 或长连接的重型页面（日志）不缓存。
+ *
+ * ModelGroupList 与其它列表页同构（onMounted 首载 + onActivated 回访刷新），
+ * 一并缓存后，从菜单切回小组列表能立即显示上次内容，再由 onActivated 静默刷新。
  */
-const cachedViews = ['Dashboard', 'ChannelList', 'ModelList', 'ApikeyList']
+const cachedViews = ['Dashboard', 'ChannelList', 'ModelList', 'ModelGroupList', 'ApikeyList']
+
+// 进入后台后空闲预取各菜单页 chunk，让"点菜单立即显示页面"成立
+useRoutePrefetch()
 
 const route = useRoute()
 const router = useRouter()

@@ -215,12 +215,4 @@ async function handleSave() {
   white-space: nowrap;
 }
 
-.page-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
 </style>

@@ -803,6 +803,11 @@ export default {
   'error.deleteFailed': '删除失败',
   'error.updateFailed': '更新失败',
   'error.unknown': '操作失败',
+
+  /* ========== 404 ========== */
+  'notFound.title': '页面不存在',
+  'notFound.desc': '你访问的地址可能已被移动、删除，或者从来就不存在。',
+  'notFound.back': '返回控制台',
   /* ========== Nav: Model Groups ========== */
   'nav.modelGroups': '模型小组',
 

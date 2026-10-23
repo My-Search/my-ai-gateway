@@ -20,7 +20,12 @@
     </div>
   </div>
 
-  <ConfigShell :sections="sections" :railTitle="t('cfg.nav')">
+  <!-- 编辑态先显示行内加载态，避免空表单闪现 -->
+  <div v-if="loading" class="page-loading">
+    <LoadingSpinner :size="18" :text="t('common.loading')" />
+  </div>
+
+  <ConfigShell v-else :sections="sections" :railTitle="t('cfg.nav')">
     <!-- ══ 基础信息 ══ -->
     <ConfigSection id="mdl-basic" :title="t('cfg.basic')" :desc="t('model.form.modelNameHint')" icon="model">
       <ConfigField :label="t('model.form.modelName')" :hint="t('model.form.modelNameHint')" required>
@@ -172,6 +177,7 @@ import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel } from '@/api/model'
 import Dialog from '@/components/common/Dialog.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import ConfigShell from '@/components/common/ConfigShell.vue'
 import ConfigSection from '@/components/common/ConfigSection.vue'
@@ -183,6 +189,8 @@ const router = useRouter()
 const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 const isEdit = computed(() => !!route.params.id)
 const saving = ref(false)
+// 编辑态初始即加载中（数据到达前显示骨架），新建态直接渲染表单
+const loading = ref(isEdit.value)
 const showStrategyInfo = ref(false)
 
 const sections = computed(() => {
@@ -281,6 +289,8 @@ onMounted(async () => {
     } catch (e: any) {
       open({ title: t('model.form.loadFailed'), message: e.message })
       router.push('/admin/model/list')
+    } finally {
+      loading.value = false
     }
   }
 })
@@ -475,4 +485,5 @@ async function handleSave() {
     grid-template-columns: 1fr;
   }
 }
+
 </style>

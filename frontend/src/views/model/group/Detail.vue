@@ -609,14 +609,6 @@ onBeforeUnmount(() => {
   color: var(--text-muted);
   font-size: 12px;
 }
-.page-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
 table td { vertical-align: middle; }
 .channel-cell { white-space: nowrap; }
 .row-disabled { opacity: 0.5; background-color: var(--bg-muted); }

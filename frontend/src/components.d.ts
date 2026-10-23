@@ -16,7 +16,6 @@ declare module 'vue' {
     JsonNode: typeof import('./components/common/JsonNode.vue')['default']
     JsonTreeViewer: typeof import('./components/common/JsonTreeViewer.vue')['default']
     Layout: typeof import('./components/layout/Layout.vue')['default']
-    LoadingModal: typeof import('./components/common/LoadingModal.vue')['default']
     LoadingSpinner: typeof import('./components/common/LoadingSpinner.vue')['default']
     ModelConfigRuleDialog: typeof import('./components/channel/ModelConfigRuleDialog.vue')['default']
     PageHeader: typeof import('./components/common/PageHeader.vue')['default']

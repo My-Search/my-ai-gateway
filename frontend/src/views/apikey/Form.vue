@@ -16,7 +16,12 @@
       </div>
     </div>
 
-    <form @submit.prevent="handleSave">
+    <!-- 编辑态先显示行内加载态，避免空表单闪现 -->
+    <div v-if="loading" class="page-loading">
+      <LoadingSpinner :size="18" :text="t('common.loading')" />
+    </div>
+
+    <form v-else @submit.prevent="handleSave">
       <ConfigShell :sections="sections" :railTitle="t('cfg.nav')">
         <!-- ══ 密钥信息 ══ -->
         <ConfigSection id="key-basic" :title="t('apikey.form.sectionBasic')"
@@ -78,6 +83,7 @@ import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { apikeyApi, type ApiKey } from '@/api/apikey'
 import Dialog from '@/components/common/Dialog.vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import ConfigShell from '@/components/common/ConfigShell.vue'
 import ConfigSection from '@/components/common/ConfigSection.vue'
@@ -89,6 +95,8 @@ const router = useRouter()
 const { visible, title, message, type, confirmClass, onConfirm, open } = useDialog()
 const isEdit = computed(() => !!route.params.id)
 const saving = ref(false)
+// 编辑态初始即加载中（数据到达前显示骨架），新建态直接渲染表单
+const loading = ref(isEdit.value)
 const form = ref<Partial<ApiKey>>({ keyName: '', keyValue: '', enabled: 1 })
 
 /** 启用状态：表单里是 1/0，开关组件用布尔值 */
@@ -115,6 +123,8 @@ onMounted(async () => {
     } catch (e: any) {
       open({ title: t('error.loadFailed'), message: e.message })
       router.push('/admin/apikey/list')
+    } finally {
+      loading.value = false
     }
   }
 })
@@ -190,4 +200,5 @@ async function handleSave() {
   font-size: 12.5px;
   color: var(--text-muted);
 }
+
 </style>

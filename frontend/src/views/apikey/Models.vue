@@ -174,7 +174,7 @@ const keyName = ref('')
 const modelStats = ref<ApiKeyModelUsageStat[]>([])
 const keyAvgResponseTimeRecent30 = ref<number>(0)
 const keyAvgOutputSpeedRecent30 = ref<number>(0)
-const loading = ref(false)
+const loading = ref(true)
 
 type Period = 'all' | 'today' | 'week' | 'month'
 const period = ref<Period>('today')
@@ -349,12 +349,4 @@ onMounted(async () => {
   }
 }
 
-.page-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
 </style>

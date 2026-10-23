@@ -440,15 +440,6 @@ onMounted(async () => {
 }
 
 /* Page loading state */
-.page-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
 /* ---------- Badges ---------- */
 .role-badge {
   font-size: 11px;

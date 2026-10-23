@@ -1,13 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { checkAuth } from '@/composables/useAuth'
-import { useLoadingStore } from '@/stores/loading'
-
-// 延迟显示加载模态，避免快速导航时闪烁
-const LOADING_SHOW_DELAY = 300 // 延迟显示（毫秒）
-// 延迟隐藏加载模态，避免页面刚渲染就消失导致的闪烁
-const LOADING_MIN_DURATION = 200 // 最小显示时长（毫秒）
-let loadingStartTime = 0
-let showLoadingTimer: ReturnType<typeof setTimeout> | null = null
 
 const router = createRouter({
   history: createWebHistory(),
@@ -183,30 +175,29 @@ const router = createRouter({
           meta: { title: '系统配置' }
         }
       ]
+    },
+    // 兜底路由：放在最后，匹配所有未定义路径。
+    // 没有它时输错 URL 会落到 vue-router 的无匹配状态，渲染出一片空白。
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: () => import('@/views/NotFound.vue'),
+      meta: { title: '页面不存在', requiresAuth: false }
     }
   ]
 })
 
 /**
  * 全局前置守卫：需要登录的页面先验证 session
- * 
+ *
+ * 切页必须立即显示目标页面，因此守卫不能阻塞导航（不做网络往返）：
+ * - 本地已有 JWT → 直接放行；token/会话过期由 axios 401 拦截器统一跳登录
+ * - 本地无 token（首次访问或手动清过存储）→ 才调 checkAuth 兜底确认会话
+ *
  * 使用 Vue Router 4 推荐的 return value 模式，替代已弃用的 next() 回调。
  * 避免 async 守卫中 next() 可能引发的竞态条件（导航在 promise 解析前提前完成）。
  */
 router.beforeEach(async (to, _from) => {
-  // 清除之前的延迟显示定时器
-  if (showLoadingTimer) {
-    clearTimeout(showLoadingTimer)
-    showLoadingTimer = null
-  }
-
-  // 延迟显示加载模态，避免快速切换时的闪烁
-  showLoadingTimer = setTimeout(() => {
-    const loadingStore = useLoadingStore()
-    loadingStore.show('页面加载中...')
-    loadingStartTime = Date.now()
-  }, LOADING_SHOW_DELAY)
-
   // 公开页面白名单：这些页面不需要任何认证，始终放行
   // 注意：使用 to.path 而非 route meta，避免 Vue Router 的 matched 链在某些
   // 边缘情况下（如嵌套路由、redirect 路由）不能正确反映 requiresAuth 状态
@@ -214,55 +205,25 @@ router.beforeEach(async (to, _from) => {
   const isPublicPath = publicPaths.some(prefix => to.path.startsWith(prefix))
 
   if (isPublicPath) {
-    // 取消延迟显示
-    if (showLoadingTimer) {
-      clearTimeout(showLoadingTimer)
-      showLoadingTimer = null
-    }
     return // return undefined → 允许导航
   }
 
-  // 其他页面需要认证 → 向后端确认 session 有效
+  // 本地已有 token → 零网络往返，立即放行（会话失效时由 401 拦截器兜底）
+  if (localStorage.getItem('admin_token')) {
+    return
+  }
+
+  // 无 token（如首次访问、Session-only 登录）→ 向后端确认 session 有效
   try {
     const auth = await checkAuth()
     if (!auth.authenticated) {
-      // 取消延迟显示
-      if (showLoadingTimer) {
-        clearTimeout(showLoadingTimer)
-        showLoadingTimer = null
-      }
       return { path: '/login', replace: true } // 重定向到登录页
     }
   } catch {
-    // 取消延迟显示
-    if (showLoadingTimer) {
-      clearTimeout(showLoadingTimer)
-      showLoadingTimer = null
-    }
     return { path: '/login', replace: true }
   }
 
   // return undefined → 允许导航
-})
-
-/**
- * 全局后置守卫：导航完成后隐藏加载模态
- */
-router.afterEach(() => {
-  // 清除延迟显示定时器，防止加载模态在延迟期间被触发
-  if (showLoadingTimer) {
-    clearTimeout(showLoadingTimer)
-    showLoadingTimer = null
-  }
-
-  // 延迟隐藏，避免页面刚渲染就消失导致的闪烁
-  const elapsed = Date.now() - loadingStartTime
-  const delay = Math.max(0, LOADING_MIN_DURATION - elapsed)
-
-  setTimeout(() => {
-    const loadingStore = useLoadingStore()
-    loadingStore.hide()
-  }, delay)
 })
 
 /**

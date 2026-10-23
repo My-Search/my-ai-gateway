@@ -1205,15 +1205,6 @@ onMounted(async () => {
 }
 
 /* Page loading state */
-.page-loading {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-
 /* Ensure all table cells are vertically centered */
 table td {
   vertical-align: middle;
