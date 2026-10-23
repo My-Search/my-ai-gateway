@@ -76,6 +76,7 @@ func (a *App) Register(r *gin.Engine) {
 
 	// --- API groups --------------------------------------------------------
 	admin := r.Group("/admin/api")
+	admin.Use(httpx.Gzip())
 	admin.Use(httpx.AdminAuth(d.Tokens, d.Sessions))
 	registerAuthRoutes(admin, d)
 	registerAPIKeyRoutes(admin, d)

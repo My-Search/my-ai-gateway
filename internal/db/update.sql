@@ -782,3 +782,51 @@ ALTER TABLE model_group_rels ADD COLUMN reasoning_effort TEXT;
 -- ========================================
 
 ALTER TABLE request_logs ADD COLUMN protocol TEXT;
+
+
+-- ========================================
+-- VERSION:v1.47.0
+-- 渠道 / 密钥用量统计的覆盖索引。
+--
+-- 背景：/admin/api/channels/{id}/usage-stats 与 /api-keys/{id}/usage-stats 都要
+--   按 (channel_name | gateway_api_key_id) 扫描一个渠道/密钥的行，做「按模型
+--   汇总 + 今日/本周/本月窗口 + 最近 30 条平均」三类聚合。
+--   旧索引只覆盖前半段：idx_request_logs_channel_phase(channel_name, phase)
+--   与 idx_request_logs_gateway_api_key_id(gateway_api_key_id) 都只定位于渠道/
+--   密钥，随后每行都要回表取 created_at / channel_model_name / 三个 token 列。
+--   在 240 万行、单渠道 20 万行的数据上，一次全量汇总实测 2.1s。
+--
+-- 新索引把 (定位列, phase, created_at, id, channel_model_name, 三个 token 列)
+--   全部装进索引，聚合完全在覆盖索引上完成，不回表：全量汇总 2.1s → 0.066s。
+--
+-- 更重要的是它让「最近 30 条」摆脱窗口函数。原来的
+--   ROW_NUMBER() OVER (… ORDER BY created_at DESC, id DESC) … rn <= 30
+-- 会先给整个窗口的每一行编号再丢弃，等于读完整段历史（实测 3.3s）。改成
+--   ORDER BY created_at DESC, id DESC LIMIT 30
+-- 后，(定位列, phase, created_at, id) 这个前缀让排序由索引直接提供，读 30 条
+--   即停（实测 0.00ms）。
+--
+-- 注意：phase 必须写成等值条件（phase = 'success' / phase = 'fail'），不能写成
+--   phase IN ('success','fail')。IN 不是等值约束，会在索引前缀里留下空洞，
+--   SQLite 无法用索引满足 ORDER BY，退回「扫全渠道 + 临时 B 树排序」（实测
+--   2.7s，和不改一样慢）。所以 recent-30 的平均值按 phase 拆成两条语句查，
+--   再在 Go 里按 (created_at DESC, id DESC) 合并，样本集与窗口函数完全一致。
+--
+-- 代价：两个索引各约 160MB（240 万行），写入每行多两棵 B 树。
+--   实测 2 万行插入 0.44s → 0.73s，换取管理后台两个详情页从秒级降到毫秒级。
+--   created_at 放在 phase 之后而非最前，是为了让 phase 的等值条件继续作为前缀。
+--   已试过并否决的方案：(channel_name, created_at) 全量汇总仍要 2.1s；
+--   (channel_name, channel_model_name, created_at) 让窗口函数更慢（5.8s）；
+--   created_at 打头的索引在全时段汇总上输给 idx_request_logs_channel_phase。
+-- ========================================
+
+CREATE INDEX IF NOT EXISTS idx_request_logs_channel_phase_created
+    ON request_logs(channel_name, phase, created_at, id, channel_model_name,
+                    prompt_tokens, completion_tokens, total_tokens);
+
+CREATE INDEX IF NOT EXISTS idx_request_logs_key_phase_created
+    ON request_logs(gateway_api_key_id, phase, created_at, id, channel_model_name,
+                    prompt_tokens, completion_tokens, total_tokens);
+
+ANALYZE;
+

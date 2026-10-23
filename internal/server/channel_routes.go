@@ -577,7 +577,17 @@ func getChannelModelUsageStats(ctx context.Context, st *store.Store, chName stri
 	weekStart := jtime.ShanghaiWeekStart(now)
 	monthStart := jtime.ShanghaiMonthStart(now)
 
-	// All-time stats
+	// All-time stats. This is a pure covering-index scan (no table lookup), so it
+	// is cheap on its own.
+	//
+	// The today/week/month windows deliberately stay separate statements rather
+	// than folding into SUM(CASE WHEN created_at >= ? …) here: folding makes the
+	// one scan evaluate 16 aggregates over every success row of the channel
+	// (measured 166ms on a 200k-row channel), while three targeted scans touch
+	// only the rows inside each window — 0 rows today, 512 this week, 9934 this
+	// month on the same data, 4ms total. The merge only paid off while the period
+	// scans needed a table lookup per row; the v1.47.0 covering index removed
+	// that, so the merge is now a 2.5x regression and was reverted.
 	allRows, _ := st.Query(ctx,
 		`SELECT channel_model_name,
 		         COUNT(*) request_count,
@@ -588,65 +598,77 @@ func getChannelModelUsageStats(ctx context.Context, st *store.Store, chName stri
 		 WHERE phase='success' AND channel_name = ? AND channel_model_name IS NOT NULL AND channel_model_name != ''
 		 GROUP BY channel_model_name ORDER BY request_count DESC`, chName)
 
-	// Recent 30 response times and speeds (per model and channel-wide), matching
-	// RequestLogMapper.selectChannelModelRecent30FirstByte / selectChannelRecent30FirstByte
-	// and selectChannelModelRecent30Speed / selectChannelRecent30Speed.
-	recent30, _ := st.Query(ctx,
-		`SELECT channel_model_name, first_byte_ms, completion_tokens, response_time_ms
-		  FROM (SELECT channel_model_name, first_byte_ms, completion_tokens, response_time_ms,
-		               ROW_NUMBER() OVER (PARTITION BY channel_model_name ORDER BY created_at DESC, id DESC) rn
-		          FROM request_logs
-		         WHERE channel_name = ? AND phase IN ('success','fail')
-		           AND channel_model_name IS NOT NULL AND channel_model_name != '') WHERE rn <= 30`, chName)
+	periodStats := getPeriodStats(ctx, st, chName, todayStart, weekStart, monthStart)
 
-	// 渠道级：所有模型合并取最近 30 条
-	channelRT, _ := st.QueryOne(ctx,
-		`SELECT AVG(first_byte_ms) avg_first_byte FROM (
-		   SELECT first_byte_ms, ROW_NUMBER() OVER (ORDER BY created_at DESC, id DESC) rn
-		     FROM request_logs
-		    WHERE phase IN ('success','fail') AND channel_name = ?
-		      AND channel_model_name IS NOT NULL AND channel_model_name != ''
-		      AND first_byte_ms IS NOT NULL AND first_byte_ms > 0) WHERE rn <= 30`, chName)
+	// 渠道级：所有模型合并取最近 30 条。
+	//
+	// ROW_NUMBER() OVER (ORDER BY created_at DESC, id DESC) numbers every row in
+	// the window before rn <= 30 can discard the rest, so the old form read a
+	// whole channel's history (3.0s at 2.4M rows) to average 30 samples.
+	//
+	// The ORDER BY … LIMIT 30 form stops at the 30th row, but ONLY if SQLite can
+	// satisfy the ordering straight off the covering index. `phase IN
+	// ('success','fail')` is not an equality constraint, so it leaves a gap in the
+	// index prefix and the planner falls back to scanning the channel plus a temp
+	// B-tree sort (measured 2.7s — no better than the window function). Splitting
+	// it into one arm per phase makes each arm an equality prefix, the index walk
+	// stops after 30 rows, and the two arms are merged here with the identical
+	// ordering key (created_at DESC, id DESC), so the sample set is identical.
 	var channelAvgRT int64
-	if v := channelRT.F64Ptr("avg_first_byte"); v != nil {
-		channelAvgRT = int64(*v + 0.5)
+	if avg, ok := avgRecent30FirstByte(ctx, st, chName); ok {
+		channelAvgRT = int64(avg + 0.5)
 	}
-	channelSpd, _ := st.QueryOne(ctx,
-		`SELECT AVG(completion_tokens * 1000.0 / response_time_ms) avg_speed FROM (
-		   SELECT completion_tokens, response_time_ms, ROW_NUMBER() OVER (ORDER BY created_at DESC, id DESC) rn
-		     FROM request_logs
-		    WHERE phase = 'success' AND channel_name = ?
-		      AND channel_model_name IS NOT NULL AND channel_model_name != ''
-		      AND completion_tokens > 0 AND response_time_ms > 0) WHERE rn <= 30`, chName)
 	var channelAvgSpd float64
-	if v := channelSpd.F64Ptr("avg_speed"); v != nil {
-		channelAvgSpd = float64(int64(*v*10+0.5)) / 10.0
+	// Single-phase (success-only) top-30 speed average, ordered by the covering
+	// index; no window function. Same as the old channelSpd subquery, now via the
+	// shared helper so the filter placement (inside before the top-30 cut) is
+	// preserved.
+	if avg, ok := avgRecent30Speed(ctx, st,
+		`phase = 'success' AND channel_name = ?
+		 AND channel_model_name IS NOT NULL AND channel_model_name != ''`, []any{chName}); ok {
+		channelAvgSpd = float64(int64(avg*10+0.5)) / 10.0
 	}
 
-	rtAvg := make(map[string]int64)
-	spdAvg := make(map[string]float64)
+	// Per-model recent 30, matching RequestLogMapper.selectChannelModelRecent30FirstByte
+	// / selectChannelModelRecent30Speed.
+	//
+	// ROW_NUMBER() OVER (PARTITION BY channel_model_name …) has the same flaw at
+	// partition scale: it numbers every row of the channel before rn <= 30 keeps
+	// the winners, so at 2.4M rows it read the whole partition (3.5s) to return
+	// 8×30 rows. The model list already came back from the merged scan above, so
+	// the same 30 rows per model are now fetched one model at a time, two
+	// equality-prefixed arms per model (see channelRT above), ~0.00ms apiece.
+	// Ordering key is identical, so the samples and averages are identical.
 	rtSums := make(map[string]struct{ cnt, sum int64 })
 	spdSums := make(map[string]struct {
 		cnt int
 		sum float64
 	})
-	for _, r := range recent30 {
+	for _, r := range allRows {
 		name := r.Str("channel_model_name")
-		if fbm := r.I64Ptr("first_byte_ms"); fbm != nil && *fbm > 0 {
-			s := rtSums[name]
-			s.cnt++
-			s.sum += *fbm
-			rtSums[name] = s
-		}
-		if ct := r.I64Ptr("completion_tokens"); ct != nil && *ct > 0 {
-			if rtm := r.I64Ptr("response_time_ms"); rtm != nil && *rtm > 0 {
-				s := spdSums[name]
-				s.cnt++
-				s.sum += float64(*ct) * 1000.0 / float64(*rtm)
-				spdSums[name] = s
+		// No extraCond here: the per-model averages take the newest 30 rows
+		// unfiltered and skip bad samples while summing, exactly like the old
+		// partitioned window form did.
+		where, args := channelRecent30(chName, name)
+		for _, s := range recent30Query(ctx, st, where, args, "") {
+			if fbm := s.firstByteMs; fbm != nil && *fbm > 0 {
+				a := rtSums[name]
+				a.cnt++
+				a.sum += *fbm
+				rtSums[name] = a
+			}
+			if ct := s.completion; ct != nil && *ct > 0 {
+				if rtm := s.responseMs; rtm != nil && *rtm > 0 {
+					a := spdSums[name]
+					a.cnt++
+					a.sum += float64(*ct) * 1000.0 / float64(*rtm)
+					spdSums[name] = a
+				}
 			}
 		}
 	}
+	rtAvg := make(map[string]int64, len(rtSums))
+	spdAvg := make(map[string]float64, len(spdSums))
 	for name, s := range rtSums {
 		if s.cnt > 0 {
 			rtAvg[name] = int64(float64(s.sum)/float64(s.cnt) + 0.5)
@@ -657,9 +679,6 @@ func getChannelModelUsageStats(ctx context.Context, st *store.Store, chName stri
 			spdAvg[name] = float64(int64(s.sum/float64(s.cnt)*10+0.5)) / 10.0
 		}
 	}
-
-	// Period queries
-	periodStats := getPeriodStats(ctx, st, chName, todayStart, weekStart, monthStart)
 
 	out := make([]modelUsageStat, 0, len(allRows))
 	for _, r := range allRows {
@@ -685,10 +704,6 @@ func getChannelModelUsageStats(ctx context.Context, st *store.Store, chName stri
 		ChannelAvgResponseTimeRecent30: channelAvgRT,
 		ChannelAvgOutputSpeedRecent30:  channelAvgSpd,
 	}
-}
-
-type perModelPeriods struct {
-	Today, Week, Month usagePeriod
 }
 
 func getPeriodStats(ctx context.Context, st *store.Store, chName string, todayStart, weekStart, monthStart time.Time) map[string]perModelPeriods {
@@ -725,6 +740,158 @@ func getPeriodStats(ctx context.Context, st *store.Store, chName string, todaySt
 		}
 	}
 	return result
+}
+
+// recent30Phases are the phases that count towards the "recent 30" averages.
+// They stay a per-value equality list on purpose: an arm only runs as an
+// ORDER BY created_at DESC, id DESC LIMIT 30 index walk while its phase is an
+// equality constraint on the covering index; an IN (...) list leaves a gap in
+// the prefix and the planner falls back to a channel-wide scan plus a temp
+// B-tree sort.
+var recent30Phases = []string{"success", "fail"}
+
+// recent30Sample is one row of a recent-30 sample set, carrying the ordering key
+// so separately-fetched arms can be merged back into one descending sequence.
+//
+// created_at is declared TIMESTAMP, so the driver hands back a time.Time and
+// Row.Str returns "" for it. The arm queries therefore select
+// CAST(created_at AS TEXT): the stored value is already text (the log writer
+// emits jtime.FormatDefault, and SQLite keeps it verbatim under a TIMESTAMP
+// affinity), so the CAST is an identity and ordering by it matches the SQL's own
+// ORDER BY exactly — including legacy space-separated rows.
+type recent30Sample struct {
+	firstByteMs  *int64
+	completion   *int64
+	responseMs   *int64
+	createdAtStr string
+	id           int64
+}
+
+// recent30Query fetches up to 30 newest rows per phase over the rows matching
+// scopePrefix (the `phase = ?` plus the channel/key equality columns) and the
+// literal scopeRest, substituting phaseArg into the first ? of the WHERE, then
+// merges the arms into one descending (created_at, id) sequence truncated to 30
+// — the same set the old ROW_NUMBER() OVER (… ORDER BY created_at DESC, id DESC)
+// … rn <= 30 produced, but read as two equality-prefixed index walks that stop
+// at row 30.
+//
+// extraCond is appended verbatim to every arm's WHERE clause and must begin with
+// AND. It exists because the two recent-30 aggregates do not share a filter:
+// the channel-level first-byte average excluded first_byte_ms <= 0 *before*
+// picking its 30 rows, while the per-model averages take the newest 30 rows
+// unfiltered and skip the bad samples while summing. Both behaviours are pinned
+// by TestChannelUsageStatsRecent30IsTopN.
+func recent30Query(ctx context.Context, st *store.Store, where string, scopeArgs []any, extraCond string) []recent30Sample {
+	samples := make([]recent30Sample, 0, 2*30)
+	for _, phase := range recent30Phases {
+		args := make([]any, 0, 1+len(scopeArgs))
+		args = append(args, phase)
+		args = append(args, scopeArgs...)
+		rows, _ := st.Query(ctx,
+			`SELECT first_byte_ms, completion_tokens, response_time_ms,
+			        CAST(created_at AS TEXT) created_at_txt, id
+			   FROM request_logs
+			  WHERE `+where+` `+extraCond+`
+			  ORDER BY created_at DESC, id DESC LIMIT 30`, args...)
+		for _, r := range rows {
+			samples = append(samples, recent30Sample{
+				firstByteMs:  r.I64Ptr("first_byte_ms"),
+				completion:   r.I64Ptr("completion_tokens"),
+				responseMs:   r.I64Ptr("response_time_ms"),
+				createdAtStr: r.Str("created_at_txt"),
+				id:           r.I64("id", 0),
+			})
+		}
+	}
+	sort.SliceStable(samples, func(i, j int) bool {
+		if samples[i].createdAtStr != samples[j].createdAtStr {
+			return samples[i].createdAtStr > samples[j].createdAtStr
+		}
+		return samples[i].id > samples[j].id
+	})
+	if len(samples) > 30 {
+		samples = samples[:30]
+	}
+	return samples
+}
+
+// channelRecent30 builds the phase=... AND channel_name = ? [AND model = ?]
+// scope used by the channel-level and per-model recent-30 walks.
+func channelRecent30(channel, model string) (string, []any) {
+	if model == "" {
+		return `phase = ? AND channel_name = ?
+		        AND channel_model_name IS NOT NULL AND channel_model_name != ''`,
+			[]any{channel}
+	}
+	return `phase = ? AND channel_name = ? AND channel_model_name = ?`,
+		[]any{channel, model}
+}
+
+// keyRecent30 builds the phase=... AND gateway_api_key_id = ? [AND model = ?]
+// scope used by the key-level and per-model recent-30 walks. Mirrors
+// channelRecent30: the model variant drops the IS NOT NULL / != '' guards the
+// same way because the model equality already excludes them.
+func keyRecent30(keyID int64, model string) (string, []any) {
+	if model == "" {
+		return `phase = ? AND gateway_api_key_id = ?
+		        AND channel_model_name IS NOT NULL AND channel_model_name != ''`,
+			[]any{keyID}
+	}
+	return `phase = ? AND gateway_api_key_id = ? AND channel_model_name = ?`,
+		[]any{keyID, model}
+}
+
+// avgRecent30FirstByte averages first_byte_ms over the newest 30 rows of a
+// channel whose first_byte_ms is present and > 0 — the filter the window form
+// applied inside the subquery, so it narrows the sample *before* the top-30 cut.
+func avgRecent30FirstByte(ctx context.Context, st *store.Store, channel string) (float64, bool) {
+	where, args := channelRecent30(channel, "")
+	var cnt int
+	var sum float64
+	for _, s := range recent30Query(ctx, st, where, args,
+		`AND first_byte_ms IS NOT NULL AND first_byte_ms > 0`) {
+		if s.firstByteMs != nil && *s.firstByteMs > 0 {
+			cnt++
+			sum += float64(*s.firstByteMs)
+		}
+	}
+	if cnt == 0 {
+		return 0, false
+	}
+	return sum / float64(cnt), true
+}
+
+// avgRecent30Speed averages completion_tokens * 1000 / response_time_ms over the
+// newest 30 success rows with both columns > 0, for one channel or one key. The
+// scope takes a single phase (the old window form filtered inside the subquery,
+// so the sample is narrowed *before* the top-30 cut).
+func avgRecent30Speed(ctx context.Context, st *store.Store, where string, args []any) (float64, bool) {
+	rows, _ := st.Query(ctx,
+		`SELECT completion_tokens, response_time_ms
+		   FROM request_logs
+		  WHERE `+where+`
+		    AND completion_tokens > 0 AND response_time_ms > 0
+		  ORDER BY created_at DESC, id DESC LIMIT 30`, args...)
+	var cnt int
+	var sum float64
+	for _, r := range rows {
+		ct := r.I64Ptr("completion_tokens")
+		rtm := r.I64Ptr("response_time_ms")
+		if ct != nil && *ct > 0 && rtm != nil && *rtm > 0 {
+			cnt++
+			sum += float64(*ct) * 1000.0 / float64(*rtm)
+		}
+	}
+	if cnt == 0 {
+		return 0, false
+	}
+	return sum / float64(cnt), true
+}
+
+// perModelPeriods bundles one model's today/week/month usage, as returned by
+// getPeriodStats.
+type perModelPeriods struct {
+	Today, Week, Month usagePeriod
 }
 
 func deleteChannel(ctx context.Context, st *store.Store, id int64) {

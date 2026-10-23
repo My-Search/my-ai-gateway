@@ -222,6 +222,48 @@ func (s *Store) QueryReadOnly(ctx context.Context, query string, args ...any) ([
 	return s.queryOn(db, ctx, query, args...)
 }
 
+// StreamReadOnly runs a SELECT on the read-only pool and hands each row to fn,
+// stopping as soon as fn returns false. Unlike QueryReadOnly it never buffers
+// the result set, so a query that can produce a large result but is usually
+// abandoned early (paging until enough distinct keys are seen) costs only the
+// rows actually consumed.
+//
+// fn must not retain the Row: it is reused between calls.
+func (s *Store) StreamReadOnly(ctx context.Context, fn func(Row) bool, query string, args ...any) error {
+	db := s.DB
+	if s.ReadDB != nil {
+		db = s.ReadDB
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		return err
+	}
+	row := make(Row, len(cols))
+	vals := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+	for rows.Next() {
+		if err := rows.Scan(ptrs...); err != nil {
+			return err
+		}
+		for i, c := range cols {
+			row[c] = vals[i]
+		}
+		if !fn(row) {
+			break
+		}
+	}
+	return rows.Err()
+}
+
 // QueryOne returns the first row or ErrNotFound.
 func (s *Store) QueryOne(ctx context.Context, query string, args ...any) (Row, error) {
 	rows, err := s.Query(ctx, query, args...)

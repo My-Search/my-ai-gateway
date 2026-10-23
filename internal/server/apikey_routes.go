@@ -232,7 +232,13 @@ func getAPIKeyUsageStats(ctx context.Context, st *store.Store, keyID int64) apiK
 
 	const where = `phase='success' AND gateway_api_key_id = ? AND channel_model_name IS NOT NULL AND channel_model_name != ''`
 
-	// All-time stats per model
+	// All-time stats per model. Pure covering-index scan.
+	//
+	// The today/week/month windows stay separate statements (see the matching
+	// comment in getChannelModelUsageStats): folding them in as SUM(CASE …) makes
+	// one scan evaluate 16 aggregates over every success row of the key, while
+	// three targeted scans touch only the rows inside each window. Measured on a
+	// 2.4M-row table the merge is a 2.5x regression, so it is not used.
 	allRows, err := st.Query(ctx,
 		`SELECT channel_model_name,
 		         COUNT(*) request_count,
@@ -246,72 +252,49 @@ func getAPIKeyUsageStats(ctx context.Context, st *store.Store, keyID int64) apiK
 		slog.Warn("查询密钥按模型用量失败", "keyId", keyID, "error", err)
 	}
 
-	// Recent 30 response times and speeds (per model)
-	recent30, err := st.Query(ctx,
-		`SELECT channel_model_name, first_byte_ms, completion_tokens, response_time_ms
-		  FROM (SELECT channel_model_name, first_byte_ms, completion_tokens, response_time_ms,
-		               ROW_NUMBER() OVER (PARTITION BY channel_model_name ORDER BY created_at DESC, id DESC) rn
-		          FROM request_logs
-		         WHERE phase IN ('success','fail') AND gateway_api_key_id = ?
-		           AND channel_model_name IS NOT NULL AND channel_model_name != '') WHERE rn <= 30`, keyID)
-	if err != nil {
-		slog.Warn("查询密钥近 30 次明细失败", "keyId", keyID, "error", err)
-	}
+	periodStats := getAPIKeyPeriodStats(ctx, st, keyID, todayStart, weekStart, monthStart)
 
-	// Key-level: all models combined, recent 30
-	keyRT, err := st.QueryOne(ctx,
-		`SELECT AVG(first_byte_ms) avg_first_byte FROM (
-		  SELECT first_byte_ms, ROW_NUMBER() OVER (ORDER BY created_at DESC, id DESC) rn
-		    FROM request_logs
-		   WHERE phase IN ('success','fail') AND gateway_api_key_id = ?
-		     AND channel_model_name IS NOT NULL AND channel_model_name != ''
-		     AND first_byte_ms IS NOT NULL AND first_byte_ms > 0) WHERE rn <= 30`, keyID)
-	if err != nil && err != store.ErrNotFound {
-		slog.Warn("查询密钥级近 30 次平均首字节失败", "keyId", keyID, "error", err)
-	}
-	var keyAvgRT int64
-	if v := keyRT.F64Ptr("avg_first_byte"); v != nil {
-		keyAvgRT = int64(*v + 0.5)
-	}
-	keySpd, err := st.QueryOne(ctx,
-		`SELECT AVG(completion_tokens * 1000.0 / response_time_ms) avg_speed FROM (
-		  SELECT completion_tokens, response_time_ms, ROW_NUMBER() OVER (ORDER BY created_at DESC, id DESC) rn
-		    FROM request_logs
-		   WHERE phase = 'success' AND gateway_api_key_id = ?
-		     AND channel_model_name IS NOT NULL AND channel_model_name != ''
-		     AND completion_tokens > 0 AND response_time_ms > 0) WHERE rn <= 30`, keyID)
-	if err != nil && err != store.ErrNotFound {
-		slog.Warn("查询密钥级近 30 次平均生成速度失败", "keyId", keyID, "error", err)
-	}
-	var keyAvgSpd float64
-	if v := keySpd.F64Ptr("avg_speed"); v != nil {
-		keyAvgSpd = float64(int64(*v*10+0.5)) / 10.0
-	}
-
-	rtAvg := make(map[string]int64)
-	spdAvg := make(map[string]float64)
+	// Recent 30 response times and speeds (per model).
+	//
+	// ROW_NUMBER() OVER (PARTITION BY channel_model_name …) has to number every
+	// row of the key before rn <= 30 keeps the winners, so at scale it read the
+	// whole partition to return a handful of rows. The model list already came
+	// back from the merged scan above, so the same 30 rows per model are now
+	// fetched one model at a time as two equality-prefixed index walks (see
+	// recent30Query: `phase IN ('success','fail')` would leave a gap in the index
+	// prefix and cost a full key scan plus a temp B-tree sort). The ordering key
+	// is identical (created_at DESC, id DESC), so the samples — and therefore the
+	// averages — are unchanged.
 	rtSums := make(map[string]struct{ cnt, sum int64 })
 	spdSums := make(map[string]struct {
 		cnt int
 		sum float64
 	})
-	for _, r := range recent30 {
+	for _, r := range allRows {
 		name := r.Str("channel_model_name")
-		if fbm := r.I64Ptr("first_byte_ms"); fbm != nil && *fbm > 0 {
-			s := rtSums[name]
-			s.cnt++
-			s.sum += *fbm
-			rtSums[name] = s
-		}
-		if ct := r.I64Ptr("completion_tokens"); ct != nil && *ct > 0 {
-			if rtm := r.I64Ptr("response_time_ms"); rtm != nil && *rtm > 0 {
-				s := spdSums[name]
-				s.cnt++
-				s.sum += float64(*ct) * 1000.0 / float64(*rtm)
-				spdSums[name] = s
+		// No extraCond here: the per-model averages take the newest 30 rows
+		// unfiltered and skip bad samples while summing, exactly like the old
+		// partitioned window form did.
+		where, args := keyRecent30(keyID, name)
+		for _, s := range recent30Query(ctx, st, where, args, "") {
+			if fbm := s.firstByteMs; fbm != nil && *fbm > 0 {
+				a := rtSums[name]
+				a.cnt++
+				a.sum += *fbm
+				rtSums[name] = a
+			}
+			if ct := s.completion; ct != nil && *ct > 0 {
+				if rtm := s.responseMs; rtm != nil && *rtm > 0 {
+					a := spdSums[name]
+					a.cnt++
+					a.sum += float64(*ct) * 1000.0 / float64(*rtm)
+					spdSums[name] = a
+				}
 			}
 		}
 	}
+	rtAvg := make(map[string]int64, len(rtSums))
+	spdAvg := make(map[string]float64, len(spdSums))
 	for name, s := range rtSums {
 		if s.cnt > 0 {
 			rtAvg[name] = int64(float64(s.sum)/float64(s.cnt) + 0.5)
@@ -323,8 +306,30 @@ func getAPIKeyUsageStats(ctx context.Context, st *store.Store, keyID int64) apiK
 		}
 	}
 
-	// Period queries
-	periodStats := getAPIKeyPeriodStats(ctx, st, keyID, todayStart, weekStart, monthStart)
+	// Key-level: all models combined, recent 30. Same ROW_NUMBER() → LIMIT
+	// rewrite as above, with the first_byte_ms > 0 filter kept *before* the
+	// top-30 cut because the old window form had it inside the subquery.
+	rtWhere, rtArgs := keyRecent30(keyID, "")
+	var keyAvgRT int64
+	var keyRTSum float64
+	var keyRTCnt int
+	for _, s := range recent30Query(ctx, st, rtWhere, rtArgs,
+		`AND first_byte_ms IS NOT NULL AND first_byte_ms > 0`) {
+		if s.firstByteMs == nil || *s.firstByteMs <= 0 {
+			continue
+		}
+		keyRTSum += float64(*s.firstByteMs)
+		keyRTCnt++
+	}
+	if keyRTCnt > 0 {
+		keyAvgRT = int64(keyRTSum/float64(keyRTCnt) + 0.5)
+	}
+	var keyAvgSpd float64
+	if avg, ok := avgRecent30Speed(ctx, st,
+		`phase = 'success' AND gateway_api_key_id = ?
+		 AND channel_model_name IS NOT NULL AND channel_model_name != ''`, []any{keyID}); ok {
+		keyAvgSpd = float64(int64(avg*10+0.5)) / 10.0
+	}
 
 	out := make([]modelUsageStat, 0, len(allRows))
 	for _, r := range allRows {
@@ -353,18 +358,10 @@ func getAPIKeyUsageStats(ctx context.Context, st *store.Store, keyID int64) apiK
 }
 
 // getAPIKeyPeriodStats returns today/week/month usage per model for one key.
-//
-// 边界口径：since 是上海时区窗口起点（如今日 00:00 +08:00 = 前一日 16:00Z），
-// FormatDefault 生成 T 分隔的 UTC 瞬时下界，对当前唯一写入路径（logsvc，恒为
-// T 格式）是精确比较。这里不能像 usage-chart 那样改用 DATE-ONLY 裸日期下界：
-// 图表窗口锚定 UTC 自然日零点（日期前缀恰等于瞬时值），而本窗口锚定上海零点
-// （16:00Z），截断成日期会把边界日 00:00Z~16:00Z（即上海昨日 08:00~24:00）的
-// 行错误计入。已知限制：历史 space 格式行（SQL DEFAULT 写入，当前写入路径不再
-// 产生）落在边界日当天时会被 T 下界排除（' ' < 'T'）。
 func getAPIKeyPeriodStats(ctx context.Context, st *store.Store, keyID int64, todayStart, weekStart, monthStart time.Time) map[string]perModelPeriods {
 	result := make(map[string]perModelPeriods)
 	for label, since := range map[string]time.Time{"today": todayStart, "week": weekStart, "month": monthStart} {
-		rows, err := st.Query(ctx,
+		rows, _ := st.Query(ctx,
 			`SELECT channel_model_name,
 			         COUNT(*) rc,
 			         COALESCE(SUM(prompt_tokens),0) pt,
@@ -374,11 +371,6 @@ func getAPIKeyPeriodStats(ctx context.Context, st *store.Store, keyID int64, tod
 			 WHERE phase='success' AND gateway_api_key_id = ? AND channel_model_name IS NOT NULL
 			   AND created_at >= ?
 			 GROUP BY channel_model_name`, keyID, jtime.FormatDefault(since))
-		if err != nil {
-			// 单周期查询失败只影响该周期列（保持为空），其余照常返回。
-			slog.Warn("查询密钥周期用量失败", "keyId", keyID, "period", label, "error", err)
-			continue
-		}
 		for _, r := range rows {
 			name := r.Str("channel_model_name")
 			p := result[name]
@@ -401,6 +393,14 @@ func getAPIKeyPeriodStats(ctx context.Context, st *store.Store, keyID int64, tod
 	}
 	return result
 }
+
+// 边界口径（周期窗口 since 参数）：since 是上海时区窗口起点（如今日 00:00 +08:00
+// = 前一日 16:00Z），FormatDefault 生成 T 分隔的 UTC 瞬时下界，对当前唯一写入路径
+// （logsvc，恒为 T 格式）是精确比较。这里不能像 usage-chart 那样改用 DATE-ONLY
+// 裸日期下界：图表窗口锚定 UTC 自然日零点（日期前缀恰等于瞬时值），而本窗口锚定
+// 上海零点（16:00Z），截断成日期会把边界日 00:00Z~16:00Z（即上海昨日 08:00~24:00）
+// 的行错误计入。已知限制：历史 space 格式行（SQL DEFAULT 写入，当前写入路径不再
+// 产生）落在边界日当天时会被 T 下界排除（' ' < 'T'）。
 
 func generateAPIKeyValue() string {
 	b := make([]byte, 32)

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	_ "modernc.org/sqlite"
@@ -20,6 +21,11 @@ import (
 // newLogListTestStore builds the request_logs subset the list endpoint reads.
 // It also creates the production indexes so the EXPLAIN guard exercises the
 // same access path the real database uses.
+//
+// created_at is declared TIMESTAMP, exactly like update.sql. That matters: the
+// driver turns a TIMESTAMP column into a time.Time, so Row.Str returns "" for it.
+// A TEXT column here would hide that (and once did: the keyset walk's cursor
+// silently degraded to "" and truncated every page after the first chunk).
 func newLogListTestStore(t *testing.T) *store.Store {
 	t.Helper()
 	db, err := sql.Open("sqlite", "file::memory:?_pragma=busy_timeout(30000)")
@@ -37,12 +43,17 @@ func newLogListTestStore(t *testing.T) *store.Store {
 		prompt_tokens INTEGER DEFAULT 0, completion_tokens INTEGER DEFAULT 0,
 		total_tokens INTEGER DEFAULT 0, reasoning_effort TEXT, route_source TEXT,
 		protocol TEXT, request_headers TEXT, request_body TEXT,
-		created_at TEXT)`); err != nil {
+		created_at TIMESTAMP)`); err != nil {
 		t.Fatal(err)
 	}
 	for _, ddl := range []string{
 		`CREATE INDEX idx_request_logs_created_at_phase_trace ON request_logs(created_at, phase, trace_id)`,
 		`CREATE INDEX idx_request_logs_trace_id_created_at ON request_logs(trace_id, created_at)`,
+		// The two covering indexes from v1.47.0. Without them the recent-30
+		// arms degrade to a scan plus a temp B-tree sort, which is exactly the
+		// regression TestRecent30QueryUsesEqualityPhaseArms guards against.
+		`CREATE INDEX idx_request_logs_channel_phase_created ON request_logs(channel_name, phase, created_at, id, channel_model_name, prompt_tokens, completion_tokens, total_tokens)`,
+		`CREATE INDEX idx_request_logs_key_phase_created ON request_logs(gateway_api_key_id, phase, created_at, id, channel_model_name, prompt_tokens, completion_tokens, total_tokens)`,
 	} {
 		if _, err := db.Exec(ddl); err != nil {
 			t.Fatal(err)
@@ -93,6 +104,65 @@ func TestLogListTimeFilterUsesIndex(t *testing.T) {
 	}
 	if !strings.Contains(plan, "idx_request_logs_created_at_phase_trace") {
 		t.Errorf("log list query does not use the created_at index; plan = %s", plan)
+	}
+}
+
+// TestLogListCountPinsRangeIndexForNarrowWindows covers the count query's
+// index hint. The planner answers a bounded month by walking the whole
+// idx_request_logs_trace_id_created_at index (3.9s at 4M rows) because it is
+// covering; pinning the created_at index makes it a range scan instead (1.0s).
+// Over a year the pin is a 1.8x regression, so the hint must stay conditional.
+func TestLogListCountPinsRangeIndexForNarrowWindows(t *testing.T) {
+	st := newLogListTestStore(t)
+	for m := 1; m <= 12; m++ {
+		for d := 1; d <= 20; d++ {
+			insertListLog(t, st, "t-"+strconv.Itoa(m)+"-"+strconv.Itoa(d), "success",
+				fmt.Sprintf("2026-%02d-%02dT10:00:00.000000000", m, d))
+		}
+	}
+	if _, err := st.Exec(context.Background(), "ANALYZE"); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := explainQueryPlan(t, st,
+		`SELECT COUNT(DISTINCT r.trace_id) as total
+		   FROM request_logs r INDEXED BY idx_request_logs_created_at_phase_trace
+		  WHERE 1=1 AND r.created_at >= ? AND r.created_at < ?
+		    AND datetime(r.created_at) >= datetime(?)
+		    AND datetime(r.created_at) <= datetime(?)`,
+		"2026-09-01", "2026-10-01", "2026-09-01T00:00:00.000Z", "2026-09-30T23:59:59.999Z")
+
+	if strings.Contains(plan, "idx_request_logs_trace_id_created_at") {
+		t.Errorf("pinned count still walks the trace_id index; plan = %s", plan)
+	}
+	if !strings.Contains(plan, "SEARCH r USING COVERING INDEX idx_request_logs_created_at_phase_trace") {
+		t.Errorf("pinned count is not a created_at range scan; plan = %s", plan)
+	}
+}
+
+// TestCountUsesRangeIndex pins the decision boundary. Getting this wrong is a
+// silent 1.8-3.4x slowdown, not an error, so the thresholds are worth asserting.
+func TestCountUsesRangeIndex(t *testing.T) {
+	now := time.Now()
+	cases := []struct {
+		name       string
+		start, end string
+		want       bool
+	}{
+		{"no filter", "", "", false},
+		{"start only, long history", "2020-01-01T00:00:00.000Z", "", false},
+		{"one day", "2026-09-15T00:00:00.000Z", "2026-09-16T00:00:00.000Z", true},
+		{"one month", "2026-09-01T00:00:00.000Z", "2026-09-30T23:59:59.999Z", true},
+		{"one year", "2026-01-01T00:00:00.000Z", "2026-12-31T23:59:59.999Z", false},
+		{"start only, recent", now.Add(-24 * time.Hour).Format(time.RFC3339), "", true},
+		{"end before start", "2026-09-30T00:00:00.000Z", "2026-09-01T00:00:00.000Z", false},
+		{"unparseable start", "not-a-date", "2026-09-30T00:00:00.000Z", false},
+	}
+	for _, tc := range cases {
+		if got := countUsesRangeIndex(tc.start, tc.end); got != tc.want {
+			t.Errorf("%s: countUsesRangeIndex(%q, %q) = %v, want %v",
+				tc.name, tc.start, tc.end, got, tc.want)
+		}
 	}
 }
 
