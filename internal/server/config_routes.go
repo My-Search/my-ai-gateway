@@ -209,93 +209,92 @@ func registerDashboardRoutes(g *gin.RouterGroup, d Deps) {
 	// never fall back to a full scan of the trace_id / channel_name indexes as
 	// the request_logs table grows.
 	g.GET("/dashboard/stats", func(c *gin.Context) {
-		ctx := c.Request.Context()
+		// Detach from the request context: a background revalidation must not be
+		// cancelled when the browser navigates away, and a slow first load must
+		// still be able to populate the cache.
+		ctx, cancel := context.WithTimeout(
+			context.WithoutCancel(c.Request.Context()), dashStatsQueryTimeout)
+		defer cancel()
 
-		// 尝试命中缓存
+		// 尝试命中缓存（含 stale-while-revalidate）
 		cacheKey := c.Query("range")
 		cacheFrom := c.Query("from")
 		cacheTo := c.Query("to")
-		if cached, ok := d.DashCache.Get(cacheKey, cacheFrom, cacheTo); ok {
-			httpx.OK(c, cached)
-			return
-		}
 
-		dr := parseDashRange(c)
+		d.serveCached(c, ctx, cacheKey, cacheFrom, cacheTo, dashCacheTTL,
+			"查询仪表盘统计失败", func(qctx context.Context) (any, error) {
+				dr := parseDashRange(c)
 
-		// Totals for the window and for its comparison window (昨日 / 上周同期 /
-		// 上月同期 / 上一个等长区间). Each call is a single range scan; success
-		// is start-anchored so fail = requests - success and successRate ≤ 100%.
-		totals := dashWindowTotals(ctx, d, dr.since, dr.until)
-		prevTotals := dashWindowTotals(ctx, d, dr.prevSince, dr.prevUntil)
+				// Totals for the window and for its comparison window (昨日 / 上周同期 /
+				// 上月同期 / 上一个等长区间). Each call is a single range scan; success
+				// is start-anchored so fail = requests - success and successRate ≤ 100%.
+				totals := dashWindowTotals(qctx, d, dr.since, dr.until)
+				prevTotals := dashWindowTotals(qctx, d, dr.prevSince, dr.prevUntil)
 
-		// Top-10 rankings for the same window (channel / entry model / channel model).
-		chRows, _ := d.Store.QueryReadOnly(ctx,
-			`SELECT channel_name AS name,
-			        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
-			        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
-			        AVG(CASE WHEN first_byte_ms>0 THEN first_byte_ms END) AS avg_time,
-			        COALESCE(SUM(CASE WHEN phase='success' THEN COALESCE(total_tokens,0) ELSE 0 END),0) AS total_tokens
-			   FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
-			  WHERE created_at >= ? AND created_at < ? AND phase IN ('start','success')
-			    AND channel_name IS NOT NULL AND channel_name != ''
-			  GROUP BY channel_name ORDER BY requests DESC LIMIT 10`,
-			jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
-		mdlRows, _ := d.Store.QueryReadOnly(ctx,
-			`SELECT model_name AS name,
-			        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
-			        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
-			        AVG(CASE WHEN first_byte_ms>0 THEN first_byte_ms END) AS avg_time,
-			        COALESCE(SUM(CASE WHEN phase='success' THEN COALESCE(total_tokens,0) ELSE 0 END),0) AS total_tokens
-			   FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
-			  WHERE created_at >= ? AND created_at < ? AND phase IN ('start','success')
-			    AND model_name IS NOT NULL AND model_name != ''
-			  GROUP BY model_name ORDER BY requests DESC LIMIT 10`,
-			jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
-		cmRows, _ := d.Store.QueryReadOnly(ctx,
-			`SELECT channel_name, channel_model_name AS name,
-			        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
-			        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
-			        AVG(CASE WHEN first_byte_ms>0 THEN first_byte_ms END) AS avg_time,
-			        COALESCE(SUM(CASE WHEN phase='success' THEN COALESCE(total_tokens,0) ELSE 0 END),0) AS total_tokens
-			   FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
-			  WHERE created_at >= ? AND created_at < ? AND phase IN ('start','success')
-			    AND channel_model_name IS NOT NULL AND channel_model_name != ''
-			  GROUP BY channel_name, channel_model_name ORDER BY requests DESC LIMIT 10`,
-			jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
-		// Top-10 gateway API key ranking. request_logs only carries
-		// gateway_api_key_id (api_key_name holds the *channel* key name), so the
-		// display name is joined from api_keys; a key deleted after its traffic
-		// still ranks under a "已删除密钥 #id" placeholder instead of vanishing
-		// from a window it served. The range scan stays inside the subquery so
-		// INDEXED BY keeps pinning idx_request_logs_created_at_phase_trace.
-		keyRows, _ := d.Store.QueryReadOnly(ctx,
-			`SELECT COALESCE(NULLIF(k.key_name, ''), '已删除密钥 #' || r.gateway_api_key_id) AS name,
-			        COUNT(DISTINCT CASE WHEN r.phase='start' THEN r.trace_id END) AS requests,
-			        COUNT(DISTINCT CASE WHEN r.phase='success' THEN r.trace_id END) AS success,
-			        AVG(CASE WHEN r.first_byte_ms>0 THEN r.first_byte_ms END) AS avg_time,
-			        COALESCE(SUM(CASE WHEN r.phase='success' THEN COALESCE(r.total_tokens,0) ELSE 0 END),0) AS total_tokens
-			   FROM (SELECT trace_id, phase, first_byte_ms, total_tokens, gateway_api_key_id
-			           FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
-			          WHERE created_at >= ? AND created_at < ? AND phase IN ('start','success')
-			            AND gateway_api_key_id IS NOT NULL) r
-			   LEFT JOIN api_keys k ON k.id = r.gateway_api_key_id
-			  GROUP BY r.gateway_api_key_id ORDER BY requests DESC LIMIT 10`,
-			jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
+				// Top-10 rankings for the same window (channel / entry model / channel model).
+				chRows, _ := d.Store.QueryReadOnly(qctx,
+					`SELECT channel_name AS name,
+					        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
+					        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
+					        AVG(CASE WHEN first_byte_ms>0 THEN first_byte_ms END) AS avg_time,
+					        COALESCE(SUM(CASE WHEN phase='success' THEN COALESCE(total_tokens,0) ELSE 0 END),0) AS total_tokens
+					   FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
+					  WHERE created_at >= ? AND created_at < ? AND phase IN ('start','success')
+					    AND channel_name IS NOT NULL AND channel_name != ''
+					  GROUP BY channel_name ORDER BY requests DESC LIMIT 10`,
+					jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
+				mdlRows, _ := d.Store.QueryReadOnly(qctx,
+					`SELECT model_name AS name,
+					        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
+					        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
+					        AVG(CASE WHEN first_byte_ms>0 THEN first_byte_ms END) AS avg_time,
+					        COALESCE(SUM(CASE WHEN phase='success' THEN COALESCE(total_tokens,0) ELSE 0 END),0) AS total_tokens
+					   FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
+					  WHERE created_at >= ? AND created_at < ? AND phase IN ('start','success')
+					    AND model_name IS NOT NULL AND model_name != ''
+					  GROUP BY model_name ORDER BY requests DESC LIMIT 10`,
+					jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
+				cmRows, _ := d.Store.QueryReadOnly(qctx,
+					`SELECT channel_name, channel_model_name AS name,
+					        COUNT(DISTINCT CASE WHEN phase='start' THEN trace_id END) AS requests,
+					        COUNT(DISTINCT CASE WHEN phase='success' THEN trace_id END) AS success,
+					        AVG(CASE WHEN first_byte_ms>0 THEN first_byte_ms END) AS avg_time,
+					        COALESCE(SUM(CASE WHEN phase='success' THEN COALESCE(total_tokens,0) ELSE 0 END),0) AS total_tokens
+					   FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
+					  WHERE created_at >= ? AND created_at < ? AND phase IN ('start','success')
+					    AND channel_model_name IS NOT NULL AND channel_model_name != ''
+					  GROUP BY channel_name, channel_model_name ORDER BY requests DESC LIMIT 10`,
+					jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
+				// Top-10 gateway API key ranking. request_logs only carries
+				// gateway_api_key_id (api_key_name holds the *channel* key name), so the
+				// display name is joined from api_keys; a key deleted after its traffic
+				// still ranks under a "已删除密钥 #id" placeholder instead of vanishing
+				// from a window it served. The range scan stays inside the subquery so
+				// INDEXED BY keeps pinning idx_request_logs_created_at_phase_trace.
+				keyRows, _ := d.Store.QueryReadOnly(qctx,
+					`SELECT COALESCE(NULLIF(k.key_name, ''), '已删除密钥 #' || r.gateway_api_key_id) AS name,
+					        COUNT(DISTINCT CASE WHEN r.phase='start' THEN r.trace_id END) AS requests,
+					        COUNT(DISTINCT CASE WHEN r.phase='success' THEN r.trace_id END) AS success,
+					        AVG(CASE WHEN r.first_byte_ms>0 THEN r.first_byte_ms END) AS avg_time,
+					        COALESCE(SUM(CASE WHEN r.phase='success' THEN COALESCE(r.total_tokens,0) ELSE 0 END),0) AS total_tokens
+					   FROM (SELECT trace_id, phase, first_byte_ms, total_tokens, gateway_api_key_id
+					           FROM request_logs INDEXED BY idx_request_logs_created_at_phase_trace
+					          WHERE created_at >= ? AND created_at < ? AND phase IN ('start','success')
+					            AND gateway_api_key_id IS NOT NULL) r
+					   LEFT JOIN api_keys k ON k.id = r.gateway_api_key_id
+					  GROUP BY r.gateway_api_key_id ORDER BY requests DESC LIMIT 10`,
+					jtime.FormatDefault(dr.since), jtime.FormatDefault(dr.until))
 
-		out := httpx.NewOrderedMap().
-			Set("range", dr.meta()).
-			Set("totals", totals).
-			Set("prevTotals", prevTotals).
-			Set("sparklines", dashSparklines(ctx, d, dr)).
-			Set("channelRank", channelRankList(chRows)).
-			Set("modelRank", modelRankList(mdlRows)).
-			Set("channelModelRank", channelModelRankList(cmRows)).
-			Set("keyRank", channelRankList(keyRows))
-
-		// 写入缓存
-		d.DashCache.Set(cacheKey, cacheFrom, cacheTo, out)
-
-		httpx.OK(c, out)
+				return httpx.NewOrderedMap().
+					Set("range", dr.meta()).
+					Set("totals", totals).
+					Set("prevTotals", prevTotals).
+					Set("sparklines", dashSparklines(qctx, d, dr)).
+					Set("channelRank", channelRankList(chRows)).
+					Set("modelRank", modelRankList(mdlRows)).
+					Set("channelModelRank", channelModelRankList(cmRows)).
+					Set("keyRank", channelRankList(keyRows)), nil
+			})
 	})
 
 	// GET /admin/api/dashboard/today-trend
