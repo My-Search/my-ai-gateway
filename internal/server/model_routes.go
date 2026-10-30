@@ -226,7 +226,7 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		id, err := d.Store.Insert(ctx,
 			`INSERT INTO models (model_name, description, strategy, enabled, hidden, rel_mode, created_at, updated_at)
 			 VALUES (?, ?, ?, 1, 0, 'self_add', ?, ?)`,
-			body.ModelName, derefStr(body.Description, ""), derefStr(body.Strategy, "failover"), now, now)
+			body.ModelName, derefStr(body.Description, ""), normalizeModelStrategyInput(derefStr(body.Strategy, "failover")), now, now)
 		if err != nil {
 			httpx.OK(c, failureEnvelope(err.Error()))
 			return
@@ -256,6 +256,11 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		sets := make(map[string]any)
 		for _, k := range []string{"modelName", "description", "strategy", "relMode"} {
 			if v, exists := body[k]; exists {
+				if k == "strategy" {
+					// 策略归一为 failover / sticky（历史 random / round_robin 按粘性处理）
+					sets["strategy"] = normalizeModelStrategyInput(derefStr(anyStrPtr(v), "failover"))
+					continue
+				}
 				sets[modelsCamelToSnake(k)] = v
 			}
 		}
@@ -724,6 +729,30 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
 	})
 
+	// PUT /admin/api/models/rels/{relId}/weight — 直连关联的粘性权重（1-1000）。
+	// 仅粘性策略使用：权重决定一致性哈希环上该条目的份额；顺序策略忽略该值。
+	g.PUT("/models/rels/:relId/weight", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		relID, ok := pathID(c, "relId")
+		if !ok {
+			httpx.OK(c, failureEnvelope("关联不存在"))
+			return
+		}
+		var body struct {
+			Weight int `json:"weight"`
+		}
+		_ = c.ShouldBindJSON(&body)
+		weight := body.Weight
+		if weight < 1 {
+			weight = 1
+		}
+		if weight > 1000 {
+			weight = 1000
+		}
+		d.Store.Exec(ctx, "UPDATE model_channel_rels SET weight=? WHERE id=?", weight, relID)
+		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
+	})
+
 	// DELETE /admin/api/models/group-rels/{relId}
 	g.DELETE("/models/group-rels/:relId", func(c *gin.Context) {
 		ctx := c.Request.Context()
@@ -858,6 +887,17 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 // ---------------------------------------------------------------------------
 // Model helpers
 // ---------------------------------------------------------------------------
+
+// normalizeModelStrategyInput 归一入口模型策略：仅 failover（顺序）/ sticky（粘性）。
+// 历史 random / round_robin 按粘性处理（都曾依赖权重分布），空值默认顺序。
+func normalizeModelStrategyInput(v string) string {
+	switch strings.TrimSpace(v) {
+	case "sticky", "random", "round_robin":
+		return "sticky"
+	default:
+		return "failover"
+	}
+}
 
 func modelsCamelToSnake(s string) string {
 	var b strings.Builder

@@ -269,24 +269,25 @@ func TestMigrateModelGroupSchema(t *testing.T) {
 		t.Errorf("model_group_rels.reasoning_effort missing")
 	}
 
-	// The strategy default must be random (the group-level balancing default).
+	// The strategy default must be sticky (weighted consistent hashing is the
+	// 均衡默认；顺序策略需要显式选择）。
 	var def string
 	if err := conn.QueryRow(
 		"SELECT dflt_value FROM pragma_table_info('model_groups') WHERE name='strategy'").Scan(&def); err != nil {
 		t.Fatalf("pragma: %v", err)
 	}
-	if !strings.Contains(def, "random") {
-		t.Errorf("model_groups.strategy default = %s, want random", def)
+	if !strings.Contains(def, "sticky") {
+		t.Errorf("model_groups.strategy default = %s, want sticky", def)
 	}
 
 	// A duplicate group name would list the group twice; a duplicate member would
 	// double its weight in routing. Both must be rejected by UNIQUE constraints.
 	if _, err := conn.Exec(
-		"INSERT INTO model_groups (name, strategy, sticky, enabled) VALUES ('g', 'random', 0, 1)"); err != nil {
+		"INSERT INTO model_groups (name, strategy, sticky, enabled) VALUES ('g', 'sticky', 0, 1)"); err != nil {
 		t.Fatalf("insert group: %v", err)
 	}
 	if _, err := conn.Exec(
-		"INSERT INTO model_groups (name, strategy, sticky, enabled) VALUES ('g', 'random', 0, 1)"); err == nil {
+		"INSERT INTO model_groups (name, strategy, sticky, enabled) VALUES ('g', 'sticky', 0, 1)"); err == nil {
 		t.Error("duplicate group name was accepted; the UNIQUE(name) constraint is missing")
 	}
 

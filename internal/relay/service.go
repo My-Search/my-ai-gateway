@@ -99,11 +99,15 @@ func (r *RouteResolver) BuildCandidates(ctx context.Context, req *InternalReques
 	}
 	// 入口模型策略作用于「条目」（直连关联 / 小组整体），小组在队列中保持连续。
 	// 注意继承模式下策略取自入口模型本身（与候选来源的继承无关）。
-	entries = orderEntries(strategy, entries, modelID)
+	strategy = normalizeModelStrategy(strategy)
 
-	// stickyKey 只在确有粘性小组时计算（避免每个请求都做前缀哈希）。
+	// stickyKey 供入口模型粘性排序与组内粘性排序共用；仅在确实需要哈希时计算
+	// （入口模型为粘性策略，或队列中存在粘性小组），避免每个请求都做前缀哈希。
 	stickyKey := ""
-	stickyComputed := false
+	if strategy == ModelStrategySticky || hasStickyGroup(entries) {
+		stickyKey = StickyKey(req)
+	}
+	entries = orderEntries(strategy, entries, modelID, stickyKey)
 
 	var candidates []RoutingCandidate
 	for _, e := range entries {
@@ -112,15 +116,10 @@ func (r *RouteResolver) BuildCandidates(ctx context.Context, req *InternalReques
 			if len(groupCandidates) == 0 {
 				continue
 			}
-			if e.sticky && !stickyComputed {
-				stickyKey = StickyKey(req)
-				stickyComputed = true
-			}
 			ordered := orderGroupCandidates(groupOrdering{
 				candidates: groupCandidates,
 				weights:    weights,
 				strategy:   e.groupStrategy,
-				sticky:     e.sticky,
 				stickyKey:  stickyKey,
 				groupID:    e.groupID,
 			})
@@ -147,17 +146,25 @@ func (r *RouteResolver) BuildCandidates(ctx context.Context, req *InternalReques
 }
 
 // resolveEntryModel resolves an entry model name to its id plus routing strategy
-// in one query (blank strategy → failover). Returns 0 when the model is unknown.
+// in one query (normalized to failover / sticky; blank → failover). Returns 0
+// when the model is unknown.
 func (r *RouteResolver) resolveEntryModel(ctx context.Context, modelName string) (int64, string) {
 	row, _ := r.Store.QueryOne(ctx, "SELECT id, strategy FROM models WHERE model_name = ?", modelName)
 	if row == nil {
-		return 0, "failover"
+		return 0, ModelStrategyFailover
 	}
-	strategy := strings.TrimSpace(row.Str("strategy"))
-	if strategy == "" {
-		strategy = "failover"
+	return row.I64("id", 0), normalizeModelStrategy(row.Str("strategy"))
+}
+
+// hasStickyGroup reports whether the entry queue contains a sticky group (its
+// member ordering needs the request's session fingerprint).
+func hasStickyGroup(entries []routingEntry) bool {
+	for _, e := range entries {
+		if e.isGroup && normalizeGroupStrategy(e.groupStrategy) == GroupStrategySticky {
+			return true
+		}
 	}
-	return row.I64("id", 0), strategy
+	return false
 }
 
 // groupMemberCandidates loads one group's enabled members as routing candidates,
@@ -254,7 +261,6 @@ type routingEntry struct {
 	groupID       int64
 	groupName     string
 	groupStrategy string
-	sticky        bool
 	// groupReasoningEffort 是这条「入口模型 -> 小组」关联配置的默认思考强度，
 	// 仅回填到组内未单独配置思考强度的成员候选上（成员配置优先）。
 	groupReasoningEffort *string
@@ -303,7 +309,7 @@ func (r *RouteResolver) resolveRoutingEntries(ctx context.Context, modelID int64
 	}
 
 	groupRows, _ := r.Store.Query(ctx,
-		`SELECT rel.sort_order, rel.reasoning_effort, g.id, g.name, g.strategy, g.sticky, g.enabled
+		`SELECT rel.sort_order, rel.reasoning_effort, g.id, g.name, g.strategy, g.enabled
 		   FROM model_group_rels rel
 		   JOIN model_groups g ON g.id = rel.group_id
 		  WHERE rel.model_id = ? AND rel.enabled = 1
@@ -317,7 +323,6 @@ func (r *RouteResolver) resolveRoutingEntries(ctx context.Context, modelID int64
 			groupID:              row.I64("id", 0),
 			groupName:            row.Str("name"),
 			groupStrategy:        normalizeGroupStrategy(row.Str("strategy")),
-			sticky:               row.Int("sticky", 0) == 1,
 			groupReasoningEffort: row.StrPtr("reasoning_effort"),
 			sortOrder:            row.Int("sort_order", 0),
 		})
@@ -327,16 +332,13 @@ func (r *RouteResolver) resolveRoutingEntries(ctx context.Context, modelID int64
 	return entries
 }
 
-// normalizeGroupStrategy clamps an unknown/blank strategy to the group default.
+// normalizeGroupStrategy 把小组策略归一为 failover / sticky 两种。
+// 空值与历史 random / round_robin 一律按粘性处理（都曾依赖权重分布）。
 func normalizeGroupStrategy(s string) string {
-	switch strings.TrimSpace(s) {
-	case GroupStrategyFailover:
+	if strings.TrimSpace(s) == GroupStrategyFailover {
 		return GroupStrategyFailover
-	case GroupStrategyRoundRobin:
-		return GroupStrategyRoundRobin
-	default:
-		return GroupStrategyRandom
 	}
+	return GroupStrategySticky
 }
 
 type apiKeyRow struct {

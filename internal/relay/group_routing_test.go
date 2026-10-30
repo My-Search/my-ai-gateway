@@ -1,4 +1,4 @@
-package relay
+﻿package relay
 
 import (
 	"context"
@@ -34,7 +34,7 @@ func newGroupTestStore(t *testing.T) DataStore {
 			route_source TEXT, protocol TEXT, created_at TEXT)`,
 		`CREATE TABLE model_groups (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
-			description TEXT DEFAULT '', strategy TEXT DEFAULT 'random',
+			description TEXT DEFAULT '', strategy TEXT DEFAULT 'sticky',
 			sticky INTEGER DEFAULT 0, enabled INTEGER DEFAULT 1,
 			created_at TEXT, updated_at TEXT)`,
 		`CREATE TABLE model_group_members (
@@ -73,7 +73,7 @@ type groupFixture struct {
 	lastEffort string
 }
 
-func setupGroupFixture(t *testing.T, strategy string, sticky bool, weights map[string]int) *groupFixture {
+func setupGroupFixture(t *testing.T, strategy string, weights map[string]int) *groupFixture {
 	t.Helper()
 	st := newGroupTestStore(t)
 	core := NewRelayCore(nil)
@@ -109,8 +109,8 @@ func setupGroupFixture(t *testing.T, strategy string, sticky bool, weights map[s
 		t.Fatal(err)
 	}
 	groupID, err := st.Insert(ctx,
-		"INSERT INTO model_groups (name, strategy, sticky, enabled) VALUES ('g1', ?, ?, 1)",
-		strategy, boolToIntTest(sticky))
+		"INSERT INTO model_groups (name, strategy, enabled) VALUES ('g1', ?, 1)",
+		strategy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,13 +160,6 @@ func setupGroupFixture(t *testing.T, strategy string, sticky bool, weights map[s
 	return fixture
 }
 
-func boolToIntTest(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
 // serveOnce runs one non-stream request through the routing loop and returns the
 // upstream model name that actually served it.
 func (f *groupFixture) serveOnce(t *testing.T, content string) string {
@@ -201,50 +194,9 @@ func jsonString(s string) string {
 // its members in sort order and that the entry model's own strategy does not
 // scramble them.
 func TestGroupFailoverKeepsMemberOrder(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f := setupGroupFixture(t, GroupStrategyFailover, nil)
 	if got := f.serveOnce(t, "hello"); got != "m-a" {
 		t.Errorf("served by %q, want m-a (first member in sort order)", got)
-	}
-}
-
-// TestGroupRoundRobinRotates proves the group round-robin rotates the starting
-// member across requests while still queueing the rest behind it.
-func TestGroupRoundRobinRotates(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyRoundRobin, false, nil)
-	seen := map[string]int{}
-	for i := 0; i < 6; i++ {
-		seen[f.serveOnce(t, "same-prompt")]++
-	}
-	if len(seen) != 3 {
-		t.Fatalf("round robin used %d distinct members over 6 requests, want 3 (got %v)", len(seen), seen)
-	}
-	for name, n := range seen {
-		if n != 2 {
-			t.Errorf("member %s served %d times over 6 requests, want 2 (even rotation, got %v)", name, n, seen)
-		}
-	}
-}
-
-// TestGroupRoundRobinHonorsWeights proves round_robin is weighted end to end: a
-// heavy member leads proportionally more requests while every member still serves.
-func TestGroupRoundRobinHonorsWeights(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyRoundRobin, false, map[string]int{"m-a": 3, "m-b": 1, "m-c": 1})
-	seen := map[string]int{}
-	const n = 300
-	for i := 0; i < n; i++ {
-		seen[f.serveOnce(t, "same-prompt")]++
-	}
-	if len(seen) != 3 {
-		t.Fatalf("weighted round robin used %d distinct members over %d requests, want 3 (got %v)", len(seen), n, seen)
-	}
-	// 3:1:1 schedule — m-a leads 3/5 of the requests, the others 1/5 each.
-	if seen["m-a"] != n*3/5 {
-		t.Errorf("weight-3 member led %d/%d requests, want %d (got %v)", seen["m-a"], n, n*3/5, seen)
-	}
-	for _, name := range []string{"m-b", "m-c"} {
-		if seen[name] != n/5 {
-			t.Errorf("member %s led %d/%d requests, want %d (got %v)", name, seen[name], n, n/5, seen)
-		}
 	}
 }
 
@@ -252,7 +204,7 @@ func TestGroupRoundRobinHonorsWeights(t *testing.T) {
 // the same conversation prefix always lands on the same member, while different
 // conversations spread across members.
 func TestGroupStickyPinsConversationToSameMember(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyRandom, true, nil)
+	f := setupGroupFixture(t, GroupStrategySticky, nil)
 
 	first := f.serveOnce(t, "conversation-one")
 	for i := 0; i < 8; i++ {
@@ -310,7 +262,7 @@ func TestStickyKeyIgnoresAppendedTurns(t *testing.T) {
 // TestStickySurvivesMemberChange partially is the point of the consistent hash
 // ring: adding a member must not re-map every conversation.
 func TestStickySurvivesMemberChange(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyRandom, true, nil)
+	f := setupGroupFixture(t, GroupStrategySticky, nil)
 
 	prompts := make([]string, 30)
 	before := make(map[string]string, len(prompts))
@@ -353,10 +305,10 @@ func TestStickySurvivesMemberChange(t *testing.T) {
 	}
 }
 
-// TestGroupWeightBiasesWeightedRandom proves weights actually steer distribution:
-// a member with much higher weight must serve most requests.
-func TestGroupWeightBiasesWeightedRandom(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyRandom, false, map[string]int{"m-a": 20, "m-b": 1, "m-c": 1})
+// TestGroupWeightBiasesStickyDistribution proves weights actually steer the
+// sticky hash ring: a member with much higher weight must own most sessions.
+func TestGroupWeightBiasesStickyDistribution(t *testing.T) {
+	f := setupGroupFixture(t, GroupStrategySticky, map[string]int{"m-a": 20, "m-b": 1, "m-c": 1})
 	counts := map[string]int{}
 	const n = 200
 	for i := 0; i < n; i++ {
@@ -371,7 +323,7 @@ func TestGroupWeightBiasesWeightedRandom(t *testing.T) {
 // the group and the next member serves — i.e. the group is a real sub-route, not
 // just a label.
 func TestGroupMemberSkipOnCircuitBreak(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f := setupGroupFixture(t, GroupStrategyFailover, nil)
 	ctx := context.Background()
 
 	// Trip the first member's model-level breaker.
@@ -404,7 +356,7 @@ func TestGroupMemberSkipOnCircuitBreak(t *testing.T) {
 // TestBuildCandidatesMergesGroupAndDirectRels proves both relation kinds land in
 // one candidate queue ordered by their shared sort_order space.
 func TestBuildCandidatesMergesGroupAndDirectRels(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f := setupGroupFixture(t, GroupStrategyFailover, nil)
 	ctx := context.Background()
 
 	// A direct relation placed before the group (sort_order -1).
@@ -443,7 +395,7 @@ func TestBuildCandidatesMergesGroupAndDirectRels(t *testing.T) {
 // TestGroupInheritModeMirrorsGroups proves a model inheriting from another picks
 // up the source model's group relations too.
 func TestGroupInheritModeMirrorsGroups(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f := setupGroupFixture(t, GroupStrategyFailover, nil)
 	ctx := context.Background()
 
 	childID, err := f.store.Insert(ctx,
@@ -465,7 +417,7 @@ func TestGroupInheritModeMirrorsGroups(t *testing.T) {
 // TestDisabledGroupContributesNoCandidates proves a disabled group drops out of
 // routing instead of silently serving.
 func TestDisabledGroupContributesNoCandidates(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f := setupGroupFixture(t, GroupStrategyFailover, nil)
 	ctx := context.Background()
 	if _, err := f.store.Exec(ctx, "UPDATE model_groups SET enabled = 0 WHERE id = ?", f.groupID); err != nil {
 		t.Fatal(err)
@@ -478,7 +430,7 @@ func TestDisabledGroupContributesNoCandidates(t *testing.T) {
 
 // TestDisabledGroupMemberIsExcluded proves a disabled member is not routable.
 func TestDisabledGroupMemberIsExcluded(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f := setupGroupFixture(t, GroupStrategyFailover, nil)
 	ctx := context.Background()
 	if _, err := f.store.Exec(ctx,
 		"UPDATE model_group_members SET enabled = 0 WHERE group_id = ? AND channel_model_id = ?",
@@ -499,7 +451,7 @@ func TestDisabledGroupMemberIsExcluded(t *testing.T) {
 // API keys does not receive extra probability. Member selection is weighted once;
 // all keys remain grouped behind that member for failover.
 func TestGroupWeightIsPerMemberWithMultipleAPIKeys(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyRandom, false, nil)
+	f := setupGroupFixture(t, GroupStrategySticky, nil)
 	ctx := context.Background()
 	row := f.store.QueryOneOrZero(ctx, "SELECT channel_id FROM channel_models WHERE id = ?", f.modelIDs["m-a"])
 	channelID := row.I64("channel_id", 0)
@@ -516,7 +468,10 @@ func TestGroupWeightIsPerMemberWithMultipleAPIKeys(t *testing.T) {
 
 	counts := map[string]int{}
 	for i := 0; i < 500; i++ {
-		req, _ := ParseRequest(`{"model":"entry","messages":[{"role":"user","content":"weighted"}]}`, ProtoOpenAI)
+		// 粘性策略下 leader 由会话指纹决定，逐次变化指纹才能观察份额分布。
+		body := `{"model":"entry","messages":[{"role":"user","content":"weighted-` +
+			string(rune('a'+i%26)) + string(rune('0'+i/26)) + `"}]}`
+		req, _ := ParseRequest(body, ProtoOpenAI)
 		candidates := f.core.RouteResolver.BuildCandidates(ctx, req)
 		if len(candidates) != 6 { // member A has 4 keys, B and C have one each
 			t.Fatalf("got %d candidates, want 6 after adding three keys to member A", len(candidates))
@@ -529,14 +484,14 @@ func TestGroupWeightIsPerMemberWithMultipleAPIKeys(t *testing.T) {
 		counts[candidates[0].ModelName]++
 	}
 	if counts["m-a"] < 140 || counts["m-a"] > 200 {
-		t.Errorf("member with 4 keys led %d/500 weighted draws; equal-weight members should each lead about 1/3: %v", counts["m-a"], counts)
+		t.Errorf("member with 4 keys led %d/500 sticky sessions; equal-weight members should each lead about 1/3: %v", counts["m-a"], counts)
 	}
 }
 
 // TestStickyMemberIdentityIgnoresAPIKeyCount proves the consistent-hash ring is
 // built from member identity and weight, not API-key identity/count.
 func TestStickyMemberIdentityIgnoresAPIKeyCount(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyRandom, true, nil)
+	f := setupGroupFixture(t, GroupStrategySticky, nil)
 	ctx := context.Background()
 	requestBody := `{"model":"entry","messages":[{"role":"system","content":"stable"},{"role":"user","content":"same conversation"}]}`
 	buildOrder := func() string {
@@ -644,7 +599,7 @@ func (f *groupFixture) logRowsFull(t *testing.T) []struct{ Phase, Channel, Route
 // TestStickyHitMarksRequestLog 覆盖请求日志的粘性命中标记：开启粘性的小组里，
 // 哈希命中的成员被路由到时，其日志行（start 与 success）带 route_source=sticky。
 func TestStickyHitMarksRequestLog(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, true, nil)
+	f := setupGroupFixture(t, GroupStrategySticky, nil)
 
 	if got := f.serveOnce(t, "same-session-prefix"); got == "" {
 		t.Fatal("no member served the request")
@@ -665,7 +620,7 @@ func TestStickyHitMarksRequestLog(t *testing.T) {
 // TestNonStickyGroupLeavesRouteSourceEmpty 覆盖未开启粘性时不误标：普通小组的日志行
 // route_source 必须为空（落库为 NULL），否则前端会给所有请求都挂上「粘性」徽章。
 func TestNonStickyGroupLeavesRouteSourceEmpty(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f := setupGroupFixture(t, GroupStrategyFailover, nil)
 	f.serveOnce(t, "same-session-prefix")
 
 	if source, ok := f.routeSourceByPhase(t, PhaseSuccess); !ok || source != "" {
@@ -677,7 +632,7 @@ func TestNonStickyGroupLeavesRouteSourceEmpty(t *testing.T) {
 // 必须把 ClientProtocol(req) 写到 trace 起始行（无渠道的那行），供日志页展示协议徽章。
 // 候选行不带 protocol，避免前端在非起始行重复显示。
 func TestTraceStartRecordsClientProtocol(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f := setupGroupFixture(t, GroupStrategyFailover, nil)
 	f.serveOnce(t, "protocol-session")
 
 	var startProtocol, candidateProtocol string
@@ -703,7 +658,7 @@ func TestTraceStartRecordsClientProtocol(t *testing.T) {
 // 同时锁定小组的失败回退语义：命中成员失败不会让整个小组只路由一次，组内其他成员
 // 仍会按策略顺序继续尝试。
 func TestStickyPinnedFailureMarksFallback(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, true, nil)
+	f := setupGroupFixture(t, GroupStrategySticky, nil)
 	// 命中哪个成员由哈希决定，先把「最先尝试」的那个打挂，再取其组内后继验证回退。
 	first := f.serveOnce(t, "sticky-fallback-session")
 	f.resetLogs(t)
@@ -740,10 +695,10 @@ func TestStickyPinnedFailureMarksFallback(t *testing.T) {
 
 // TestGroupFallsBackToNextMemberOnUpstreamError 锁定「小组不是只路由一次」：
 // 组内第一个成员上游报错时，后续成员照样被尝试，最终由组内其他成员服务成功。
-// 三种策略只影响顺序，不影响这条回退语义。
+// 两种策略只影响顺序，不影响这条回退语义。
 func TestGroupFallsBackToNextMemberOnUpstreamError(t *testing.T) {
-	for _, strategy := range []string{GroupStrategyFailover, GroupStrategyRandom, GroupStrategyRoundRobin} {
-		f := setupGroupFixture(t, strategy, false, nil)
+	for _, strategy := range []string{GroupStrategyFailover, GroupStrategySticky} {
+		f := setupGroupFixture(t, strategy, nil)
 		// 逐个打挂成员，直到只剩一个能用；每次都要求成功，证明组内会被走穿。
 		names := []string{"m-a", "m-b", "m-c"}
 		for _, broken := range names[:len(names)-1] {
@@ -810,7 +765,7 @@ func (f *groupFixture) setMemberEffort(t *testing.T, model string, effort string
 // TestGroupRelEffortAppliesWhenMemberUnset proves the group relation's default
 // effort reaches upstream when the serving member has no effort of its own.
 func TestGroupRelEffortAppliesWhenMemberUnset(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f := setupGroupFixture(t, GroupStrategyFailover, nil)
 	f.setGroupRelEffort(t, "high")
 	if got := f.serveOnce(t, "hello"); got != "m-a" {
 		t.Fatalf("served by %q, want m-a", got)
@@ -823,7 +778,7 @@ func TestGroupRelEffortAppliesWhenMemberUnset(t *testing.T) {
 // TestMemberEffortOverridesGroupRelEffort proves the group member's own effort
 // wins over the relation-level default: the group is a fallback, not an override.
 func TestMemberEffortOverridesGroupRelEffort(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f := setupGroupFixture(t, GroupStrategyFailover, nil)
 	f.setGroupRelEffort(t, "high")
 	f.setMemberEffort(t, "m-a", "low")
 	if got := f.serveOnce(t, "hello"); got != "m-a" {
@@ -837,7 +792,7 @@ func TestMemberEffortOverridesGroupRelEffort(t *testing.T) {
 // TestClientEffortOverridesGroupRelEffort proves an explicit client value still
 // outranks the relation-level default, preserving the existing precedence.
 func TestClientEffortOverridesGroupRelEffort(t *testing.T) {
-	f := setupGroupFixture(t, GroupStrategyFailover, false, nil)
+	f := setupGroupFixture(t, GroupStrategyFailover, nil)
 	f.setGroupRelEffort(t, "high")
 	body := `{"model":"entry","reasoning_effort":"max","messages":[{"role":"user","content":"hi"}]}`
 	req, err := ParseRequest(body, ProtoOpenAI)

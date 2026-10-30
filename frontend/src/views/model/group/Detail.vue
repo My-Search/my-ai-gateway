@@ -7,8 +7,7 @@
             <SvgIcon name="arrow-left" :size="16" />
           </router-link>
           <h2>{{ t('group.detail.title').replace('{name}', group?.name || '') }}</h2>
-          <span v-if="group" class="badge badge-info">{{ strategyLabel(group.strategy || 'random') }}</span>
-          <span v-if="group?.sticky === 1" class="badge badge-success">{{ t('group.list.stickyOn') }}</span>
+          <span v-if="group" class="badge badge-info">{{ strategyLabel(group.strategy) }}</span>
         </div>
         <p>{{ t('group.detail.subtitle') }}</p>
       </div>
@@ -48,7 +47,7 @@
       </button>
       <span class="strategy-hint">
         <SvgIcon name="info" :size="13" />
-        {{ group?.sticky === 1 ? t('group.detail.stickyMemberHint') : t('group.detail.weightHint') }}
+        {{ t('group.detail.weightHint') }}
       </span>
     </div>
 
@@ -262,13 +261,10 @@ const isSaving = ref(false)
 const EFFORT_PRESETS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
 const effortDatalistId = 'group-member-effort-presets'
 
-function strategyLabel(s: string): string {
-  const key = {
-    failover: 'group.strategy.failover',
-    random: 'group.strategy.random',
-    round_robin: 'group.strategy.roundRobin'
-  }[s]
-  return key ? t(key) : s
+function strategyLabel(s?: string): string {
+  // 历史值 random / round_robin 已统一为粘性（数据库迁移），此处按粘性展示。
+  const key = s === 'failover' ? 'group.strategy.failover' : 'group.strategy.sticky'
+  return t(key)
 }
 
 const selectOptions = computed(() => {

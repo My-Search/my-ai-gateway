@@ -111,10 +111,11 @@ mvn spring-boot:run
 
 The backend runs at `http://localhost:1399`; the SQLite database file is auto-created at `data/gateway.db`.
 
-The single-file console is embedded in the backend binary, so no front-end build is needed:
+The admin UI is the Vue front-end build — there is no embedded single-file console. Build the front-end and point the backend at it:
 
-- `http://localhost:1399/` or `http://localhost:1399/console`
-- `/` prefers the Vue bundle only when `MAG_STATIC_DIR` is set and contains `index.html`; the embedded console then stays reachable at `/console`.
+- Build: `cd frontend && npm install && npm run build` (the Docker image does this automatically).
+- Start the backend with `MAG_STATIC_DIR` pointing at `frontend/dist` (the Docker image defaults to `/app/static`).
+- Open `http://localhost:1399/`; without a configured bundle the backend answers with a deployment hint.
 
 ### 2. Start the Frontend
 

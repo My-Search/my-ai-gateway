@@ -3,11 +3,15 @@ import http from './index'
 /** 关联模式：自添加（手动配置） / 继承（从源模型实时映射，只读） */
 export type RelMode = 'self_add' | 'inherit'
 
+/** 路由策略：顺序（failover）/ 粘性（sticky，按权重一致性哈希） */
+export type ModelStrategy = 'failover' | 'sticky'
+
 export interface CustomModel {
   id?: number
   modelName: string
   description?: string
-  strategy?: string
+  /** 路由策略：failover 顺序 / sticky 粘性（按权重一致性哈希，会话前缀固定候选） */
+  strategy?: ModelStrategy
   enabled: number
   /** 是否隐藏（hidden=1 时不在模型列表中展示，但通过模型ID仍可直接调用） */
   hidden?: number
@@ -31,6 +35,8 @@ export interface ModelChannelRel {
   modelId: number
   channelModelId: number
   sortOrder: number
+  /** 粘性权重（1-1000，<=0 视为 1）：决定一致性哈希环上的份额；顺序策略忽略 */
+  weight?: number
   enabled?: number
   channelName?: string
   channelModelName?: string
@@ -180,6 +186,10 @@ export const modelApi = {
   updateRelReasoningEffort(relId: number, reasoningEffort: string | null) {
     return http.put<{ success: boolean; error?: string }>(`/models/rels/${relId}/reasoning-effort`, { reasoningEffort })
   },
+  /** 直连关联的粘性权重（1-1000，仅粘性策略使用） */
+  updateRelWeight(relId: number, weight: number) {
+    return http.put<{ success: boolean; error?: string }>(`/models/rels/${relId}/weight`, { weight })
+  },
   /** 入口模型 -> 小组 关联的默认思考强度（成员未单独配置时生效，成员配置优先） */
   updateGroupRelReasoningEffort(relId: number, reasoningEffort: string | null) {
     return http.put<{ success: boolean; error?: string }>(`/models/group-rels/${relId}/reasoning-effort`, { reasoningEffort })
@@ -208,7 +218,7 @@ export interface ModelGroupRel {
   /** 该入口模型关联此小组时的默认思考强度：仅当组内成员未单独配置时对其生效（成员配置优先） */
   reasoningEffort?: string | null
   groupName?: string
-  /** failover | random | round_robin */
+  /** failover | sticky（粘性按成员权重一致性哈希） */
   groupStrategy?: string
   /** 1 = 会话粘性（按消息前缀哈希固定组内成员） */
   groupSticky?: number

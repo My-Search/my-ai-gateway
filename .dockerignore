@@ -9,6 +9,7 @@
 target/
 frontend/node_modules/
 frontend/dist/
+.gocache/
 
 # Data & runtime
 data/

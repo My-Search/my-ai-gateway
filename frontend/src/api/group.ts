@@ -1,17 +1,17 @@
 import http from './index'
 import type { CustomModel } from './model'
 
-/** 小组路由方式 */
-export type GroupStrategy = 'failover' | 'random' | 'round_robin'
+/** 小组路由方式：failover 顺序 / sticky 粘性（按成员权重一致性哈希） */
+export type GroupStrategy = 'failover' | 'sticky'
 
 /** 模型小组：能力相近的渠道模型聚合，拥有自己的路由方式 */
 export interface ModelGroup {
   id?: number
   name: string
   description?: string
-  /** 组内路由方式：failover | random（按权重加权）| round_robin */
+  /** 组内路由方式：failover（顺序）/ sticky（粘性，按权重一致性哈希） */
   strategy?: GroupStrategy
-  /** 会话粘性：1=按消息前缀哈希固定成员（命中上游 prompt cache） */
+  /** 历史字段：路由已由 strategy 决定，不再参与路由（保留仅为兼容旧数据） */
   sticky?: number
   enabled?: number
   createdAt?: string
@@ -33,7 +33,7 @@ export interface ModelGroupMember {
   id: number
   groupId: number
   channelModelId: number
-  /** 组内随机权重（strategy=random 与 sticky 哈希环生效），<=0 视为 1 */
+  /** 组内权重（粘性哈希环虚拟节点份额），<=0 视为 1 */
   weight?: number
   reasoningEffort?: string | null
   sortOrder: number

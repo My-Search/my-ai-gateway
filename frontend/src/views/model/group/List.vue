@@ -28,8 +28,7 @@
         </select>
         <select v-model="strategyFilter" class="filter-select">
           <option value="all">{{ t('group.list.allTypes') }}</option>
-          <option value="random">{{ t('group.strategy.random') }}</option>
-          <option value="round_robin">{{ t('group.strategy.roundRobin') }}</option>
+          <option value="sticky">{{ t('group.strategy.sticky') }}</option>
           <option value="failover">{{ t('group.strategy.failover') }}</option>
         </select>
       </div>
@@ -85,10 +84,9 @@
                 <strong class="card-name">{{ g.name }}</strong>
               </div>
               <div class="card-tags">
-                <span class="tag" :class="strategyTagClass(g.strategy || 'random')">
-                  {{ strategyLabel(g.strategy || 'random') }}
+                <span class="tag" :class="strategyTagClass(g.strategy)">
+                  {{ strategyLabel(g.strategy) }}
                 </span>
-                <span v-if="g.sticky === 1" class="tag tag-success">{{ t('group.list.stickyOn') }}</span>
               </div>
             </div>
             <ToggleSwitch
@@ -224,7 +222,11 @@ const filteredGroups = computed(() => {
     }
     if (statusFilter.value === 'enabled' && (g.enabled ?? 1) !== 1) return false
     if (statusFilter.value === 'disabled' && (g.enabled ?? 1) === 1) return false
-    if (strategyFilter.value !== 'all' && (g.strategy || 'random') !== strategyFilter.value) return false
+    if (strategyFilter.value !== 'all') {
+      // 历史策略值（random / round_robin）统一按粘性参与筛选，与展示保持一致。
+      const normalized = g.strategy === 'failover' ? 'failover' : 'sticky'
+      if (normalized !== strategyFilter.value) return false
+    }
     return true
   })
 })
@@ -274,21 +276,14 @@ function accentColor(name: string): string {
 /* ══════════════════════════════════════
    Helpers
    ══════════════════════════════════════ */
-function strategyLabel(s: string): string {
-  const key = {
-    failover: 'group.strategy.failover',
-    random: 'group.strategy.random',
-    round_robin: 'group.strategy.roundRobin'
-  }[s]
-  return key ? t(key) : s
+function strategyLabel(s?: string): string {
+  // 历史值 random / round_robin 已统一为粘性（数据库迁移），此处按粘性展示。
+  const key = s === 'failover' ? 'group.strategy.failover' : 'group.strategy.sticky'
+  return t(key)
 }
 
-function strategyTagClass(s: string): string {
-  return s === 'random'
-    ? 'tag-info'
-    : s === 'round_robin'
-      ? 'tag-success'
-      : 'tag-warning'
+function strategyTagClass(s?: string): string {
+  return s === 'failover' ? 'tag-warning' : 'tag-info'
 }
 
 /* ══════════════════════════════════════
@@ -370,7 +365,15 @@ async function loadData() {
   loading.value = true
   try {
     const res = await groupApi.list()
-    groups.value = res.data
+    // 后端失败时返回 {success:false,error}（HTTP 200）而非数组：
+    // 按空列表兜底并提示，避免把对象赋给 groups 造成渲染崩溃。
+    const data: unknown = res.data
+    if (!Array.isArray(data)) {
+      groups.value = []
+      showToast((data as { error?: string } | null)?.error || t('error.loadFailed'), { type: 'error' })
+      return
+    }
+    groups.value = data as ModelGroup[]
   } catch (e: any) {
     showToast(e.message || t('error.loadFailed'), { type: 'error' })
   } finally {

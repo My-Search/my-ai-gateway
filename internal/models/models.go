@@ -146,7 +146,7 @@ type ModelGroup struct {
 	ID          int64   `json:"id"`
 	Name        string  `json:"name"`
 	Description *string `json:"description"`
-	// Strategy 是组内路由方式：failover / random（按权重随机）/ round_robin（按权重轮转）。
+	// Strategy 是组内路由方式：failover（顺序）/ sticky（粘性，按权重一致性哈希）。
 	Strategy *string `json:"strategy"`
 	// Sticky=1 时按请求消息前缀的一致性哈希固定组内成员，命中上游 prompt cache。
 	Sticky    *int    `json:"sticky"`
@@ -164,11 +164,11 @@ type ModelGroup struct {
 	OutputSpeed    *float64 `json:"outputSpeed,omitempty"`
 }
 
-// Group strategy constants.
+// 路由策略只有两种：顺序（failover）与粘性（sticky，按权重一致性哈希）。
+// 入口模型与小组共用同一套取值；历史 random / round_robin 由数据库迁移统一归为 sticky。
 const (
-	GroupStrategyFailover   = "failover"
-	GroupStrategyRandom     = "random"
-	GroupStrategyRoundRobin = "round_robin"
+	GroupStrategyFailover = "failover"
+	GroupStrategySticky   = "sticky"
 )
 
 // ModelGroupMember mirrors model_group_members plus the computed channel/model
@@ -177,8 +177,7 @@ type ModelGroupMember struct {
 	ID             int64   `json:"id"`
 	GroupID        *int64  `json:"groupId"`
 	ChannelModelID *int64  `json:"channelModelId"`
-	// Weight 是组内路由权重：strategy=random 的加权抽样、strategy=round_robin 的
-	// 加权轮转起点，以及 sticky 的哈希环虚拟节点数都用它；<=0 视为 1。
+	// Weight 是组内路由权重：粘性策略的哈希环虚拟节点数用它；<=0 视为 1。
 	Weight *int `json:"weight"`
 	ReasoningEffort *string `json:"reasoningEffort"`
 	SortOrder       *int    `json:"sortOrder"`

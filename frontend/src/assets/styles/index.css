@@ -1023,6 +1023,33 @@ input[type="month"] {
   max-width: none;
 }
 
+/* 标签列自适应：同一分区共用一条「按内容收窄」的标签列（subgrid），
+   短标签不再撑满固定列宽，标签与控件之间不会出现大片空白；
+   列宽取分区内最宽标签/说明（上限 --field-label-width，说明文字照常换行）。
+   不支持 subgrid 的浏览器回退为上方的固定列宽布局。 */
+@supports (grid-template-columns: subgrid) {
+  .cfg-section-body {
+    display: grid;
+    grid-template-columns: fit-content(var(--field-label-width)) minmax(0, 1fr);
+    align-content: start;
+    gap: 2px 20px;
+  }
+
+  .cfg-section-body > * {
+    grid-column: 1 / -1;
+  }
+
+  .cfg-section-body > .cfg-field {
+    display: grid;
+    grid-template-columns: subgrid;
+    align-items: start;
+  }
+
+  .cfg-section-body > .cfg-field--stack {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* Sub-block used inside a section body for repeated rows */
 .cfg-block {
   display: flex;
@@ -1524,6 +1551,13 @@ input[type="month"] {
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;
     padding: 12px 0;
+  }
+  /* 覆盖 subgrid 自适应列，窄屏统一单列堆叠 */
+  .cfg-section-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cfg-section-body > .cfg-field {
+    grid-template-columns: minmax(0, 1fr);
   }
   .cfg-field-control > .form-control,
   .cfg-field-control > .form-input {

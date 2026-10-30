@@ -689,7 +689,7 @@ CREATE TABLE IF NOT EXISTS model_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT UNIQUE NOT NULL,
     description TEXT DEFAULT '',
-    strategy TEXT DEFAULT 'random',
+    strategy TEXT DEFAULT 'sticky',
     sticky INTEGER DEFAULT 1,
     enabled INTEGER DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -829,4 +829,70 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_key_phase_created
                     prompt_tokens, completion_tokens, total_tokens);
 
 ANALYZE;
+
+-- ========================================
+-- VERSION:v1.51.0
+-- 1) 修复小组表缺失：曾运行过「小组转普通模型」实验迁移的库会把
+--    model_groups / model_group_members / model_group_rels 三张表删除
+--    （原小组已转换为普通模型，隐藏镜像一并转正），而建表的 v1.43.0 已记为
+--    完成不会重跑，导致小组接口在旧库上直接报错。这里以幂等方式重建为
+--    最终表结构（含 reasoning_effort），保证小组功能可用；表为空，
+--    原小组数据无法回填（已在转换时成为普通模型）。
+--    编号 v1.48.0~v1.50.0 已被该实验迁移占用，故从 v1.51.0 继续。
+-- 2) 路由策略统一为两种：顺序（failover）/ 粘性（sticky，按权重一致性哈希）。
+--    · 入口模型与小组共用同一套策略取值；
+--    · 历史 random / round_robin 都依赖权重分布，统一按粘性处理；
+--    · 旧小组若开启了会话粘性（sticky=1），同样归为粘性策略；
+--    · 其余未知值回退为 failover（顺序）。
+-- ========================================
+
+CREATE TABLE IF NOT EXISTS model_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    description TEXT DEFAULT '',
+    strategy TEXT DEFAULT 'sticky',
+    sticky INTEGER DEFAULT 1,
+    enabled INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS model_group_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    channel_model_id INTEGER NOT NULL,
+    weight INTEGER DEFAULT 1,
+    reasoning_effort TEXT,
+    sort_order INTEGER DEFAULT 0,
+    enabled INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (group_id) REFERENCES model_groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (channel_model_id) REFERENCES channel_models(id) ON DELETE CASCADE,
+    UNIQUE(group_id, channel_model_id)
+);
+
+CREATE TABLE IF NOT EXISTS model_group_rels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER NOT NULL,
+    group_id INTEGER NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    reasoning_effort TEXT,
+    enabled INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE,
+    FOREIGN KEY (group_id) REFERENCES model_groups(id) ON DELETE CASCADE,
+    UNIQUE(model_id, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_group_members_group_id ON model_group_members(group_id);
+CREATE INDEX IF NOT EXISTS idx_model_group_members_channel_model_id ON model_group_members(channel_model_id);
+CREATE INDEX IF NOT EXISTS idx_model_group_rels_model_id ON model_group_rels(model_id);
+CREATE INDEX IF NOT EXISTS idx_model_group_rels_group_id ON model_group_rels(group_id);
+
+UPDATE models SET strategy = 'sticky' WHERE strategy IN ('random', 'round_robin');
+UPDATE models SET strategy = 'failover' WHERE strategy NOT IN ('failover', 'sticky');
+
+UPDATE model_groups SET strategy = 'sticky' WHERE strategy IN ('random', 'round_robin') OR sticky = 1;
+UPDATE model_groups SET strategy = 'failover' WHERE strategy NOT IN ('failover', 'sticky');
+
 

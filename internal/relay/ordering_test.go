@@ -42,9 +42,9 @@ func TestOrderEntriesKeepsGroupContiguous(t *testing.T) {
 		}},
 		{candidates: []RoutingCandidate{groupTestCandidate(2, 1, "direct-2")}},
 	}
-	for _, strategy := range []string{"failover", "random", "round_robin", ""} {
+	for _, strategy := range []string{"failover", "sticky", "random", "round_robin", ""} {
 		for i := 0; i < 20; i++ {
-			got := orderEntries(strategy, entries, 42)
+			got := orderEntries(strategy, entries, 42, "session-"+string(rune('a'+i)))
 			if len(got) != 3 {
 				t.Fatalf("%s: got %d entries, want 3", strategy, len(got))
 			}
@@ -71,26 +71,30 @@ func TestOrderEntriesKeepsGroupContiguous(t *testing.T) {
 	}
 }
 
-// TestOrderEntriesFailoverIsStable proves failover keeps the configured order.
+// TestOrderEntriesFailoverIsStable proves failover keeps the configured order,
+// with or without a session key.
 func TestOrderEntriesFailoverIsStable(t *testing.T) {
 	entries := []routingEntry{
 		{candidates: []RoutingCandidate{groupTestCandidate(1, 1, "first")}},
 		{candidates: []RoutingCandidate{groupTestCandidate(2, 1, "second")}},
 		{candidates: []RoutingCandidate{groupTestCandidate(3, 1, "third")}},
 	}
-	for i := 0; i < 5; i++ {
-		got := orderEntries("failover", entries, 1)
-		for j, want := range []string{"first", "second", "third"} {
-			if got[j].candidates[0].ModelName != want {
-				t.Fatalf("failover order changed at position %d: got %s want %s", j, got[j].candidates[0].ModelName, want)
+	for _, key := range []string{"", "session-1"} {
+		for i := 0; i < 5; i++ {
+			got := orderEntries("failover", entries, 1, key)
+			for j, want := range []string{"first", "second", "third"} {
+				if got[j].candidates[0].ModelName != want {
+					t.Fatalf("failover order changed at position %d: got %s want %s", j, got[j].candidates[0].ModelName, want)
+				}
 			}
 		}
 	}
 }
 
-// TestOrderEntriesRoundRobinRotates proves the entry-level rotation cycles the
-// starting entry, so consecutive requests do not always begin at the same place.
-func TestOrderEntriesRoundRobinRotates(t *testing.T) {
+// TestOrderEntriesStickyPinsSession proves the sticky strategy maps one session
+// key to a deterministic entry, and legacy random / round_robin values behave
+// exactly like sticky (the only non-failover strategy).
+func TestOrderEntriesStickyPinsSession(t *testing.T) {
 	newEntries := func() []routingEntry {
 		return []routingEntry{
 			{candidates: []RoutingCandidate{groupTestCandidate(1, 1, "a")}},
@@ -98,29 +102,93 @@ func TestOrderEntriesRoundRobinRotates(t *testing.T) {
 			{candidates: []RoutingCandidate{groupTestCandidate(3, 1, "c")}},
 		}
 	}
-	firsts := map[string]bool{}
-	for i := 0; i < 6; i++ {
-		firsts[orderEntries("round_robin", newEntries(), 99)[0].candidates[0].ModelName] = true
+	leader := func(strategy, key string) string {
+		return orderEntries(strategy, newEntries(), 99, key)[0].candidates[0].ModelName
 	}
-	if len(firsts) != 3 {
-		t.Errorf("round robin started at %d distinct entries over 6 requests, want 3 (got %v)", len(firsts), firsts)
+
+	pinned := leader("sticky", "same-session")
+	for i := 0; i < 10; i++ {
+		if got := leader("sticky", "same-session"); got != pinned {
+			t.Fatalf("sticky session moved from %s to %s", pinned, got)
+		}
+	}
+	// 历史策略值统一按粘性处理：同一 key 必须命中同一 leader。
+	if got := leader("random", "same-session"); got != pinned {
+		t.Errorf("legacy random leader = %s, want %s (normalized to sticky)", got, pinned)
+	}
+	if got := leader("round_robin", "same-session"); got != pinned {
+		t.Errorf("legacy round_robin leader = %s, want %s (normalized to sticky)", got, pinned)
+	}
+	// 重排始终是完整排列：不丢条目、不重复。
+	for _, key := range []string{"k1", "k2", "k3", "k4", "k5"} {
+		got := orderEntries("sticky", newEntries(), 99, key)
+		if len(got) != 3 {
+			t.Fatalf("sticky order returned %d entries, want 3", len(got))
+		}
+		seen := map[string]bool{}
+		for _, e := range got {
+			if seen[e.candidates[0].ModelName] {
+				t.Fatalf("entry %s appears twice in %v", e.candidates[0].ModelName, got)
+			}
+			seen[e.candidates[0].ModelName] = true
+		}
 	}
 }
 
-// TestWeightedShufflePrefersHeavyMember proves weight steers ordering: over many
-// draws the heavy member must be first far more often than a light one.
-func TestWeightedShufflePrefersHeavyMember(t *testing.T) {
-	blocks := groupTestBlocks([]string{"heavy", "light-a", "light-b"}, []int{50, 1, 1})
-	heavyFirst := 0
-	const rounds = 300
-	for i := 0; i < rounds; i++ {
-		if weightedShuffleBlocks(blocks)[0][0].ModelName == "heavy" {
-			heavyFirst++
+// TestOrderEntriesStickyWithoutKeyFallsBack proves a session without hashable
+// content degrades to the configured order instead of pinning everything.
+func TestOrderEntriesStickyWithoutKeyFallsBack(t *testing.T) {
+	entries := []routingEntry{
+		{candidates: []RoutingCandidate{groupTestCandidate(1, 1, "first")}},
+		{candidates: []RoutingCandidate{groupTestCandidate(2, 1, "second")}},
+	}
+	got := orderEntries("sticky", entries, 1, "")
+	if got[0].candidates[0].ModelName != "first" || got[1].candidates[0].ModelName != "second" {
+		t.Errorf("sticky without a session key changed the order: %v", got)
+	}
+}
+
+// TestOrderEntriesWeightsSteerSticky proves entry weights steer the hash ring:
+// a heavy entry owns proportionally more sessions.
+func TestOrderEntriesWeightsSteerSticky(t *testing.T) {
+	newEntries := func() []routingEntry {
+		a := groupTestCandidate(1, 1, "heavy")
+		a.Weight = 9
+		b := groupTestCandidate(2, 1, "light")
+		b.Weight = 1
+		return []routingEntry{{candidates: []RoutingCandidate{a}}, {candidates: []RoutingCandidate{b}}}
+	}
+	heavy := 0
+	const sessions = 400
+	for i := 0; i < sessions; i++ {
+		key := "conversation-" + string(rune('a'+i%26)) + "-" + string(rune('0'+i/26))
+		if orderEntries("sticky", newEntries(), 555, key)[0].candidates[0].ModelName == "heavy" {
+			heavy++
 		}
 	}
-	// Probability of "heavy" first is 50/52 ≈ 96%.
-	if heavyFirst < rounds*80/100 {
-		t.Errorf("heavy member led only %d/%d draws; weights are not being applied", heavyFirst, rounds)
+	if heavy < sessions*70/100 {
+		t.Errorf("weight 9 entry pinned only %d/%d sessions; expected roughly 90%%", heavy, sessions)
+	}
+}
+
+// TestNormalizeModelStrategy documents the entry-model strategy normalization:
+// only failover / sticky survive, legacy random / round_robin become sticky and
+// unknown values fall back to failover.
+func TestNormalizeModelStrategy(t *testing.T) {
+	cases := map[string]string{
+		"":            ModelStrategyFailover,
+		"  ":          ModelStrategyFailover,
+		"bogus":       ModelStrategyFailover,
+		"failover":    ModelStrategyFailover,
+		"sticky":      ModelStrategySticky,
+		"random":      ModelStrategySticky,
+		"round_robin": ModelStrategySticky,
+		" sticky":     ModelStrategySticky,
+	}
+	for in, want := range cases {
+		if got := normalizeModelStrategy(in); got != want {
+			t.Errorf("normalizeModelStrategy(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
@@ -145,17 +213,17 @@ func TestGroupWeightsApplyPerMemberNotPerAPIKey(t *testing.T) {
 	}
 
 	// If weights are equal, a member with four keys should not win ~80% of the
-	// requests; each member owns half of the weighted draw.
+	// sessions; each member owns half of the hash ring.
 	aWins := 0
-	const rounds = 1000
-	for i := 0; i < rounds; i++ {
-		ordered := weightedShuffleBlocks(blocks)
-		if ordered[0][0].GroupMemberID == 101 {
+	const sessions = 1000
+	for i := 0; i < sessions; i++ {
+		key := "session-" + string(rune('a'+i%26)) + "-" + string(rune('0'+i/26))
+		if stickyBlocks(blocks, 7, "member-keys", key)[0][0].GroupMemberID == 101 {
 			aWins++
 		}
 	}
-	if aWins < rounds*40/100 || aWins > rounds*60/100 {
-		t.Errorf("member with 4 API keys won %d/%d draws with equal member weights; API key count must not multiply weight", aWins, rounds)
+	if aWins < sessions*40/100 || aWins > sessions*60/100 {
+		t.Errorf("member with 4 API keys won %d/%d sessions with equal member weights; API key count must not multiply weight", aWins, sessions)
 	}
 
 	// All keys of the chosen member remain contiguous for failover within member.
@@ -165,12 +233,14 @@ func TestGroupWeightsApplyPerMemberNotPerAPIKey(t *testing.T) {
 	}
 }
 
-// TestWeightedShuffleKeepsEveryCandidate proves reordering never drops or
-// duplicates a candidate (the routing loop relies on the pool being exact).
-func TestWeightedShuffleKeepsEveryCandidate(t *testing.T) {
+// TestStickyKeepsEveryCandidate proves reordering never drops or duplicates a
+// candidate (the routing loop relies on the pool being exact), including
+// degenerate zero/negative weights.
+func TestStickyKeepsEveryCandidate(t *testing.T) {
 	blocks := groupTestBlocks([]string{"a", "b", "c"}, []int{3, 1, 2})
 	for i := 0; i < 50; i++ {
-		got := flattenCandidateBlocks(weightedShuffleBlocks(blocks))
+		key := "session-" + string(rune('a'+i%26)) + "-" + string(rune('0'+i/26))
+		got := flattenCandidateBlocks(stickyBlocks(blocks, 21, "exact", key))
 		if len(got) != 3 {
 			t.Fatalf("got %d candidates, want 3", len(got))
 		}
@@ -182,216 +252,10 @@ func TestWeightedShuffleKeepsEveryCandidate(t *testing.T) {
 			seen[c.ModelName] = true
 		}
 	}
-}
-
-// TestZeroAndNegativeWeightsTreatedAsOne proves a missing/zero weight does not
-// crash the weighted picker or starve a member (divide-by-zero / zero-total).
-func TestZeroAndNegativeWeightsTreatedAsOne(t *testing.T) {
-	blocks := groupTestBlocks([]string{"zero", "negative", "normal"}, []int{0, -5, 1})
-	for i := 0; i < 30; i++ {
-		got := flattenCandidateBlocks(weightedShuffleBlocks(blocks))
-		if len(got) != 3 {
-			t.Fatalf("got %d candidates, want 3 for weights %v", len(got), []int{0, -5, 1})
-		}
-	}
 	// All-zero weights must still produce a full, non-crashing ordering.
-	zeroBlocks := groupTestBlocks([]string{"a", "b", "c"}, []int{0, 0, 0})
-	if got := flattenCandidateBlocks(weightedShuffleBlocks(zeroBlocks)); len(got) != 3 {
+	zeroBlocks := groupTestBlocks([]string{"a", "b", "c"}, []int{0, -5, 0})
+	if got := flattenCandidateBlocks(stickyBlocks(zeroBlocks, 22, "zero", "session")); len(got) != 3 {
 		t.Fatalf("all-zero weights: got %d candidates, want 3", len(got))
-	}
-}
-
-// TestRoundRobinRotationKeepsQueueIntact proves the rotation used for
-// round_robin preserves the cyclic order (no drops, no duplicates).
-func TestRoundRobinRotationKeepsQueueIntact(t *testing.T) {
-	blocks := groupTestBlocks([]string{"a", "b", "c"}, []int{1, 1, 1})
-	for i := 0; i < 7; i++ {
-		got := flattenCandidateBlocks(rotateBlocks(blocks, "test", 5))
-		if len(got) != 3 {
-			t.Fatalf("got %d candidates, want 3", len(got))
-		}
-		// Consecutive pairs must be cyclically adjacent in the source slice.
-		for j := range got {
-			next := got[(j+1)%len(got)]
-			if got[j].ModelName == next.ModelName {
-				t.Fatalf("duplicate %s in rotation %v", got[j].ModelName, got)
-			}
-		}
-	}
-}
-
-// TestRotateBlocksIsWeighted proves round_robin honors weights: the starting
-// member cycles over a weighted schedule, so a heavy member leads proportionally
-// more requests while every member still gets a turn.
-func TestRotateBlocksIsWeighted(t *testing.T) {
-	blocks := groupTestBlocks([]string{"heavy", "light"}, []int{3, 1})
-	firsts := map[string]int{}
-	const rounds = 400
-	for i := 0; i < rounds; i++ {
-		firsts[flattenCandidateBlocks(rotateBlocks(blocks, "weighted-rr", 77))[0].ModelName]++
-	}
-	// 3:1 schedule — heavy must lead about 3/4 of the requests.
-	if firsts["heavy"] != rounds*3/4 || firsts["light"] != rounds/4 {
-		t.Errorf("weighted round robin led %v over %d requests, want heavy=300 light=100", firsts, rounds)
-	}
-}
-
-// TestRotateBlocksEqualWeightsStaysUniform proves the weighting does not distort
-// the classic case: equal weights must keep the plain per-member rotation, with
-// each member leading equally.
-func TestRotateBlocksEqualWeightsStaysUniform(t *testing.T) {
-	blocks := groupTestBlocks([]string{"a", "b", "c"}, []int{1, 1, 1})
-	firsts := map[string]int{}
-	const rounds = 300
-	for i := 0; i < rounds; i++ {
-		firsts[flattenCandidateBlocks(rotateBlocks(blocks, "even-rr", 78))[0].ModelName]++
-	}
-	for _, name := range []string{"a", "b", "c"} {
-		if firsts[name] != rounds/3 {
-			t.Errorf("member %s led %d/%d requests, want %d (equal weights must stay uniform)", name, firsts[name], rounds, rounds/3)
-		}
-	}
-}
-
-// TestRotateBlocksKeepsQueueIntact proves weighted rotation still returns every
-// member exactly once, so the failover tail behind the leader stays complete.
-func TestRotateBlocksKeepsQueueIntact(t *testing.T) {
-	blocks := groupTestBlocks([]string{"a", "b", "c"}, []int{5, 2, 1})
-	for i := 0; i < 20; i++ {
-		got := flattenCandidateBlocks(rotateBlocks(blocks, "intact-rr", 79))
-		if len(got) != 3 {
-			t.Fatalf("got %d candidates, want 3", len(got))
-		}
-		seen := map[string]bool{}
-		for _, c := range got {
-			if seen[c.ModelName] {
-				t.Fatalf("duplicate %s in rotation %v", c.ModelName, got)
-			}
-			seen[c.ModelName] = true
-		}
-	}
-}
-
-// TestBuildWeightedCycleShape pins the schedule itself: member i appears
-// weight_i/gcd times, and equal weights reproduce the identity rotation.
-func TestBuildWeightedCycleShape(t *testing.T) {
-	cases := []struct {
-		weights []int
-		want    []int
-	}{
-		{[]int{1, 1, 1}, []int{0, 1, 2}},
-		{[]int{5, 5}, []int{0, 1}},        // common factor reduced
-		{[]int{2, 1}, []int{0, 1, 0}},     // heavy leads 2 of 3
-		{[]int{0, -1, 1}, []int{0, 1, 2}}, // <=0 counts as 1
-	}
-	for _, tc := range cases {
-		got := buildWeightedCycle(tc.weights)
-		if len(got) != len(tc.want) {
-			t.Fatalf("buildWeightedCycle(%v) = %v, want %v", tc.weights, got, tc.want)
-		}
-		counts := map[int]int{}
-		for _, v := range got {
-			counts[v]++
-		}
-		wantCounts := map[int]int{}
-		for _, v := range tc.want {
-			wantCounts[v]++
-		}
-		for k, v := range wantCounts {
-			if counts[k] != v {
-				t.Errorf("buildWeightedCycle(%v) = %v, member %d appears %d times, want %d",
-					tc.weights, got, k, counts[k], v)
-			}
-		}
-	}
-}
-
-// TestBuildWeightedCycleBounded proves the schedule cannot blow up with the
-// maximum configurable weights: the cycle is capped while still letting every
-// member appear.
-func TestBuildWeightedCycleBounded(t *testing.T) {
-	weights := make([]int, 40)
-	for i := range weights {
-		weights[i] = 1000 // 40 * 1000 = 40000, twice the cap
-	}
-	cycle := buildWeightedCycle(weights)
-	if len(cycle) > cycleMaxLen {
-		t.Errorf("cycle length = %d, want at most %d", len(cycle), cycleMaxLen)
-	}
-	seen := map[int]bool{}
-	for _, v := range cycle {
-		seen[v] = true
-	}
-	if len(seen) != len(weights) {
-		t.Errorf("cycle covers %d of %d members; a member would never lead", len(seen), len(weights))
-	}
-	// Equal weights must still split the schedule evenly after scaling.
-	counts := map[int]int{}
-	for _, v := range cycle {
-		counts[v]++
-	}
-	first := counts[0]
-	for i, n := range counts {
-		if n != first {
-			t.Errorf("member %d appears %d times, want %d (equal weights)", i, n, first)
-		}
-	}
-}
-
-// TestStickyBlocksPinKey proves the ring maps one key to a stable member, and
-// that the pinned member always leads the queue.
-func TestStickyBlocksPinKey(t *testing.T) {
-	blocks := groupTestBlocks([]string{"a", "b", "c"}, []int{1, 1, 1})
-	first := stickyBlocks(blocks, 11, "t", "session-xyz")[0][0].ModelName
-	for i := 0; i < 20; i++ {
-		got := flattenCandidateBlocks(stickyBlocks(blocks, 11, "t", "session-xyz"))
-		if got[0].ModelName != first {
-			t.Fatalf("sticky key moved between members: %s -> %s", first, got[0].ModelName)
-		}
-		if len(got) != 3 {
-			t.Fatalf("sticky order returned %d candidates, want 3 (failover tail must remain)", len(got))
-		}
-	}
-}
-
-// TestStickyAppliesUnderEveryGroupStrategy proves sticky=1 is honored no matter
-// which strategy the group uses — round_robin must not silently drop affinity.
-func TestStickyAppliesUnderEveryGroupStrategy(t *testing.T) {
-	candidates := []RoutingCandidate{
-		groupTestCandidate(1, 1, "a"), groupTestCandidate(2, 1, "b"), groupTestCandidate(3, 1, "c"),
-	}
-	for _, strategy := range []string{GroupStrategyFailover, GroupStrategyRandom, GroupStrategyRoundRobin} {
-		firsts := map[string]int{}
-		for i := 0; i < 12; i++ {
-			got := orderGroupCandidates(groupOrdering{
-				candidates: candidates, weights: []int{1, 1, 1},
-				strategy: strategy, sticky: true, stickyKey: "same-session", groupID: 42,
-			})
-			firsts[firstMember(got)]++
-		}
-		if len(firsts) != 1 {
-			t.Errorf("%s: sticky session spread across %d members (%v); sticky must pin one member",
-				strategy, len(firsts), firsts)
-		}
-	}
-}
-
-// TestStickyOffStillRotatesUnderRoundRobin proves disabling sticky keeps the
-// round-robin behaviour (the fix must not make round_robin always pick one member).
-func TestStickyOffStillRotatesUnderRoundRobin(t *testing.T) {
-	candidates := []RoutingCandidate{
-		groupTestCandidate(1, 1, "a"), groupTestCandidate(2, 1, "b"), groupTestCandidate(3, 1, "c"),
-	}
-	firsts := map[string]bool{}
-	for i := 0; i < 6; i++ {
-		got := orderGroupCandidates(groupOrdering{
-			candidates: candidates, weights: []int{1, 1, 1},
-			strategy: GroupStrategyRoundRobin, sticky: false, groupID: 43,
-		})
-		firsts[firstMember(got)] = true
-	}
-	if len(firsts) != 3 {
-		t.Errorf("round_robin without sticky started at %d members over 6 requests, want 3 (%v)", len(firsts), firsts)
 	}
 }
 
@@ -568,17 +432,19 @@ func TestStickyKeyUsesContentPartsText(t *testing.T) {
 	}
 }
 
-// TestNormalizeGroupStrategyFallsBackToRandom documents the default for unknown
-// or blank strategies (a corrupt value must not disable routing).
-func TestNormalizeGroupStrategyFallsBackToRandom(t *testing.T) {
+// TestNormalizeGroupStrategyUnifiesLegacy documents the normalization: only
+// failover / sticky survive; blank and legacy random / round_robin values become
+// sticky (a corrupt value must not disable routing).
+func TestNormalizeGroupStrategyUnifiesLegacy(t *testing.T) {
 	cases := map[string]string{
-		"":             GroupStrategyRandom,
-		"  ":           GroupStrategyRandom,
-		"bogus":        GroupStrategyRandom,
+		"":             GroupStrategySticky,
+		"  ":           GroupStrategySticky,
+		"bogus":        GroupStrategySticky,
 		"failover":     GroupStrategyFailover,
-		"random":       GroupStrategyRandom,
-		"round_robin":  GroupStrategyRoundRobin,
-		" round_robin": GroupStrategyRoundRobin,
+		"sticky":       GroupStrategySticky,
+		"random":       GroupStrategySticky,
+		"round_robin":  GroupStrategySticky,
+		" round_robin": GroupStrategySticky,
 	}
 	for in, want := range cases {
 		if got := normalizeGroupStrategy(in); got != want {
@@ -599,16 +465,16 @@ func TestNormalizeWeightTreatsNonPositiveAsOne(t *testing.T) {
 	}
 }
 
-// TestOrderGroupMarksStickyWinner 覆盖请求日志来源标记：粘性生效时，哈希命中的
+// TestOrderGroupMarksStickyWinner 覆盖请求日志来源标记：粘性策略生效时，哈希命中的
 // 成员（排在组内首位）的每个候选都带 sticky 标记，其余成员保持未标记。
 func TestOrderGroupMarksStickyWinner(t *testing.T) {
 	candidates := []RoutingCandidate{
 		groupTestCandidate(1, 1, "a"), groupTestCandidate(2, 1, "b"), groupTestCandidate(3, 1, "c"),
 	}
-	for _, strategy := range []string{GroupStrategyFailover, GroupStrategyRandom, GroupStrategyRoundRobin} {
+	for _, strategy := range []string{GroupStrategySticky, "random", "round_robin"} {
 		got := orderGroupCandidates(groupOrdering{
 			candidates: candidates, weights: []int{1, 1, 1},
-			strategy: strategy, sticky: true, stickyKey: "session-1", groupID: 7,
+			strategy: strategy, stickyKey: "session-1", groupID: 7,
 		})
 		if len(got) != 3 {
 			t.Fatalf("%s: ordered %d candidates, want 3", strategy, len(got))
@@ -626,30 +492,60 @@ func TestOrderGroupMarksStickyWinner(t *testing.T) {
 	}
 }
 
-// TestOrderGroupNoStickyMarkWhenInactive 覆盖不标记的情形：未开启粘性、会话前缀
+// TestOrderGroupNoStickyMarkWhenInactive 覆盖不标记的情形：顺序策略，或会话前缀
 // 无法计算（stickyKey 为空），都不应把成员说成「粘性命中」。
 func TestOrderGroupNoStickyMarkWhenInactive(t *testing.T) {
 	candidates := []RoutingCandidate{
 		groupTestCandidate(1, 1, "a"), groupTestCandidate(2, 1, "b"), groupTestCandidate(3, 1, "c"),
 	}
 	cases := []struct {
-		name   string
-		sticky bool
-		key    string
+		name     string
+		strategy string
+		key      string
 	}{
-		{"sticky disabled", false, "session-1"},
-		{"no sticky key", true, ""},
+		{"failover strategy", GroupStrategyFailover, "session-1"},
+		{"sticky without key", GroupStrategySticky, ""},
 	}
 	for _, tc := range cases {
 		got := orderGroupCandidates(groupOrdering{
 			candidates: candidates, weights: []int{1, 1, 1},
-			strategy: GroupStrategyFailover, sticky: tc.sticky, stickyKey: tc.key, groupID: 7,
+			strategy: tc.strategy, stickyKey: tc.key, groupID: 7,
 		})
 		for _, c := range got {
 			if c.RouteSource != "" {
 				t.Errorf("%s: member %s carries RouteSource %q, want empty",
 					tc.name, c.ModelName, c.RouteSource)
 			}
+		}
+	}
+}
+
+// TestStickyStrategyPinsAndFailoverIgnores proves strategy is authoritative:
+// sticky pins the session even when no group bool is involved, failover keeps
+// the configured order regardless of the key.
+func TestStickyStrategyPinsAndFailoverIgnores(t *testing.T) {
+	candidates := []RoutingCandidate{
+		groupTestCandidate(1, 1, "a"), groupTestCandidate(2, 1, "b"), groupTestCandidate(3, 1, "c"),
+	}
+	pinned := firstMember(orderGroupCandidates(groupOrdering{
+		candidates: candidates, weights: []int{1, 1, 1},
+		strategy: GroupStrategySticky, stickyKey: "same-session", groupID: 9,
+	}))
+	for i := 0; i < 6; i++ {
+		if got := firstMember(orderGroupCandidates(groupOrdering{
+			candidates: candidates, weights: []int{1, 1, 1},
+			strategy: GroupStrategySticky, stickyKey: "same-session", groupID: 9,
+		})); got != pinned {
+			t.Fatalf("sticky session moved from %s to %s", pinned, got)
+		}
+	}
+	got := orderGroupCandidates(groupOrdering{
+		candidates: candidates, weights: []int{1, 1, 1},
+		strategy: GroupStrategyFailover, stickyKey: "same-session", groupID: 9,
+	})
+	for j, want := range []string{"a", "b", "c"} {
+		if got[j].ModelName != want {
+			t.Fatalf("failover with a session key reordered members at %d: got %s want %s", j, got[j].ModelName, want)
 		}
 	}
 }

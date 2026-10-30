@@ -24,15 +24,20 @@ const (
 	ProtoResponses = "responses"
 )
 
-// Group strategy constants: how a model group orders its own members.
+// 路由策略只有两种：顺序（failover）与粘性（sticky，按权重做一致性哈希）。
 //
-// These mirror the values persisted in model_groups.strategy; the relay package
-// keeps its own copy so the routing engine has no dependency on the admin model
-// package. Unknown/blank values fall back to random (see normalizeGroupStrategy).
+// 这些值与 model_groups.strategy / models.strategy 持久化的取值一致；relay
+// 包保留自己的副本，使路由引擎不依赖管理端模型包。历史遗留的 random /
+// round_robin 在读取与数据库迁移中统一归为 sticky（见 normalizeGroupStrategy）。
 const (
-	GroupStrategyFailover   = "failover"
-	GroupStrategyRandom     = "random"
-	GroupStrategyRoundRobin = "round_robin"
+	GroupStrategyFailover = "failover"
+	GroupStrategySticky   = "sticky"
+)
+
+// 入口模型路由策略：顺序 / 粘性。与分组策略共用同一套取值。
+const (
+	ModelStrategyFailover = GroupStrategyFailover
+	ModelStrategySticky   = GroupStrategySticky
 )
 
 // Client protocol slugs recorded on circuit-breaker records so a broken path is

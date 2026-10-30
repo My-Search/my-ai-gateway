@@ -14,6 +14,8 @@ target/
 *.test
 *.out
 /dist/
+# 本仓库内的 Go 构建缓存（可达数百 MB，禁止提交）
+/.gocache/
 
 ### Frontend / Node ###
 frontend/node_modules/

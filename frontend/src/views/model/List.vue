@@ -29,8 +29,7 @@
         <select v-model="typeFilter" class="filter-select">
           <option value="all">{{ t('model.list.allTypes') }}</option>
           <option value="failover">{{ t('model.list.strategyFailover') }}</option>
-          <option value="random">{{ t('model.list.strategyRandom') }}</option>
-          <option value="round_robin">{{ t('model.list.strategyRoundRobin') }}</option>
+          <option value="sticky">{{ t('model.list.strategySticky') }}</option>
         </select>
       </div>
       <div class="filter-view">
@@ -183,6 +182,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated } from 'vue'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { modelApi, type CustomModel, type ModelStatsItem } from '@/api/model'
+import { normalizeStrategy } from '@/utils/strategy'
 import { formatSeconds } from '@/utils/format'
 import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
@@ -228,7 +228,10 @@ const filteredCards = computed(() => {
     if (statusFilter.value === 'enabled' && card.model.enabled !== 1) return false
     if (statusFilter.value === 'disabled' && card.model.enabled === 1) return false
     // Type filter
-    if (typeFilter.value !== 'all' && card.model.strategy !== typeFilter.value) return false
+    if (typeFilter.value !== 'all') {
+      // 历史策略值统一按粘性参与筛选，与展示保持一致。
+      if (normalizeStrategy(card.model.strategy) !== typeFilter.value) return false
+    }
     return true
   })
 })
@@ -260,19 +263,14 @@ function iconGradient(name: string): string {
    Helpers
    ══════════════════════════════════════ */
 function strategyLabel(s?: string) {
-  return s === 'random'
-    ? t('model.list.strategyRandom')
-    : s === 'round_robin'
-      ? t('model.list.strategyRoundRobin')
-      : t('model.list.strategyFailover')
+  // 历史值 random / round_robin 已统一为粘性（数据库迁移），此处按粘性展示。
+  return normalizeStrategy(s) === 'sticky'
+    ? t('model.list.strategySticky')
+    : t('model.list.strategyFailover')
 }
 
 function strategyTagClass(s?: string) {
-  return s === 'random'
-    ? 'tag-info'
-    : s === 'round_robin'
-      ? 'tag-success'
-      : 'tag-warning'
+  return normalizeStrategy(s) === 'sticky' ? 'tag-info' : 'tag-warning'
 }
 
 function rateColor(rate?: number): string {

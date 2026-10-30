@@ -49,13 +49,6 @@
           </button>
         </div>
       </ConfigField>
-
-      <ConfigField :label="t('group.form.sticky')" :hint="t('group.form.stickyHint')">
-        <div class="inline-control">
-          <ToggleSwitch v-model="stickyOn" :show-label="false" />
-          <span class="inline-hint">{{ stickyOn ? t('common.on') : t('common.off') }}</span>
-        </div>
-      </ConfigField>
     </ConfigSection>
 
     <template #footer>
@@ -79,7 +72,6 @@ import { useI18n } from '@/composables/useI18n'
 import { useToast } from '@/composables/useToast'
 import { groupApi, type GroupStrategy } from '@/api/group'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
 import ConfigShell from '@/components/common/ConfigShell.vue'
 import ConfigSection from '@/components/common/ConfigSection.vue'
 import ConfigField from '@/components/common/ConfigField.vue'
@@ -100,20 +92,14 @@ const sections = computed(() => [
 ])
 
 const strategyOptions = computed(() => [
-  { value: 'random' as GroupStrategy, label: t('group.strategy.random'), desc: t('cfg.strategyRandomDesc'), icon: 'zap' },
-  { value: 'round_robin' as GroupStrategy, label: t('group.strategy.roundRobin'), desc: t('cfg.strategyRoundRobinDesc'), icon: 'refresh' },
+  { value: 'sticky' as GroupStrategy, label: t('group.strategy.sticky'), desc: t('cfg.strategyStickyDesc'), icon: 'zap' },
   { value: 'failover' as GroupStrategy, label: t('group.strategy.failover'), desc: t('cfg.strategyFailoverDesc'), icon: 'rank' },
 ])
 
 const form = ref({
   name: '',
-  strategy: 'random' as GroupStrategy,
-  // 粘性默认开启：Prompt 缓存亲和是小组的主要收益，编辑已有小组时回填其真实值
-  sticky: 1
-})
-const stickyOn = computed({
-  get: () => form.value.sticky === 1,
-  set: (v: boolean) => { form.value.sticky = v ? 1 : 0 }
+  // 粘性默认：按成员权重一致性哈希把同一会话固定到同一成员，命中上游 prompt cache
+  strategy: 'sticky' as GroupStrategy
 })
 
 onMounted(async () => {
@@ -123,8 +109,8 @@ onMounted(async () => {
     const g = res.data.group
     form.value = {
       name: g.name,
-      strategy: g.strategy || 'random',
-      sticky: g.sticky ?? 0
+      // 历史策略值（random / round_robin）已由数据库迁移统一为粘性。
+      strategy: (g.strategy === 'failover' ? 'failover' : 'sticky') as GroupStrategy
     }
   } catch (e: any) {
     showToast(e.message || t('error.loadFailed'), { type: 'error' })

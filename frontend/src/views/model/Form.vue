@@ -175,7 +175,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
-import { modelApi, type CustomModel } from '@/api/model'
+import { modelApi, type CustomModel, type ModelStrategy } from '@/api/model'
+import { normalizeStrategy } from '@/utils/strategy'
 import Dialog from '@/components/common/Dialog.vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import ToggleSwitch from '@/components/common/ToggleSwitch.vue'
@@ -208,15 +209,14 @@ const sections = computed(() => {
 })
 
 const strategyOptions = computed(() => [
-  { value: '', label: t('model.form.strategyFailover'), desc: t('cfg.strategyFailoverDesc'), icon: 'rank' },
-  { value: 'random', label: t('model.form.strategyRandom'), desc: t('cfg.strategyRandomDesc'), icon: 'zap' },
-  { value: 'round_robin', label: t('model.form.strategyRoundRobin'), desc: t('cfg.strategyRoundRobinDesc'), icon: 'refresh' },
+  { value: 'failover' as ModelStrategy, label: t('model.form.strategyFailover'), desc: t('cfg.strategyFailoverDesc'), icon: 'rank' },
+  { value: 'sticky' as ModelStrategy, label: t('model.form.strategySticky'), desc: t('cfg.strategyStickyDesc'), icon: 'zap' },
 ])
 
 const form = ref<Partial<CustomModel>>({
   modelName: '',
   description: '',
-  strategy: '',
+  strategy: 'failover',
   enabled: 1,
   hidden: 0,
   imageInvalidateCount: 0,
@@ -281,6 +281,8 @@ onMounted(async () => {
       const res = await modelApi.get(Number(route.params.id))
       form.value = {
         ...res.data,
+        // 历史策略值（random / round_robin）统一归一为粘性 / 顺序。
+        strategy: normalizeStrategy(res.data.strategy),
         imageInvalidateCount: res.data.imageInvalidateCount ?? 0,
         videoInvalidateCount: res.data.videoInvalidateCount ?? 0,
         audioInvalidateCount: res.data.audioInvalidateCount ?? 0,

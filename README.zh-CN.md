@@ -111,10 +111,11 @@ mvn spring-boot:run
 
 后端运行在 `http://localhost:1399`，SQLite 数据库文件自动创建在 `data/gateway.db`。
 
-后端二进制内嵌了单文件控制台，无需构建前端即可访问：
+管理界面为 Vue 构建产物，后端不再内嵌单文件控制台。先构建前端并让后端指向其目录：
 
-- `http://localhost:1399/` 或 `http://localhost:1399/console`
-- 仅当设置了 `MAG_STATIC_DIR` 且该目录存在 `index.html` 时，`/` 才优先返回该 Vue 构建产物，此时内嵌控制台仍在 `/console` 可访问。
+- 构建：`cd frontend && npm install && npm run build`（Docker 镜像会自动构建）。
+- 启动后端时设置 `MAG_STATIC_DIR` 指向 `frontend/dist`（Docker 镜像默认为 `/app/static`）。
+- 浏览器访问 `http://localhost:1399/`；未部署前端时后端会返回部署提示。
 
 ### 2. 启动前端
 

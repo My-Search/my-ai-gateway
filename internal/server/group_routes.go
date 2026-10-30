@@ -19,13 +19,8 @@ import (
 	"github.com/my-search/my-ai-gateway/internal/store"
 )
 
-// validGroupStrategies 是小组策略白名单。random 会按成员 weight 加权，
-// sticky=1 时策略只决定「哈希命中成员失败后」的回退顺序。
-var validGroupStrategies = map[string]bool{
-	models.GroupStrategyFailover:   true,
-	models.GroupStrategyRandom:     true,
-	models.GroupStrategyRoundRobin: true,
-}
+// 小组策略输入归一化见 normalizeGroupStrategyInput：白名单校验内联其中，
+// 历史 random / round_robin 输入按 sticky 处理。
 
 func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 	// GET /admin/api/model-groups
@@ -73,7 +68,7 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 		}
 		strategy := normalizeGroupStrategyInput(body.Strategy)
 		if strategy == "" {
-			httpx.OK(c, failureEnvelope("路由方式无效，必须为 failover / random / round_robin"))
+			httpx.OK(c, failureEnvelope("路由方式无效，必须为 failover / sticky"))
 			return
 		}
 		if dup, _ := d.Store.QueryOne(ctx, "SELECT id FROM model_groups WHERE name = ?", name); dup != nil {
@@ -169,7 +164,7 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 		if v, exists := body["strategy"]; exists {
 			strategy := normalizeGroupStrategyInput(anyStrPtr(v))
 			if strategy == "" {
-				httpx.OK(c, failureEnvelope("路由方式无效，必须为 failover / random / round_robin"))
+				httpx.OK(c, failureEnvelope("路由方式无效，必须为 failover / sticky"))
 				return
 			}
 			sets["strategy"] = strategy
@@ -520,16 +515,17 @@ func groupStickyDefault(v *int) int {
 
 func normalizeGroupStrategyInput(s *string) string {
 	if s == nil {
-		return models.GroupStrategyRandom
+		return models.GroupStrategySticky
 	}
-	v := strings.TrimSpace(*s)
-	if v == "" {
-		return models.GroupStrategyRandom
-	}
-	if !validGroupStrategies[v] {
+	switch strings.TrimSpace(*s) {
+	case "", models.GroupStrategySticky, "random", "round_robin":
+		// 空值默认粘性（沿用旧默认 random 的加权分布意图）；历史值归一为粘性。
+		return models.GroupStrategySticky
+	case models.GroupStrategyFailover:
+		return models.GroupStrategyFailover
+	default:
 		return ""
 	}
-	return v
 }
 
 func anyStrPtr(v any) *string {

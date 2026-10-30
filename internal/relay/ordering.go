@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"hash/fnv"
-	"math/rand"
 	"sort"
 	"strconv"
 	"sync"
@@ -14,22 +13,24 @@ import (
 
 // 小组内部的路由：把一个候选集合按小组自己的策略排成一条尝试顺序。
 //
-// 与入口模型的 Balancer 不同，小组不是「从剩余候选里挑一个」，而是「把整组候选
+// 与入口模型的条目排序不同，小组不是「从剩余候选里挑一个」，而是「把整组候选
 // 排成有序队列」，让上层入口模型的候选循环可以无缝地把组内成员当作自己的一级候选
 // 逐个尝试（失败即换下一个，熔断/媒体/上下文跳过同样生效）。这样小组只需要决定
 // 顺序，不需要介入重试与熔断逻辑。
+//
+// 策略只有两种：failover（配置顺序）/ sticky（按成员权重做一致性哈希，
+// 命中会话的成员排到首位，其余成员按配置顺序回退）。
 
-// groupOrdering 是小组顺序器的输入：候选集合 + 策略 + 粘性开关 + 会话 key。
+// groupOrdering 是小组顺序器的输入：候选集合 + 策略 + 会话 key。
 type groupOrdering struct {
 	// candidates 是组内已过滤（启用/渠道启用/有可用 Key）的候选。
 	candidates []RoutingCandidate
-	// weights 与 candidates 一一对应：组内路由权重（加权随机 / 加权轮询 / 粘性哈希环），<=0 视为 1。
+	// weights 与 candidates 一一对应：组内路由权重（粘性哈希环份额），<=0 视为 1。
 	weights  []int
 	strategy string
-	sticky   bool
-	// stickyKey 是会话前缀的哈希输入；为空表示无法计算（退化为非粘性）。
+	// stickyKey 是会话前缀的哈希输入；为空表示无法计算（退化为配置顺序）。
 	stickyKey string
-	// groupID 用于轮询计数器分桶，避免不同小组互相干扰。
+	// groupID 用于哈希环缓存分桶，避免不同小组互相干扰。
 	groupID int64
 }
 
@@ -44,38 +45,14 @@ func orderGroupCandidates(o groupOrdering) []RoutingCandidate {
 		return flattenCandidateBlocks(members)
 	}
 
-	sticky := o.sticky && o.stickyKey != ""
-
-	var ordered [][]RoutingCandidate
-	switch o.strategy {
-	case GroupStrategyRoundRobin:
-		if sticky {
-			// 粘性优先于轮询：哈希命中的成员先上，其余成员按轮询顺序回退，
-			// 既保住同一会话的 prompt cache，又不让回退总落到同一个成员。
-			ordered = stickyRotateBlocks(members, o.groupID, o.stickyKey)
-		} else {
-			ordered = rotateBlocks(members, "rr", o.groupID)
-		}
-	case GroupStrategyRandom:
-		if sticky {
-			ordered = stickyBlocks(members, o.groupID, "rand", o.stickyKey)
-		} else {
-			ordered = weightedShuffleBlocks(members)
-		}
-	default: // failover
-		if sticky {
-			ordered = stickyBlocks(members, o.groupID, "fail", o.stickyKey)
-		} else {
-			ordered = members
-		}
+	if normalizeGroupStrategy(o.strategy) != GroupStrategySticky || o.stickyKey == "" {
+		return flattenCandidateBlocks(members)
 	}
 
-	// 三个 sticky 分支都把命中成员排在第 0 块，因此「粘性命中」等价于首块。
-	// 标记写在这份副本上，调用方拿到的展平结果即携带标记。
-	if sticky && len(ordered) > 0 {
-		for i := range ordered[0] {
-			ordered[0][i].RouteSource = models.RouteSourceSticky
-		}
+	ordered := stickyBlocks(members, o.groupID, "sticky", o.stickyKey)
+	// 「粘性命中」等价于首块：标记写在这份副本上，调用方拿到的展平结果即携带标记。
+	for i := range ordered[0] {
+		ordered[0][i].RouteSource = models.RouteSourceSticky
 	}
 	return flattenCandidateBlocks(ordered)
 }
@@ -124,167 +101,8 @@ func flattenCandidateBlocks(blocks [][]RoutingCandidate) []RoutingCandidate {
 	return out
 }
 
-func rotateBlocks(blocks [][]RoutingCandidate, bucket string, groupID int64) [][]RoutingCandidate {
-	if len(blocks) <= 1 {
-		return blocks
-	}
-	// 轮询同样按权重：起始位置在加权循环上推进，权重大的成员在同等请求数里排在
-	// 队首的比例更高；等权重时循环退化为逐个成员，与旧的均匀轮转完全一致。
-	weights := make([]int, len(blocks))
-	for i, b := range blocks {
-		weights[i] = normalizeWeight(b[0].Weight)
-	}
-	cycle := groupWeightedCycle(weights)
-	idx := int(groupCounters.add(bucket+":"+strconv.FormatInt(groupID, 10)) % int64(len(cycle)))
-	leader := cycle[idx]
-	out := make([][]RoutingCandidate, 0, len(blocks))
-	out = append(out, blocks[leader:]...)
-	out = append(out, blocks[:leader]...)
-	return out
-}
-
-// ---------------------------------------------------------------------------
-// Weighted round-robin cycle
-// ---------------------------------------------------------------------------
-
-const (
-	// cycleMaxLen 限制单个加权循环的长度。权重最高可配到 1000，成员多时
-	// sum(weight) 会线性膨胀，而循环是在请求路径上按小组缓存的。超限时按比例
-	// 缩小权重：比例略有偏差，但「重的更常排到队首」这一关系保留。
-	cycleMaxLen = 20000
-	// cycleCacheMaxEntries 限制缓存条数。循环只依赖权重序列，权重不变即长期可复用；
-	// 上限兜底成员权重被频繁修改时的内存增长。
-	cycleCacheMaxEntries = 256
-)
-
-var (
-	cycleCacheMu sync.Mutex
-	cycleCache   = map[string][]int{}
-)
-
-// groupWeightedCycle 返回权重序列对应的成员索引循环（按权重指纹缓存）。
-func groupWeightedCycle(weights []int) []int {
-	version := weightsVersion(weights)
-
-	cycleCacheMu.Lock()
-	if c, ok := cycleCache[version]; ok {
-		cycleCacheMu.Unlock()
-		return c
-	}
-	cycleCacheMu.Unlock()
-
-	cycle := buildWeightedCycle(weights)
-
-	cycleCacheMu.Lock()
-	if len(cycleCache) >= cycleCacheMaxEntries {
-		// 简单整体清空：循环只在权重变更时才需要重建。
-		cycleCache = map[string][]int{}
-	}
-	cycleCache[version] = cycle
-	cycleCacheMu.Unlock()
-	return cycle
-}
-
-// buildWeightedCycle 用平滑加权轮询（SWRR，与 nginx 同款）把权重展开成成员索引
-// 循环：成员 i 出现 w_i/gcd(w) 次，且位置尽量均匀。等权重时结果是 [0,1,...,n-1]，
-// 即逐成员均匀轮转。
-func buildWeightedCycle(weights []int) []int {
-	if len(weights) == 0 {
-		return nil
-	}
-	reduced := make([]int, len(weights))
-	total := 0
-	for i, w := range weights {
-		reduced[i] = normalizeWeight(w)
-		total += reduced[i]
-	}
-
-	if total > cycleMaxLen {
-		scale := (total + cycleMaxLen - 1) / cycleMaxLen
-		total = 0
-		for i := range reduced {
-			n := (reduced[i] + scale - 1) / scale
-			if n < 1 {
-				n = 1
-			}
-			reduced[i] = n
-			total += n
-		}
-	}
-
-	// 约去公因数：(2,2) 与 (1,1) 是同一个循环，不必把序列拉长一倍。
-	g := 0
-	for _, w := range reduced {
-		g = gcdWeight(g, w)
-	}
-	if g > 1 {
-		total = 0
-		for i := range reduced {
-			reduced[i] /= g
-			total += reduced[i]
-		}
-	}
-
-	cur := make([]int, len(reduced))
-	cycle := make([]int, 0, total)
-	for len(cycle) < total {
-		best := 0
-		for i, w := range reduced {
-			cur[i] += w
-			if cur[i] > cur[best] {
-				best = i
-			}
-		}
-		cur[best] -= total
-		cycle = append(cycle, best)
-	}
-	return cycle
-}
-
-// weightsVersion fingerprints a weight sequence for the cycle cache.
-func weightsVersion(weights []int) string {
-	buf := make([]byte, 0, len(weights)*4)
-	for _, w := range weights {
-		buf = strconv.AppendInt(buf, int64(normalizeWeight(w)), 10)
-		buf = append(buf, ',')
-	}
-	return string(buf)
-}
-
-func gcdWeight(a, b int) int {
-	for b != 0 {
-		a, b = b, a%b
-	}
-	return a
-}
-
-func weightedShuffleBlocks(blocks [][]RoutingCandidate) [][]RoutingCandidate {
-	pool := make([]int, len(blocks))
-	for i := range pool {
-		pool[i] = i
-	}
-	out := make([][]RoutingCandidate, 0, len(blocks))
-	for len(pool) > 0 {
-		total := 0
-		for _, idx := range pool {
-			total += normalizeWeight(blocks[idx][0].Weight)
-		}
-		pick := rand.Intn(total)
-		chosen := 0
-		for i, idx := range pool {
-			pick -= normalizeWeight(blocks[idx][0].Weight)
-			if pick < 0 {
-				chosen = i
-				break
-			}
-		}
-		memberIdx := pool[chosen]
-		out = append(out, blocks[memberIdx])
-		pool = append(pool[:chosen], pool[chosen+1:]...)
-	}
-	return out
-}
-
+// stickyBlocks puts the member owning the session hash first; the remaining
+// members keep their configured order as the failover fallback.
 func stickyBlocks(blocks [][]RoutingCandidate, groupID int64, bucket, stickyKey string) [][]RoutingCandidate {
 	representatives := make([]RoutingCandidate, len(blocks))
 	weights := make([]int, len(blocks))
@@ -301,26 +119,6 @@ func stickyBlocks(blocks [][]RoutingCandidate, groupID int64, bucket, stickyKey 
 			out = append(out, block)
 		}
 	}
-	return out
-}
-
-// stickyRotateBlocks combines sticky affinity with round-robin fallback: the
-// member owning the session hash leads, and the remaining members follow in the
-// rotating order (so a broken pinned member fails over across the group instead
-// of always landing on the same neighbour).
-func stickyRotateBlocks(blocks [][]RoutingCandidate, groupID int64, stickyKey string) [][]RoutingCandidate {
-	rotated := rotateBlocks(blocks, "rr", groupID)
-	representatives := make([]RoutingCandidate, len(rotated))
-	weights := make([]int, len(rotated))
-	for i, block := range rotated {
-		representatives[i] = block[0]
-		weights[i] = normalizeWeight(block[0].Weight)
-	}
-	pos := groupRing(groupID, "rr", representatives, weights).locate(hashKey(stickyKey))
-	out := make([][]RoutingCandidate, 0, len(rotated))
-	out = append(out, rotated[pos])
-	out = append(out, rotated[:pos]...)
-	out = append(out, rotated[pos+1:]...)
 	return out
 }
 
@@ -344,9 +142,15 @@ const ringVNodeScale = 1000
 // 因此常规配置（每成员约 1000 节点）的环与原先完全一致。
 const ringMaxVNods = 20000
 
-// ringCacheMaxEntries 限制缓存的小组环数量。环只依赖小组配置（成员+权重+策略），
-// 因此配置不变时环可长期复用；上限用于兜底小组被频繁改动/删除时的内存增长。
+// ringCacheMaxEntries 限制缓存的环数量。环只依赖成员+权重配置，
+// 因此配置不变时环可长期复用；上限用于兜底成员被频繁改动/删除时的内存增长。
 const ringCacheMaxEntries = 256
+
+// ringCache 以 "bucket:id" 为键：小组环 bucket="sticky"，入口模型环 bucket="entry"。
+var (
+	ringCacheMu sync.Mutex
+	ringCache   = map[string]ringCacheEntry{}
+)
 
 // ringVNodeCounts 把虚拟节点按权重比例分配给各成员：常规权重下等于
 // weight*ringVNodeScale（与旧的线性展开一致），总预算超过 ringMaxVNods 时等比缩减。
@@ -428,17 +232,12 @@ type ringCacheEntry struct {
 	version string
 }
 
-var (
-	ringCacheMu sync.Mutex
-	ringCache   = map[string]ringCacheEntry{}
-)
-
-// groupRing returns the (cached) hash ring for one group. version fingerprints
-// the member set + weights so a config change rebuilds the ring, while an
-// unchanged config reuses it across requests.
-func groupRing(groupID int64, bucket string, candidates []RoutingCandidate, weights []int) *hashRing {
+// groupRing returns the (cached) hash ring for one bucket (a group or an entry
+// model). version fingerprints the member set + weights so a config change
+// rebuilds the ring, while an unchanged config reuses it across requests.
+func groupRing(ownerID int64, bucket string, candidates []RoutingCandidate, weights []int) *hashRing {
 	version := ringVersion(candidates, weights)
-	key := bucket + ":" + strconv.FormatInt(groupID, 10)
+	key := bucket + ":" + strconv.FormatInt(ownerID, 10)
 
 	ringCacheMu.Lock()
 	if e, ok := ringCache[key]; ok && e.version == version {
@@ -452,7 +251,7 @@ func groupRing(groupID int64, bucket string, candidates []RoutingCandidate, weig
 
 	ringCacheMu.Lock()
 	if len(ringCache) >= ringCacheMaxEntries {
-		// 简单整体清空：小组配置不常变，避免引入 LRU 复杂度。
+		// 简单整体清空：配置不常变，避免引入 LRU 复杂度。
 		ringCache = map[string]ringCacheEntry{}
 	}
 	ringCache[key] = ringCacheEntry{ring: ring, version: version}

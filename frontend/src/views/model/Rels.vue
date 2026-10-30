@@ -157,6 +157,7 @@
               />
             </th>
             <th>{{ t('model.rels.sort') }}</th>
+            <th>{{ t('model.rels.weight') }}</th>
             <th>{{ t('model.rels.relType') }}</th>
             <th>{{ t('model.rels.relName') }}</th>
             <th>{{ t('model.rels.model') }}</th>
@@ -192,6 +193,7 @@
             </td>
             <!-- 小组行：与渠道模型行同样的列式布局；组内无对应数据的列显示 --。 -->
             <template v-if="entry.kind === 'g'">
+              <td class="text-muted">--</td>
               <td class="rel-type-cell">
                 <span class="group-badge">{{ t('model.rels.typeGroup') }}</span>
               </td>
@@ -214,7 +216,6 @@
                     <code v-for="name in (gOf(entry).memberModelNames?.length ? gOf(entry).memberModelNames : ['--'])" :key="name" class="model-tag">{{ name }}</code>
                   </div>
                   <div class="group-models-side">
-                    <span v-if="gOf(entry).groupSticky === 1" class="badge badge-sticky">{{ t('group.list.stickyOn') }}</span>
                     <span class="badge badge-strategy">{{ groupStrategyLabel(gOf(entry).groupStrategy) }}</span>
                   </div>
                 </div>
@@ -285,6 +286,19 @@
               </td>
             </template>
             <template v-else>
+              <td>
+                <input
+                  v-if="currentMode === 'self_add'"
+                  class="form-control weight-input"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  :value="cmOf(entry).weight ?? 1"
+                  :title="t('model.rels.weightHint')"
+                  @change="updateRelWeight(cmOf(entry), ($event.target as HTMLInputElement).value)"
+                />
+                <span v-else class="text-muted">{{ cmOf(entry).weight ?? 1 }}</span>
+              </td>
               <td class="rel-type-cell">
                 <span class="type-badge type-badge--model">{{ t('model.rels.typeModel') }}</span>
               </td>
@@ -358,7 +372,7 @@
             </template>
           </tr>
           <tr v-if="!combinedEntries.length">
-            <td :colspan="selectionMode ? 12 : 11">
+            <td :colspan="selectionMode ? 13 : 12">
               <div class="empty-state">
                 <SvgIcon name="link" :size="28" />
                 <p>{{ t('model.rels.noRels') }}</p>
@@ -790,8 +804,11 @@ function gOf(entry: RelEntry): ModelGroupRel {
 }
 
 function groupStrategyLabel(s?: string): string {
-  const key = ({ failover: 'group.strategy.failover', random: 'group.strategy.random', round_robin: 'group.strategy.roundRobin' } as Record<string, string>)[s || 'random']
-  return key ? t(key) : (s || '')
+  // 历史值 random / round_robin 已统一为粘性（数据库迁移），此处按粘性展示。
+  const key = s === 'sticky' || s === 'random' || s === 'round_robin'
+    ? 'group.strategy.sticky'
+    : 'group.strategy.failover'
+  return t(key)
 }
 
 /**
@@ -951,6 +968,25 @@ async function updateEffort(rel: ModelChannelRel, value: string) {
     const res = await modelApi.updateRelReasoningEffort(rel.id, effort)
     if (res.data.success) {
       rel.reasoningEffort = effort
+    } else {
+      openDialog({ title: t('error.updateFailed'), message: res.data.error || t('error.unknown') })
+    }
+  } catch (e: any) {
+    openDialog({ title: t('error.updateFailed'), message: e.message })
+  }
+}
+
+/**
+ * 保存直连关联的粘性权重：1-1000，非法或空值按 1 处理。
+ * 仅粘性策略参与路由（一致性哈希环份额）；顺序策略忽略该值。
+ */
+async function updateRelWeight(rel: ModelChannelRel, raw: string) {
+  const parsed = Number.parseInt(raw, 10)
+  const weight = Number.isFinite(parsed) ? Math.min(1000, Math.max(1, parsed)) : 1
+  try {
+    const res = await modelApi.updateRelWeight(rel.id, weight)
+    if (res.data.success) {
+      rel.weight = weight
     } else {
       openDialog({ title: t('error.updateFailed'), message: res.data.error || t('error.unknown') })
     }
@@ -1449,6 +1485,15 @@ td.rel-channel-cell {
   cursor: grabbing;
 }
 
+.weight-input {
+  width: 64px;
+  min-width: 56px;
+  padding: 3px 6px;
+  font-size: 12px;
+  border-radius: 4px;
+  text-align: center;
+}
+
 .effort-select {
   font-size: 12px;
   padding: 3px 6px;
@@ -1792,14 +1837,6 @@ a.group-name.group-name-link:hover {
   border-radius: 10px;
   background: rgba(88, 166, 255, 0.12);
   color: var(--accent-blue, #58a6ff);
-}
-.badge-sticky {
-  flex: none;
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: rgba(63, 185, 80, 0.15);
-  color: #3fb950;
 }
 /* 熔断成员数/成员总数：常态为绿色（0 熔断），无可路由成员转红。 */
 .badge-avail {

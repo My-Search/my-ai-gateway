@@ -66,8 +66,8 @@ func (a *App) Register(r *gin.Engine) {
 	r.HEAD("/actuator/health", healthHandler)
 	r.GET("/actuator/prometheus", gin.WrapH(promhttp.HandlerFor(d.Metrics.Reg, promhttp.HandlerOpts{})))
 
-	// --- Static: embedded management console ------------------------------
-	a.registerConsoleRoutes(r)
+	// --- Static: Vue front-end entry points (MAG_STATIC_DIR) ---------------
+	a.registerFrontendRoutes(r)
 
 	// --- Static: uploaded files -------------------------------------------
 	uploads := r.Group("/uploads")
