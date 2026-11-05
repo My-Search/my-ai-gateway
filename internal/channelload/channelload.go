@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/dlclark/regexp2"
+	"github.com/my-search/my-ai-gateway/internal/groups"
 	"github.com/my-search/my-ai-gateway/internal/jtime"
 	"github.com/my-search/my-ai-gateway/internal/store"
 )
@@ -227,8 +228,25 @@ func ContextLengthSource(ctx context.Context, st *store.Store, modelName string)
 // Provider model fetching (Java ChannelModelLoader.fetchNewModels)
 // ---------------------------------------------------------------------------
 
-// BuildModelsURL mirrors ChannelModelLoader.buildModelsUrl.
-func BuildModelsURL(baseURL, chType string) string {
+// BuildModelsURL mirrors ChannelModelLoader.buildModelsUrl. modelsURL 为空时
+// 保持默认行为；填 http(s):// 开头的完整 URL 时直接使用（不再拼接），否则视为
+// 相对路径与 base_url 拼接。
+func BuildModelsURL(baseURL, modelsURL, chType string) string {
+	if u := strings.TrimSpace(modelsURL); u != "" {
+		lu := strings.ToLower(u)
+		if strings.HasPrefix(lu, "http://") || strings.HasPrefix(lu, "https://") {
+			return u
+		}
+		if !strings.HasPrefix(u, "/") {
+			u = "/" + u
+		}
+		return defaultBase(baseURL, chType) + u
+	}
+	return defaultBase(baseURL, chType) + "/models"
+}
+
+// defaultBase mirrors the empty base_url fallback: the provider's official API root.
+func defaultBase(baseURL, chType string) string {
 	b := strings.TrimSpace(baseURL)
 	if b == "" {
 		if chType == "anthropic" {
@@ -237,13 +255,12 @@ func BuildModelsURL(baseURL, chType string) string {
 			b = "https://api.openai.com/v1"
 		}
 	}
-	b = strings.TrimRight(b, "/")
-	return b + "/models"
+	return strings.TrimRight(b, "/")
 }
 
 // FetchModels mirrors ChannelModelLoader.fetchNewModels.
-func FetchModels(baseURL, apiKey, chType, customHeaders string) ([]ModelPair, error) {
-	url := BuildModelsURL(baseURL, chType)
+func FetchModels(baseURL, modelsURL, apiKey, chType, customHeaders string) ([]ModelPair, error) {
+	url := BuildModelsURL(baseURL, modelsURL, chType)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -329,14 +346,14 @@ func FirstEnabledAPIKey(ctx context.Context, st *store.Store, chID int64) string
 // LoadModels mirrors ChannelModelLoader.loadModels: fetch first, only replace on
 // success; keep existing models when the fetch fails (unless the channel has no
 // models at all, in which case the preset list is used).
-func LoadModels(ctx context.Context, st *store.Store, chID int64, chType, baseURL, customHeaders, fallbackKey string) {
+func LoadModels(ctx context.Context, st *store.Store, chID int64, chType, baseURL, modelsURL, customHeaders, fallbackKey string) {
 	apiKey := FirstEnabledAPIKey(ctx, st, chID)
 	if apiKey == "" {
 		apiKey = fallbackKey
 	}
 	var newModels []ModelPair
 	if apiKey != "" {
-		models, err := FetchModels(baseURL, apiKey, chType, customHeaders)
+		models, err := FetchModels(baseURL, modelsURL, apiKey, chType, customHeaders)
 		if err == nil {
 			newModels = models
 		} else {
@@ -356,6 +373,10 @@ func LoadModels(ctx context.Context, st *store.Store, chID int64, chType, baseUR
 		}
 	}
 	ReplaceAPIModels(ctx, st, chID, newModels)
+	// 渠道模型随拉取结果重建后，动态小组成员跟着同步（新命中追加到末尾）。
+	if _, err := groups.SyncAll(ctx, st); err != nil {
+		slog.Warn("动态小组成员同步失败", "error", err)
+	}
 }
 
 // LoadModelsByID resolves the channel row and delegates to LoadModels.
@@ -365,7 +386,7 @@ func LoadModelsByID(ctx context.Context, st *store.Store, chID int64) error {
 		return fmt.Errorf("渠道不存在")
 	}
 	ch := store.RowToChannel(row)
-	LoadModels(ctx, st, chID, ch.ChannelType, ch.BaseURL, deref(ch.CustomHeaders), ch.APIKey)
+	LoadModels(ctx, st, chID, ch.ChannelType, ch.BaseURL, deref(ch.ModelsURL), deref(ch.CustomHeaders), ch.APIKey)
 	return nil
 }
 

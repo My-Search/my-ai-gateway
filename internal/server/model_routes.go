@@ -531,7 +531,10 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		var body struct {
 			ChannelModelIDs []int64 `json:"channelModelIds"`
 			GroupIDs        []int64 `json:"groupIds"`
-			SortedRelIDs    string  `json:"sortedRelIds"`
+			// SourceModelIDs 是「入口模型聚合」的源模型列表：把每个源当前生效的
+			// 关联（沿继承链解析）复制为本模型的快照，与直连/小组关联一样去重后追加。
+			SourceModelIDs []int64 `json:"sourceModelIds"`
+			SortedRelIDs   string  `json:"sortedRelIds"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			httpx.OK(c, failureEnvelope("请求参数错误"))
@@ -587,13 +590,14 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 				continue
 			}
 			_, err := d.Store.Insert(ctx,
-				"INSERT INTO model_group_rels (model_id, group_id, enabled, sort_order, created_at) VALUES (?, ?, 1, ?, ?)",
+				"INSERT INTO model_group_rels (model_id, group_id, weight, enabled, sort_order, created_at) VALUES (?, ?, 1, 1, ?, ?)",
 				modelID, gID, nextSort, now)
 			if err == nil {
 				added++
 				nextSort++
 			}
 		}
+		added += aggregateModelRels(ctx, d.Store, modelID, body.SourceModelIDs, &nextSort, now)
 
 		// Apply sortedRelIds if present (reorder). 序号同时作用于两类关联，
 		// 前端用 "cm:<relId>" / "g:<relId>" 前缀区分，避免两张表的 id 相互覆盖。
@@ -628,8 +632,8 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 	})
 
 	// POST /admin/api/models/rels/batch-delete
-	// relIds 同时接受渠道模型关联与小组关联：前端用 "cm:<id>" / "g:<id>" 前缀区分，
-	// 裸数字按渠道模型关联处理（兼容旧调用）。
+	// relIds 同时接受渠道模型关联、小组关联与规则关联：前端用 "cm:<id>" / "g:<id>"
+	// / "r:<id>" 前缀区分，裸数字按渠道模型关联处理（兼容旧调用）。
 	g.POST("/models/rels/batch-delete", func(c *gin.Context) {
 		ctx := c.Request.Context()
 		var body struct {
@@ -648,9 +652,10 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 			}
 			var modelID int64
 			var table string
-			if kind == "g" {
+			switch kind {
+			case "g":
 				table = "model_group_rels"
-			} else {
+			default:
 				table = "model_channel_rels"
 			}
 			relRow, err := d.Store.QueryOne(ctx, "SELECT model_id FROM "+table+" WHERE id = ?", relID)
@@ -742,14 +747,7 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 			Weight int `json:"weight"`
 		}
 		_ = c.ShouldBindJSON(&body)
-		weight := body.Weight
-		if weight < 1 {
-			weight = 1
-		}
-		if weight > 1000 {
-			weight = 1000
-		}
-		d.Store.Exec(ctx, "UPDATE model_channel_rels SET weight=? WHERE id=?", weight, relID)
+		d.Store.Exec(ctx, "UPDATE model_channel_rels SET weight=? WHERE id=?", clampRelWeight(body.Weight), relID)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
 	})
 
@@ -788,6 +786,24 @@ func registerModelRoutes(g *gin.RouterGroup, d Deps) {
 		}
 		_ = c.ShouldBindJSON(&body)
 		d.Store.Exec(ctx, "UPDATE model_group_rels SET sort_order=? WHERE id=?", body.SortOrder, relID)
+		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
+	})
+
+	// PUT /admin/api/models/group-rels/{relId}/weight
+	// 入口模型 -> 小组 关联的粘性权重（1-1000）：小组整体作为一条队列条目参与
+	// 入口模型的一致性哈希环，权重决定它分到的会话份额。组内成员权重不受影响。
+	g.PUT("/models/group-rels/:relId/weight", func(c *gin.Context) {
+		ctx := c.Request.Context()
+		relID, ok := pathID(c, "relId")
+		if !ok {
+			httpx.OK(c, failureEnvelope("关联不存在"))
+			return
+		}
+		var body struct {
+			Weight int `json:"weight"`
+		}
+		_ = c.ShouldBindJSON(&body)
+		d.Store.Exec(ctx, "UPDATE model_group_rels SET weight=? WHERE id=?", clampRelWeight(body.Weight), relID)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
 	})
 
@@ -1021,6 +1037,75 @@ func resolveModelGroupRels(ctx context.Context, st *store.Store, modelID int64, 
 	return out
 }
 
+// aggregateModelRels 实现「入口模型聚合」：把每个源入口模型当前生效的关联
+// （沿继承链解析到最终的自添加模型）复制为 modelID 的快照，之后两边互不影响。
+// 复制口径与路由一致——被显式禁用的关联行不带入；渠道模型/小组按 ID 去重
+// （含本次请求里已新增的行），权重与思考强度一并带入，追加到 *nextSort 指向
+// 的队尾并逐条递增。返回新增的关联条数。
+func aggregateModelRels(ctx context.Context, st *store.Store, modelID int64, sourceModelIDs []int64, nextSort *int64, now string) int {
+	added := 0
+	for _, srcID := range sourceModelIDs {
+		if srcID == modelID {
+			continue
+		}
+		if srcRow, _ := st.QueryOne(ctx, "SELECT id FROM models WHERE id = ?", srcID); srcRow == nil {
+			continue
+		}
+		for _, rel := range resolveModelRels(ctx, st, srcID, make(map[int64]bool)) {
+			if rel.ChannelModelID == nil || *rel.ChannelModelID == 0 {
+				continue
+			}
+			if rel.Enabled != nil && *rel.Enabled != 1 {
+				continue
+			}
+			// 源上已删除的渠道模型不再带入
+			if cm, _ := st.QueryOne(ctx, "SELECT id FROM channel_models WHERE id = ?", *rel.ChannelModelID); cm == nil {
+				continue
+			}
+			existing, _ := st.QueryOne(ctx, "SELECT id FROM model_channel_rels WHERE model_id=? AND channel_model_id=?", modelID, *rel.ChannelModelID)
+			if existing != nil {
+				continue
+			}
+			weight := 1
+			if rel.Weight != nil && *rel.Weight > 0 {
+				weight = clampRelWeight(*rel.Weight)
+			}
+			if _, err := st.Insert(ctx,
+				"INSERT INTO model_channel_rels (model_id, channel_model_id, weight, enabled, sort_order, reasoning_effort, created_at) VALUES (?, ?, ?, 1, ?, ?, ?)",
+				modelID, *rel.ChannelModelID, weight, *nextSort, rel.ReasoningEffort, now); err == nil {
+				added++
+				*nextSort++
+			}
+		}
+		for _, grel := range resolveModelGroupRels(ctx, st, srcID, make(map[int64]bool)) {
+			if grel.GroupID == nil || *grel.GroupID == 0 {
+				continue
+			}
+			if grel.Enabled != nil && *grel.Enabled != 1 {
+				continue
+			}
+			if st.QueryOneOrZero(ctx, "SELECT id FROM model_groups WHERE id=?", *grel.GroupID) == nil {
+				continue
+			}
+			existing, _ := st.QueryOne(ctx, "SELECT id FROM model_group_rels WHERE model_id=? AND group_id=?", modelID, *grel.GroupID)
+			if existing != nil {
+				continue
+			}
+			weight := 1
+			if grel.Weight != nil && *grel.Weight > 0 {
+				weight = clampRelWeight(*grel.Weight)
+			}
+			if _, err := st.Insert(ctx,
+				"INSERT INTO model_group_rels (model_id, group_id, weight, enabled, sort_order, reasoning_effort, created_at) VALUES (?, ?, ?, 1, ?, ?, ?)",
+				modelID, *grel.GroupID, weight, *nextSort, grel.ReasoningEffort, now); err == nil {
+				added++
+				*nextSort++
+			}
+		}
+	}
+	return added
+}
+
 // groupMemberSummary 汇总一个小组的成员能力摘要，供入口模型关联列表展示。
 //
 // total 是启用成员数；routable 是静态可路由成员数，口径与 relay 的
@@ -1054,7 +1139,6 @@ type groupMemberSummary struct {
 }
 
 func groupMemberSummaryOf(ctx context.Context, st *store.Store, groupID int64) groupMemberSummary {
-	var out groupMemberSummary
 	rows, _ := st.Query(ctx,
 		`SELECT cm.id, cm.channel_id, cm.model_name, cm.input, cm.context_length, c.name AS channel_name,
 		        cm.enabled = 1 AND c.enabled = 1
@@ -1068,37 +1152,78 @@ func groupMemberSummaryOf(ctx context.Context, st *store.Store, groupID int64) g
 		   LEFT JOIN channel_models cm ON cm.id = m.channel_model_id
 		   LEFT JOIN channels c ON c.id = cm.channel_id
 		  WHERE m.group_id = ? AND m.enabled = 1`, groupID)
-	out.total = len(rows)
 
-	inputSeen := map[string]bool{}
-	seenModelName := map[string]bool{}
-	var maxContext int64
-	var routableMembers []groupMemberRef
+	refs := make([]groupMemberRef, 0, len(rows))
 	for _, r := range rows {
 		if r.Int("routable", 0) != 1 {
 			continue
 		}
-		out.routable++
-		routableMembers = append(routableMembers, groupMemberRef{
-			cmID:        r.I64("id", 0),
-			chID:        r.I64("channel_id", 0),
-			channelName: r.Str("channel_name"),
-			modelName:   r.Str("model_name"),
+		refs = append(refs, groupMemberRef{
+			cmID:          r.I64("id", 0),
+			chID:          r.I64("channel_id", 0),
+			channelName:   r.Str("channel_name"),
+			modelName:     r.Str("model_name"),
+			input:         r.Str("input"),
+			contextLength: r.I64("context_length", 0),
 		})
-		if name := r.Str("model_name"); name != "" && !seenModelName[name] {
-			seenModelName[name] = true
-			out.modelNames = append(out.modelNames, name)
+	}
+	sum := summarizeRoutableMembers(ctx, st, refs)
+	return groupMemberSummary{
+		total:            len(rows),
+		routable:         sum.routable,
+		input:            sum.input,
+		maxContext:       sum.maxContext,
+		modelNames:       sum.modelNames,
+		ttftMs:           sum.ttftMs,
+		sampleCount:      sum.sampleCount,
+		outputSpeed:      sum.outputSpeed,
+		breakerAggregate: sum.breakerAggregate,
+		brokenCount:      sum.brokenCount,
+		breakerScope:     sum.breakerScope,
+	}
+}
+
+// memberSummary 是「可路由成员」的展示摘要，小组行与规则行共用。
+type memberSummary struct {
+	routable   int
+	input      *string
+	maxContext *int64
+	// modelNames 是去重后的上游模型名（按成员顺序）。
+	modelNames  []string
+	ttftMs      *int64
+	sampleCount *int
+	outputSpeed *float64
+	// breakerAggregate：全部可路由成员熔断时为 "all"，部分熔断为 "partial"，
+	// 无可路由成员或全部正常为 ""。
+	breakerAggregate string
+	brokenCount      int
+	breakerScope     string
+}
+
+// summarizeRoutableMembers 汇总可路由成员的展示字段：输入模态并集（text 优先）、
+// 最大上下文、去重模型名、24h 性能样本与熔断计数/级别。口径与渠道模型行一致。
+func summarizeRoutableMembers(ctx context.Context, st *store.Store, members []groupMemberRef) memberSummary {
+	var out memberSummary
+	out.routable = len(members)
+
+	inputSeen := map[string]bool{}
+	seenModelName := map[string]bool{}
+	var maxContext int64
+	for _, m := range members {
+		if m.modelName != "" && !seenModelName[m.modelName] {
+			seenModelName[m.modelName] = true
+			out.modelNames = append(out.modelNames, m.modelName)
 		}
-		if input := r.Str("input"); input != "" {
-			for _, t := range strings.Split(input, ",") {
+		if m.input != "" {
+			for _, t := range strings.Split(m.input, ",") {
 				t = strings.TrimSpace(t)
 				if t != "" && !inputSeen[t] {
 					inputSeen[t] = true
 				}
 			}
 		}
-		if ctxLen := r.I64("context_length", 0); ctxLen > maxContext {
-			maxContext = ctxLen
+		if m.contextLength > maxContext {
+			maxContext = m.contextLength
 		}
 	}
 	if len(inputSeen) > 0 {
@@ -1109,37 +1234,37 @@ func groupMemberSummaryOf(ctx context.Context, st *store.Store, groupID int64) g
 		out.maxContext = &maxContext
 	}
 
-	// 成员性能聚合：与渠道模型行同口径（computeRelStats 的 24h 日志、每成员最多
-	// 30 个样本），把成员均值再总体平均一次，作为小组整体的参考值。
-	if len(routableMembers) > 0 {
-		out.ttftMs, out.sampleCount, out.outputSpeed = computeMemberPerfStats(ctx, st, routableMembers)
+	if len(members) == 0 {
+		return out
+	}
 
-		// 熔断聚合：只有全部可路由成员都熔断时，小组才算「熔断中」；部分熔断时
-		// 组内仍有可用候选，不告警。
-		cmIDs := make([]int64, 0, len(routableMembers))
-		for _, m := range routableMembers {
-			cmIDs = append(cmIDs, m.cmID)
+	// 成员性能聚合：与渠道模型行同口径（computeRelStats 的 24h 日志、每成员最多
+	// 30 个样本），把成员均值再总体平均一次，作为整体参考值。
+	out.ttftMs, out.sampleCount, out.outputSpeed = computeMemberPerfStats(ctx, st, members)
+
+	// 熔断聚合：只有全部可路由成员都熔断时才算「熔断中」；部分熔断时仍有可用
+	// 候选，不告警。
+	cmIDs := make([]int64, 0, len(members))
+	for _, m := range members {
+		cmIDs = append(cmIDs, m.cmID)
+	}
+	lookup := loadBreakerLookup(ctx, st, cmIDs)
+	scopeSet := map[string]bool{}
+	for _, m := range members {
+		mark := lookup.mark(m.cmID, m.chID)
+		if mark == nil {
+			continue
 		}
-		lookup := loadBreakerLookup(ctx, st, cmIDs)
-		brokenCount := 0
-		scopeSet := map[string]bool{}
-		for _, m := range routableMembers {
-			mark := lookup.mark(m.cmID, m.chID)
-			if mark == nil {
-				continue
-			}
-			brokenCount++
-			if mark.Scope != "" {
-				scopeSet[mark.Scope] = true
-			}
+		out.brokenCount++
+		if mark.Scope != "" {
+			scopeSet[mark.Scope] = true
 		}
-		out.brokenCount = brokenCount
-		if brokenCount == len(routableMembers) {
-			out.breakerAggregate = "all"
-			out.breakerScope = mergeBreakerScopes(scopeSet)
-		} else if brokenCount > 0 {
-			out.breakerAggregate = "partial"
-		}
+	}
+	if out.brokenCount == len(members) {
+		out.breakerAggregate = "all"
+		out.breakerScope = mergeBreakerScopes(scopeSet)
+	} else if out.brokenCount > 0 {
+		out.breakerAggregate = "partial"
 	}
 	return out
 }
@@ -1173,6 +1298,9 @@ type groupMemberRef struct {
 	// channelName / modelName 是 request_logs 的归属键；任一为空表示无法统计。
 	channelName string
 	modelName   string
+	// input / contextLength 供展示摘要聚合（输入模态并集、最大上下文）。
+	input         string
+	contextLength int64
 }
 
 func computeMemberPerfStats(ctx context.Context, st *store.Store, members []groupMemberRef) (ttftMs *int64, sampleCount *int, outputSpeed *float64) {
@@ -1627,6 +1755,26 @@ func parseRelRef(v any) (kind string, id int64) {
 	return "", 0
 }
 
+// clampRelWeight 把关联的粘性权重夹取到 1-1000（与直连关联的取值域一致）。
+func clampRelWeight(w int) int {
+	if w < 1 {
+		return 1
+	}
+	if w > 1000 {
+		return 1000
+	}
+	return w
+}
+
+// normalizeRuleStrategy 把规则关联的路由策略归一为 failover / sticky：
+// 空值与未知值按 sticky 处理（与小组策略语义一致）。
+func normalizeRuleStrategy(s string) string {
+	if strings.TrimSpace(s) == "failover" {
+		return "failover"
+	}
+	return "sticky"
+}
+
 // applyCombinedRelOrder 按提交顺序给两类关联统一编号：序号写入各自的 sort_order，
 // 路由时再按同一序号空间合并成候选队列，因此入口模型列表里直连关联与小组的
 // 前后顺序就是实际尝试顺序。
@@ -1637,9 +1785,10 @@ func applyCombinedRelOrder(ctx context.Context, st *store.Store, refs []string) 
 		if id == 0 {
 			continue
 		}
-		if kind == "g" {
+		switch kind {
+		case "g":
 			st.Exec(ctx, "UPDATE model_group_rels SET sort_order=? WHERE id=?", order, id)
-		} else {
+		default:
 			st.Exec(ctx, "UPDATE model_channel_rels SET sort_order=? WHERE id=?", order, id)
 		}
 		order++

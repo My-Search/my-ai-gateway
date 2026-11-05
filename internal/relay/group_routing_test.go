@@ -1,8 +1,9 @@
-﻿package relay
+package relay
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -45,7 +46,7 @@ func newGroupTestStore(t *testing.T) DataStore {
 		`CREATE TABLE model_group_rels (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, model_id INTEGER NOT NULL,
 			group_id INTEGER NOT NULL, sort_order INTEGER DEFAULT 0,
-			reasoning_effort TEXT,
+			reasoning_effort TEXT, weight INTEGER DEFAULT 1,
 			enabled INTEGER DEFAULT 1, created_at TEXT)`,
 	} {
 		if _, err := st.Exec(context.Background(), stmt); err != nil {
@@ -805,5 +806,52 @@ func TestClientEffortOverridesGroupRelEffort(t *testing.T) {
 	}
 	if f.lastEffort != "max" {
 		t.Errorf("upstream reasoning_effort = %q, want %q (client value wins)", f.lastEffort, "max")
+	}
+}
+
+// TestGroupRelWeightBiasesEntryRing 覆盖「入口模型 -> 小组」关联自身的粘性权重：
+// 小组整体作为一条队列条目参与入口模型的一致性哈希环，权重越大分到的会话越多；
+// 组内成员权重仍是另一层（此用例组内等权，只观察小组 vs 直连关联的份额）。
+func TestGroupRelWeightBiasesEntryRing(t *testing.T) {
+	f := setupGroupFixture(t, GroupStrategyFailover, nil)
+	ctx := context.Background()
+
+	// 额外加一条直连关联（sort_order 1），并把小组关联权重设为 20。
+	chID, _ := f.store.Insert(ctx,
+		"INSERT INTO channels (name, channel_type, base_url, enabled) VALUES ('ch-direct','openai',?,1)", f.upstream.URL)
+	keyID, _ := f.store.Insert(ctx,
+		"INSERT INTO channel_api_keys (channel_id, key_name, api_key, enabled, sort_order) VALUES (?, 'k', 'sk', 1, 0)", chID)
+	directCM, _ := f.store.Insert(ctx,
+		"INSERT INTO channel_models (channel_id, model_name, enabled, input, context_length, channel_api_key_id) VALUES (?, 'm-direct', 1, 'text', 200000, ?)",
+		chID, keyID)
+	if _, err := f.store.Exec(ctx,
+		"INSERT INTO model_channel_rels (model_id, channel_model_id, sort_order, enabled) VALUES (?, ?, 1, 1)",
+		f.entryID, directCM); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Exec(ctx,
+		"UPDATE model_group_rels SET weight = 20 WHERE model_id = ?", f.entryID); err != nil {
+		t.Fatal(err)
+	}
+
+	// 入口模型用粘性策略：候选首位由入口哈希环决定。
+	if _, err := f.store.Exec(ctx, "UPDATE models SET strategy='sticky' WHERE id=?", f.entryID); err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	const n = 200
+	for i := 0; i < n; i++ {
+		req, _ := ParseRequest(
+			fmt.Sprintf(`{"model":"entry","messages":[{"role":"user","content":"prompt-%d"}]}`, i), ProtoOpenAI)
+		first := f.core.RouteResolver.BuildCandidates(ctx, req)
+		if len(first) == 0 {
+			t.Fatal("no candidates")
+		}
+		// 命中小组时首位是组内成员 m-a；命中直连时首位是 m-direct。
+		counts[first[0].ModelName]++
+	}
+	groupHits := counts["m-a"] + counts["m-b"] + counts["m-c"]
+	if groupHits <= n/2 {
+		t.Errorf("group rel weight 20 only attracted %d/%d sessions to the group: %v", groupHits, n, counts)
 	}
 }

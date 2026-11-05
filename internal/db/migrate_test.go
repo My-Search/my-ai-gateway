@@ -105,6 +105,7 @@ func TestMigrateMergesLegacyMultiModalRules(t *testing.T) {
 		t.Errorf("context_length = %d, want 0 (unset)", contextLength)
 	}
 }
+
 // TestMigrateRepairsStaleV1410 复现真实故障：v1.41.0 版本号曾被第一版草稿
 // （context_rules + model_context_catalog）占用并记录，合并版重写同号块后被
 // 永久跳过——model_config_rules 没建、旧规则没搬、种子配置缺失、下载地址
@@ -307,5 +308,85 @@ func TestMigrateModelGroupSchema(t *testing.T) {
 	if _, err := conn.Exec(
 		"INSERT INTO model_group_members (group_id, channel_model_id, weight) VALUES (1, 1, 5)"); err == nil {
 		t.Error("duplicate group member was accepted; the UNIQUE(group_id, channel_model_id) constraint is missing")
+	}
+}
+
+// TestMigrateConvertRuleRelsToDynamicGroups 覆盖 v1.56.0 的「规则转动态小组」：
+// 旧库里的 model_rule_rels 被转换为 type='rule' 的动态小组 + 小组关联（沿用权重），
+// 旧表删除；重复迁移不重复转换。
+func TestMigrateConvertRuleRelsToDynamicGroups(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rule-convert.db")
+	conn, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer conn.Close()
+
+	if err := Migrate(conn); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	// 造一个「迁移前」的旧状态：model_rule_rels 表 + 一条规则关联。
+	if _, err := conn.Exec(`CREATE TABLE model_rule_rels (
+		id INTEGER PRIMARY KEY AUTOINCREMENT, model_id INTEGER NOT NULL,
+		name TEXT NOT NULL DEFAULT '', pattern TEXT NOT NULL DEFAULT '',
+		weight INTEGER DEFAULT 1, strategy TEXT DEFAULT 'sticky',
+		enabled INTEGER DEFAULT 1, sort_order INTEGER DEFAULT 0, created_at TEXT)`); err != nil {
+		t.Fatalf("create old table: %v", err)
+	}
+	if _, err := conn.Exec("INSERT INTO channels (name, channel_type, enabled) VALUES ('ch', 'openai', 1)"); err != nil {
+		t.Fatalf("insert channel: %v", err)
+	}
+	if _, err := conn.Exec("INSERT INTO channel_models (channel_id, model_name, enabled) VALUES (1, 'glm-4.6', 1)"); err != nil {
+		t.Fatalf("insert channel model: %v", err)
+	}
+	if _, err := conn.Exec("INSERT INTO models (model_name) VALUES ('entry')"); err != nil {
+		t.Fatalf("insert model: %v", err)
+	}
+	if _, err := conn.Exec(
+		"INSERT INTO model_rule_rels (model_id, name, pattern, weight, strategy, enabled, sort_order, created_at) VALUES (1, 'GLM 系列', 'glm', 300, 'failover', 1, 0, '2026-01-01 00:00:00')"); err != nil {
+		t.Fatalf("insert rule rel: %v", err)
+	}
+
+	if err := Migrate(conn); err != nil {
+		t.Fatalf("converting migrate: %v", err)
+	}
+
+	// 旧表已删除，规则变成动态小组。
+	var n int
+	if err := conn.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='model_rule_rels'").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatal("model_rule_rels should be dropped after conversion")
+	}
+	var groupType, pattern, strategy string
+	if err := conn.QueryRow(
+		"SELECT type, pattern, strategy FROM model_groups WHERE name='GLM 系列'").Scan(&groupType, &pattern, &strategy); err != nil {
+		t.Fatalf("dynamic group missing: %v", err)
+	}
+	if groupType != "rule" || pattern != "glm" || strategy != "failover" {
+		t.Errorf("dynamic group = (%q, %q, %q)", groupType, pattern, strategy)
+	}
+	var weight, relModel, relGroup int64
+	if err := conn.QueryRow(
+		"SELECT weight, model_id, group_id FROM model_group_rels").Scan(&weight, &relModel, &relGroup); err != nil {
+		t.Fatalf("group rel missing: %v", err)
+	}
+	if weight != 300 || relModel != 1 {
+		t.Errorf("group rel = (weight %d, model %d)", weight, relModel)
+	}
+	if relGroup == 0 {
+		t.Error("group rel must reference the converted dynamic group")
+	}
+	// 重跑迁移（幂等）：不产生重复小组。
+	if err := Migrate(conn); err != nil {
+		t.Fatalf("second migrate: %v", err)
+	}
+	if err := conn.QueryRow("SELECT COUNT(*) FROM model_groups").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("model_groups count = %d, want 1 after idempotent rerun", n)
 	}
 }

@@ -87,6 +87,7 @@
                 <span class="tag" :class="strategyTagClass(g.strategy)">
                   {{ strategyLabel(g.strategy) }}
                 </span>
+                <span v-if="g.type === 'rule'" class="tag tag-rule">{{ t('group.type.rule') }}</span>
               </div>
             </div>
             <ToggleSwitch
@@ -717,6 +718,11 @@ onUnmounted(() => {
 }
 
 /* ── Card Tags ── */
+.tag-rule {
+  background: color-mix(in srgb, var(--accent-blue) 15%, transparent);
+  color: var(--accent-blue);
+}
+
 .card-tags {
   display: flex;
   gap: 6px;

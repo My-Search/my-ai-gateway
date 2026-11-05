@@ -11,6 +11,8 @@ export interface Channel {
   modelRefreshEnabled?: number
   /** 自定义请求头 JSON 键值对 */
   customHeaders?: string
+  /** 自定义获取模型列表的接口：http(s):// 开头直接使用，否则与 baseUrl 拼接；空 = 默认 /models */
+  modelsUrl?: string
   createdAt?: string
   updatedAt?: string
   /** 启用模型数（列表接口返回） */
@@ -94,9 +96,9 @@ export const channelApi = {
       removed?: string[]
     }>(`/channels/${id}/reload-models`)
   },
-  fetchModels(baseUrl: string, apiKey: string, channelType: string) {
+  fetchModels(baseUrl: string, apiKey: string, channelType: string, modelsUrl = '') {
     return http.get<{ success: boolean; data: ChannelModel[]; count: number }>('/channels/fetch-models', {
-      params: { baseUrl, apiKey, channelType }
+      params: { baseUrl, apiKey, channelType, modelsUrl }
     })
   },
   addManualModel(channelId: number, modelName: string, displayName?: string) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"sort"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/my-search/my-ai-gateway/internal/channelload"
+	"github.com/my-search/my-ai-gateway/internal/groups"
 	"github.com/my-search/my-ai-gateway/internal/httpx"
 	"github.com/my-search/my-ai-gateway/internal/jtime"
 	"github.com/my-search/my-ai-gateway/internal/models"
@@ -149,6 +151,7 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 		chType, _ := body["channelType"].(string)
 		baseURL, _ := body["baseUrl"].(string)
 		customHeaders, _ := body["customHeaders"].(string)
+		modelsURL, _ := body["modelsUrl"].(string)
 
 		enabled := 1
 		if v, ok := body["enabled"]; ok {
@@ -163,10 +166,11 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 
 		now := jtime.FormatApp(time.Now().UTC())
 		baseURL = strings.TrimSpace(baseURL)
+		modelsURL = strings.TrimSpace(modelsURL)
 
 		chID, err := d.Store.Insert(ctx,
-			"INSERT INTO channels (name, channel_type, api_key, base_url, enabled, sort_order, model_refresh_enabled, custom_headers, created_at, updated_at) VALUES (?, ?, '', ?, ?, 0, ?, ?, ?, ?)",
-			name, chType, baseURL, enabled, mre, customHeaders, now, now)
+			"INSERT INTO channels (name, channel_type, api_key, base_url, enabled, sort_order, model_refresh_enabled, custom_headers, models_url, created_at, updated_at) VALUES (?, ?, '', ?, ?, 0, ?, ?, ?, ?, ?)",
+			name, chType, baseURL, enabled, mre, customHeaders, modelsURL, now, now)
 		if err != nil {
 			httpx.OK(c, failureEnvelope(err.Error()))
 			return
@@ -176,7 +180,7 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 		if mm, ok := body["manualModels"].(string); ok && mm != "[]" && mm != "" {
 			addManualModels(ctx, d.Store, chID, mm)
 		} else if mre == 1 {
-			_ = loadModelsForChannel(ctx, d.Store, chID, chType, baseURL, customHeaders)
+			_ = loadModelsForChannel(ctx, d.Store, chID, chType, baseURL, modelsURL, customHeaders)
 		}
 
 		// apiKeysJson
@@ -184,6 +188,9 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 			syncChannelAPIKeys(ctx, d.Store, chID, akj)
 		}
 
+		// 新建渠道带出的模型（手动模型或 API 拉取）也是渠道模型更新：
+		// 立即把命中的模型追加到动态小组成员末尾，不等下次变更/重启。
+		syncDynamicGroups(ctx, d.Store)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("id", chID))
 	})
 
@@ -245,6 +252,7 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 		if refreshCount > 0 {
 			out.Set("refreshCount", refreshCount)
 		}
+		syncDynamicGroups(ctx, d.Store)
 		httpx.OK(c, out)
 	})
 
@@ -257,6 +265,7 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 			return
 		}
 		deleteChannel(ctx, d.Store, id)
+		syncDynamicGroups(ctx, d.Store)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
 	})
 
@@ -351,16 +360,17 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 			Set("removed", removed))
 	})
 
-	// GET /admin/api/channels/fetch-models?baseUrl=...&apiKey=...&channelType=...
+	// GET /admin/api/channels/fetch-models?baseUrl=...&apiKey=...&channelType=...&modelsUrl=...
 	g.GET("/channels/fetch-models", func(c *gin.Context) {
 		baseURL := strings.TrimSpace(c.Query("baseUrl"))
 		apiKey := strings.TrimSpace(c.Query("apiKey"))
 		chType := strings.TrimSpace(c.Query("channelType"))
-		if baseURL == "" && apiKey == "" && chType == "" {
+		modelsURL := strings.TrimSpace(c.Query("modelsUrl"))
+		if baseURL == "" && apiKey == "" && chType == "" && modelsURL == "" {
 			httpx.OK(c, failureEnvelope("缺少参数"))
 			return
 		}
-		models, err := fetchModelsPreview(baseURL, apiKey, chType)
+		models, err := fetchModelsPreview(baseURL, modelsURL, apiKey, chType)
 		if err != nil {
 			httpx.OK(c, failureEnvelope(err.Error()))
 			return
@@ -393,6 +403,7 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 			httpx.OK(c, failureEnvelope(err.Error()))
 			return
 		}
+		syncDynamicGroups(ctx, d.Store)
 		row, _ := d.Store.QueryOne(ctx, "SELECT * FROM channel_models WHERE id = ?", id)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("data", store.RowToChannelModel(row)))
 	})
@@ -514,6 +525,7 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 		d.Store.Exec(ctx, "DELETE FROM model_channel_rels WHERE channel_model_id = ?", modelID)
 		d.Store.Exec(ctx, "DELETE FROM model_group_members WHERE channel_model_id = ?", modelID)
 		d.Store.Exec(ctx, "DELETE FROM channel_models WHERE id = ?", modelID)
+		syncDynamicGroups(ctx, d.Store)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true))
 	})
 
@@ -536,6 +548,7 @@ func registerChannelRoutes(g *gin.RouterGroup, d Deps) {
 			d.Store.Exec(ctx, "DELETE FROM model_group_members WHERE channel_model_id IN ("+ins+")")
 			d.Store.Exec(ctx, "DELETE FROM channel_models WHERE channel_id = ?", chID)
 		}
+		syncDynamicGroups(ctx, d.Store)
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("count", len(ids)))
 	})
 }
@@ -925,6 +938,21 @@ func applyChanBody(body map[string]any, sets map[string]any) {
 	if _, exists := body["customHeaders"]; exists {
 		sets["custom_headers"] = body["customHeaders"]
 	}
+	if v, exists := body["modelsUrl"]; exists {
+		if s, ok := v.(string); ok {
+			sets["models_url"] = strings.TrimSpace(s)
+		} else {
+			sets["models_url"] = v
+		}
+	}
+}
+
+// syncDynamicGroups 在渠道/渠道模型发生变更后重算动态小组成员；
+// 失败只记日志，不影响主流程（下次变更或启动时会再同步）。
+func syncDynamicGroups(ctx context.Context, st *store.Store) {
+	if _, err := groups.SyncAll(ctx, st); err != nil {
+		slog.Warn("动态小组成员同步失败", "error", err)
+	}
 }
 
 func camelToSnake(s string) string {
@@ -966,8 +994,8 @@ func addManualModels(ctx context.Context, st *store.Store, chID int64, jsonStr s
 // provider fetch preserves the channel's existing models (Java
 // ChannelModelLoader.loadModels), falling back to the preset list only for a
 // channel that has no models yet.
-func loadModelsForChannel(ctx context.Context, st *store.Store, chID int64, chType, baseURL, customHeaders string) error {
-	channelload.LoadModels(ctx, st, chID, chType, baseURL, customHeaders, "")
+func loadModelsForChannel(ctx context.Context, st *store.Store, chID int64, chType, baseURL, modelsURL, customHeaders string) error {
+	channelload.LoadModels(ctx, st, chID, chType, baseURL, modelsURL, customHeaders, "")
 	return nil
 }
 
@@ -976,7 +1004,7 @@ func loadModelsForChannelID(ctx context.Context, st *store.Store, chID int64) er
 	if err != nil {
 		return err
 	}
-	return loadModelsForChannel(ctx, st, chID, ch.Str("channel_type"), ch.Str("base_url"), ch.Str("custom_headers"))
+	return loadModelsForChannel(ctx, st, chID, ch.Str("channel_type"), ch.Str("base_url"), ch.Str("models_url"), ch.Str("custom_headers"))
 }
 
 func reloadChannelModels(ctx context.Context, st *store.Store, chID int64) ([]models.ChannelModel, error) {
@@ -1002,8 +1030,8 @@ func listChannelModels(ctx context.Context, st *store.Store, chID int64) []model
 }
 
 // fetchModelsPreview lists provider models for the admin fetch-models endpoint.
-func fetchModelsPreview(baseURL, apiKey, chType string) ([]models.ChannelModel, error) {
-	pairs, err := channelload.FetchModels(baseURL, apiKey, chType, "")
+func fetchModelsPreview(baseURL, modelsURL, apiKey, chType string) ([]models.ChannelModel, error) {
+	pairs, err := channelload.FetchModels(baseURL, modelsURL, apiKey, chType, "")
 	if err != nil {
 		return nil, err
 	}

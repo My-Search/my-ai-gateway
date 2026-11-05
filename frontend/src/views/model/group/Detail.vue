@@ -31,20 +31,38 @@
     </div>
 
     <div class="action-bar filter-bar">
-      <SearchableSelect
-        v-model="selectedModelIds"
-        :options="selectOptions"
-        :placeholder="t('group.detail.selectModel')"
-        :multiple="true"
-        :width="300"
-        :dropdown-width="500"
-      />
-      <button class="btn btn-primary btn-sm" :disabled="selectedModelIds.length === 0" @click="addMembers">
-        <SvgIcon name="plus" :size="14" /> {{ t('group.detail.addMembers') }}
-      </button>
-      <button v-if="isDirty" class="btn btn-primary btn-sm" :disabled="isSaving" @click="saveOrder">
-        <SvgIcon name="check" :size="14" /> {{ isSaving ? t('common.saving') : t('group.detail.saveOrder') }}
-      </button>
+      <!-- 动态小组：成员集合由匹配规则自动维护（不可手动增删），
+           但已有成员的顺序 / 权重 / 思考强度与普通小组一样可调 -->
+      <template v-if="isDynamic">
+        <span class="dynamic-tip">
+          <SvgIcon name="link" :size="14" /> {{ t('group.detail.dynamicTip') }}
+          <code
+            class="dynamic-pattern"
+            role="link"
+            :title="t('group.detail.editPatternTip')"
+            @click="goEditRule"
+          >{{ group?.pattern }}</code>
+        </span>
+        <button v-if="isDirty" class="btn btn-primary btn-sm" :disabled="isSaving" @click="saveOrder">
+          <SvgIcon name="check" :size="14" /> {{ isSaving ? t('common.saving') : t('group.detail.saveOrder') }}
+        </button>
+      </template>
+      <template v-else>
+        <SearchableSelect
+          v-model="selectedModelIds"
+          :options="selectOptions"
+          :placeholder="t('group.detail.selectModel')"
+          :multiple="true"
+          :width="300"
+          :dropdown-width="500"
+        />
+        <button class="btn btn-primary btn-sm" :disabled="selectedModelIds.length === 0" @click="addMembers">
+          <SvgIcon name="plus" :size="14" /> {{ t('group.detail.addMembers') }}
+        </button>
+        <button v-if="isDirty" class="btn btn-primary btn-sm" :disabled="isSaving" @click="saveOrder">
+          <SvgIcon name="check" :size="14" /> {{ isSaving ? t('common.saving') : t('group.detail.saveOrder') }}
+        </button>
+      </template>
       <span class="strategy-hint">
         <SvgIcon name="info" :size="13" />
         {{ t('group.detail.weightHint') }}
@@ -149,9 +167,10 @@
               />
             </td>
             <td>
-              <button class="btn btn-sm btn-danger" @click="removeMember(member)">
+              <button v-if="!isDynamic" class="btn btn-sm btn-danger" @click="removeMember(member)">
                 <SvgIcon name="trash" :size="14" /> {{ t('common.delete') }}
               </button>
+              <span v-else class="text-muted">--</span>
             </td>
           </tr>
           <tr v-if="!members.length">
@@ -227,7 +246,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast'
@@ -242,10 +261,13 @@ import Sortable from 'sortablejs'
 
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 const { visible: dialogVisible, title: dialogTitle, message: dialogMessage, type: dialogType, confirmClass: dialogConfirmClass, onConfirm: onDialogConfirm, open: openDialog } = useDialog()
 const { showToast } = useToast()
 
 const group = ref<ModelGroup | null>(null)
+// 动态小组（type='rule'）：成员由匹配规则自动维护，页面进入只读模式
+const isDynamic = computed(() => group.value?.type === 'rule')
 const members = ref<ModelGroupMember[]>([])
 const availableModels = ref<any[]>([])
 const usedByModels = ref<CustomModel[]>([])
@@ -276,6 +298,12 @@ const selectOptions = computed(() => {
 
 function isMemberUnavailable(m: ModelGroupMember): boolean {
   return m.channelEnabled !== 1 || m.apiKeyAvailable === 0
+}
+
+/** 点击匹配规则：跳到编辑表单并定位到规则配置（?focus=rule 由表单处理）。 */
+function goEditRule() {
+  if (!group.value?.id) return
+  router.push({ path: `/admin/model/group/form/${group.value.id}`, query: { focus: 'rule' } })
 }
 
 function formatRespTime(ms: number): string {
@@ -541,6 +569,32 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* 动态小组提示：成员集合由规则自动维护；规则可点击跳到编辑表单 */
+.dynamic-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.dynamic-pattern {
+  padding: 2px 8px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--accent-blue);
+  background: var(--bg-tertiary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color var(--dur-1), background var(--dur-1);
+}
+
+.dynamic-pattern:hover {
+  border-color: var(--accent-blue);
+  background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-tertiary));
+}
+
 .cfg-page-header {
   align-items: flex-start;
 }

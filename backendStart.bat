@@ -33,7 +33,8 @@ for %%G in ("D:\tmp\go\go\bin\go.exe" "D:\tmp\gotool\go\bin\go.exe" "C:\Program 
         goto :checkOld
     )
 )
-echo [ERROR] Go toolchain not found (checked PATH and common install dirs).
+echo [ERROR] Go toolchain not found (checke
+d PATH and common install dirs).
 echo         Cannot compile the latest source, startup aborted.
 goto :failed
 

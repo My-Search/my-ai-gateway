@@ -9,6 +9,10 @@ export interface ModelGroup {
   id?: number
   name: string
   description?: string
+  /** 小组类别：manual（手动小组，成员手动添加）/ rule（动态小组，成员由匹配规则自动得出） */
+  type?: 'manual' | 'rule'
+  /** 动态小组的匹配规则（type='rule' 时有效） */
+  pattern?: string
   /** 组内路由方式：failover（顺序）/ sticky（粘性，按权重一致性哈希） */
   strategy?: GroupStrategy
   /** 历史字段：路由已由 strategy 决定，不再参与路由（保留仅为兼容旧数据） */
@@ -65,6 +69,8 @@ export interface ModelGroupRel {
   groupId: number
   sortOrder: number
   enabled?: number
+  /** 该小组关联在入口模型粘性哈希环上的份额（1-1000，<=0 视为 1） */
+  weight?: number
   /** 该入口模型关联此小组时的默认思考强度：仅当组内成员未单独配置时对其生效（成员配置优先） */
   reasoningEffort?: string | null
   groupName?: string

@@ -891,6 +891,7 @@ input[type="month"] {
 .cfg-section-head {
   display: flex;
   align-items: flex-start;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 17px 20px 14px;
   border-bottom: 1px solid var(--border-color);

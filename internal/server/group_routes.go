@@ -13,9 +13,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/my-search/my-ai-gateway/internal/groups"
 	"github.com/my-search/my-ai-gateway/internal/httpx"
 	"github.com/my-search/my-ai-gateway/internal/jtime"
 	"github.com/my-search/my-ai-gateway/internal/models"
+	"github.com/my-search/my-ai-gateway/internal/rulefilter"
 	"github.com/my-search/my-ai-gateway/internal/store"
 )
 
@@ -56,6 +58,9 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 			Description *string `json:"description"`
 			Strategy    *string `json:"strategy"`
 			Sticky      *int    `json:"sticky"`
+			// Type/Pattern：动态小组（type='rule'）的成员由匹配表达式自动得出。
+			Type    *string `json:"type"`
+			Pattern *string `json:"pattern"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			httpx.OK(c, failureEnvelope("请求参数错误"))
@@ -71,18 +76,44 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 			httpx.OK(c, failureEnvelope("路由方式无效，必须为 failover / sticky"))
 			return
 		}
+		groupType := "manual"
+		if body.Type != nil && strings.TrimSpace(*body.Type) == "rule" {
+			groupType = "rule"
+		}
+		pattern := ""
+		// 手动小组也接受 pattern（作为休眠值存储，改回动态小组时恢复生效）。
+		if body.Pattern != nil {
+			pattern = strings.TrimSpace(*body.Pattern)
+			if pattern != "" {
+				if err := rulefilter.Validate(pattern); err != nil {
+					httpx.OK(c, failureEnvelope(err.Error()))
+					return
+				}
+			}
+		}
+		if groupType == "rule" && pattern == "" {
+			httpx.OK(c, failureEnvelope("动态小组必须提供匹配规则"))
+			return
+		}
 		if dup, _ := d.Store.QueryOne(ctx, "SELECT id FROM model_groups WHERE name = ?", name); dup != nil {
 			httpx.OK(c, failureEnvelope("小组名称「"+name+"」已存在"))
 			return
 		}
 		now := jtime.FormatApp(time.Now().UTC())
 		id, err := d.Store.Insert(ctx,
-			`INSERT INTO model_groups (name, strategy, sticky, enabled, created_at, updated_at)
-			 VALUES (?, ?, ?, 1, ?, ?)`,
-			name, strategy, groupStickyDefault(body.Sticky), now, now)
+			`INSERT INTO model_groups (name, strategy, sticky, type, pattern, enabled, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+			name, strategy, groupStickyDefault(body.Sticky), groupType, pattern, now, now)
 		if err != nil {
 			httpx.OK(c, failureEnvelope(err.Error()))
 			return
+		}
+		// 动态小组创建后立即物化命中成员（新命中的按渠道模型 ID 顺序追加）。
+		if groupType == "rule" {
+			if _, err := groups.SyncOne(ctx, d.Store, id); err != nil {
+				httpx.OK(c, failureEnvelope("同步动态小组成员失败: "+err.Error()))
+				return
+			}
 		}
 		httpx.OK(c, httpx.NewOrderedMap().Set("success", true).Set("id", id))
 	})
@@ -147,6 +178,11 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 			httpx.OK(c, failureEnvelope("请求参数错误"))
 			return
 		}
+		cur, _ := d.Store.QueryOne(ctx, "SELECT * FROM model_groups WHERE id = ?", id)
+		if cur == nil {
+			httpx.OK(c, failureEnvelope("小组不存在"))
+			return
+		}
 		sets := map[string]any{}
 		if v, exists := body["name"]; exists {
 			name, _ := v.(string)
@@ -175,6 +211,44 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 		if v, exists := body["enabled"]; exists {
 			sets["enabled"] = toIntAny(v)
 		}
+		// 类型与匹配规则：允许手动 ↔ 动态互转。转为动态：表达式取请求携带的值，
+		// 否则恢复库中休眠保留的表达式，保存后立即物化成员（命中的渠道模型加入，
+		// 未命中的现有成员移除）。转为手动：成员原地保留、转为可手动维护，
+		// 表达式作为休眠值保留，改回动态小组时自动恢复生效。
+		curType := strings.TrimSpace(cur.Str("type"))
+		newType := curType
+		if v, exists := body["type"]; exists {
+			t, _ := v.(string)
+			newType = strings.TrimSpace(t)
+			if newType != "manual" && newType != "rule" {
+				httpx.OK(c, failureEnvelope("小组类型无效，必须为 manual / rule"))
+				return
+			}
+		}
+		pattern := strings.TrimSpace(cur.Str("pattern"))
+		if v, exists := body["pattern"]; exists {
+			p, _ := v.(string)
+			pattern = strings.TrimSpace(p)
+			if pattern != "" {
+				if err := rulefilter.Validate(pattern); err != nil {
+					httpx.OK(c, failureEnvelope(err.Error()))
+					return
+				}
+			}
+		}
+		if newType == "rule" {
+			if pattern == "" {
+				httpx.OK(c, failureEnvelope("动态小组需要匹配规则"))
+				return
+			}
+			sets["pattern"] = pattern
+		} else if _, exists := body["pattern"]; exists {
+			// 手动小组的表达式是休眠值：仅存储，不参与路由与成员同步。
+			sets["pattern"] = pattern
+		}
+		if newType != curType {
+			sets["type"] = newType
+		}
 		if len(sets) == 0 {
 			httpx.OK(c, successEnvelope())
 			return
@@ -184,6 +258,16 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 		if _, err := d.Store.Exec(ctx, q, args...); err != nil {
 			httpx.OK(c, failureEnvelope(err.Error()))
 			return
+		}
+		// 动态小组（含刚转为动态的）：表达式变化会触发成员重新同步（新命中追加到
+		// 末尾、不再命中的移除，重新出现时按新成员处理）。
+		if newType == "rule" {
+			if _, ok := sets["pattern"]; ok {
+				if _, err := groups.SyncOne(ctx, d.Store, id); err != nil {
+					httpx.OK(c, failureEnvelope("同步动态小组成员失败: "+err.Error()))
+					return
+				}
+			}
 		}
 		httpx.OK(c, successEnvelope())
 	})
@@ -236,6 +320,9 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 			httpx.OK(c, failureEnvelope("小组不存在"))
 			return
 		}
+		if denyDynamicGroupMutation(c, d, groupID) {
+			return
+		}
 		var body struct {
 			ChannelModelIDs []int64 `json:"channelModelIds"`
 		}
@@ -278,6 +365,9 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 			httpx.OK(c, failureEnvelope("成员不存在"))
 			return
 		}
+		if denyDynamicGroupMemberMutation(c, d, memberID) {
+			return
+		}
 		if _, err := d.Store.Exec(ctx, "DELETE FROM model_group_members WHERE id = ?", memberID); err != nil {
 			httpx.OK(c, failureEnvelope(err.Error()))
 			return
@@ -294,6 +384,13 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 		if err := c.ShouldBindJSON(&body); err != nil || len(body.MemberIDs) == 0 {
 			httpx.OK(c, failureEnvelope("memberIds 不能为空"))
 			return
+		}
+		// 动态小组成员由规则匹配维护：只要本批里混有动态成员，整批拒绝。
+		for _, mid := range body.MemberIDs {
+			if v, ok := mid.(float64); ok && memberOfDynamicGroup(ctx, d.Store, int64(v)) {
+				httpx.OK(c, failureEnvelope(dynamicMemberDenyMessage))
+				return
+			}
 		}
 		removed := 0
 		for _, mid := range body.MemberIDs {
@@ -317,6 +414,8 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 			httpx.OK(c, failureEnvelope("请求参数错误"))
 			return
 		}
+		// 动态小组也允许手动排序：同步只把新命中的追加到末尾、移除不再命中的，
+		// 已有成员的相对顺序（含手动拖拽结果）始终保持不变。
 		for i, mid := range body.SortedMemberIDs {
 			switch v := mid.(type) {
 			case float64:
@@ -326,7 +425,8 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 		httpx.OK(c, successEnvelope())
 	})
 
-	// PUT /admin/api/model-groups/members/{memberId} — 成员权重 / 思考强度
+	// PUT /admin/api/model-groups/members/{memberId} — 成员权重 / 思考强度 / 启停
+	// 动态小组的成员同样允许：同步不触碰已有成员行的属性，手动设置会一直保留。
 	g.PUT("/model-groups/members/:memberId", func(c *gin.Context) {
 		ctx := c.Request.Context()
 		memberID, ok := pathID(c, "memberId")
@@ -511,6 +611,40 @@ func groupStickyDefault(v *int) int {
 		return 0
 	}
 	return 1
+}
+
+// dynamicMemberDenyMessage 是动态小组成员变更被拒绝时的统一提示。
+const dynamicMemberDenyMessage = "动态小组成员由匹配规则自动维护，不可手动添加或移除；如需调整成员集合，请编辑小组的匹配规则"
+
+// denyDynamicGroupMutation 按 groupID 拒绝对动态小组的成员变更（已是动态小组时返回 true）。
+func denyDynamicGroupMutation(c *gin.Context, d Deps, groupID int64) bool {
+	if isDynamicGroup(c.Request.Context(), d.Store, groupID) {
+		httpx.OK(c, failureEnvelope(dynamicMemberDenyMessage))
+		return true
+	}
+	return false
+}
+
+// denyDynamicGroupMemberMutation 按成员 ID 拒绝对动态小组成员的变更。
+func denyDynamicGroupMemberMutation(c *gin.Context, d Deps, memberID int64) bool {
+	if memberOfDynamicGroup(c.Request.Context(), d.Store, memberID) {
+		httpx.OK(c, failureEnvelope(dynamicMemberDenyMessage))
+		return true
+	}
+	return false
+}
+
+// memberOfDynamicGroup 报告该成员行是否属于动态小组。
+func memberOfDynamicGroup(ctx context.Context, st *store.Store, memberID int64) bool {
+	row, _ := st.QueryOne(ctx,
+		`SELECT g.type FROM model_group_members m JOIN model_groups g ON g.id = m.group_id WHERE m.id = ?`, memberID)
+	return row != nil && strings.TrimSpace(row.Str("type")) == "rule"
+}
+
+// isDynamicGroup 报告该小组是否为动态小组（type='rule'）。
+func isDynamicGroup(ctx context.Context, st *store.Store, groupID int64) bool {
+	row, _ := st.QueryOne(ctx, "SELECT type FROM model_groups WHERE id = ?", groupID)
+	return row != nil && strings.TrimSpace(row.Str("type")) == "rule"
 }
 
 func normalizeGroupStrategyInput(s *string) string {

@@ -167,13 +167,21 @@ export const modelApi = {
   batchAddRels(modelId: number, channelModelIds: number[], sortedRelIds?: string) {
     return http.post<{ success: boolean; count: number; error?: string }>(`/models/${modelId}/rels`, { channelModelIds, sortedRelIds })
   },
+  /**
+   * 入口模型聚合：把其它入口模型当前生效的关联（渠道模型 + 小组，含继承链解析）
+   * 一次性复制到当前模型（快照，之后两边互不影响），按渠道模型/小组去重。
+   */
+  aggregateRels(modelId: number, sourceModelIds: number[]) {
+    return http.post<{ success: boolean; count: number; error?: string }>(`/models/${modelId}/rels`, { sourceModelIds })
+  },
   removeRel(relId: number) {
     return http.delete<{ success: boolean; error?: string }>(`/models/rels/${relId}`)
   },
   /**
    * 批量删除关联（仅自添加模式）。后端整体校验：任一关联不存在或处于继承模式则全部不删除。
+   * relIds 接受 "cm:<id>" / "g:<id>" / "r:<id>" 前缀引用（裸数字按渠道模型关联处理）。
    */
-  batchRemoveRels(relIds: number[]) {
+  batchRemoveRels(relIds: (number | string)[]) {
     return http.post<{ success: boolean; count: number; error?: string }>('/models/rels/batch-delete', { relIds })
   },
   updateRelSort(relId: number, sortOrder: number) {
@@ -193,6 +201,10 @@ export const modelApi = {
   /** 入口模型 -> 小组 关联的默认思考强度（成员未单独配置时生效，成员配置优先） */
   updateGroupRelReasoningEffort(relId: number, reasoningEffort: string | null) {
     return http.put<{ success: boolean; error?: string }>(`/models/group-rels/${relId}/reasoning-effort`, { reasoningEffort })
+  },
+  /** 入口模型 -> 小组 关联的粘性权重（1-1000）：小组整体在入口哈希环上的份额 */
+  updateGroupRelWeight(relId: number, weight: number) {
+    return http.put<{ success: boolean; error?: string }>(`/models/group-rels/${relId}/weight`, { weight })
   },
   /**
    * 手动解除关联的熔断状态（若渠道级熔断存在则一并解除）
@@ -215,6 +227,8 @@ export interface ModelGroupRel {
   groupId: number
   sortOrder: number
   enabled?: number
+  /** 该小组关联在入口模型粘性哈希环上的份额（1-1000，<=0 视为 1） */
+  weight?: number
   /** 该入口模型关联此小组时的默认思考强度：仅当组内成员未单独配置时对其生效（成员配置优先） */
   reasoningEffort?: string | null
   groupName?: string
@@ -256,3 +270,4 @@ export interface AvailableModelGroup {
   sticky?: number
   memberCount?: number | null
 }
+

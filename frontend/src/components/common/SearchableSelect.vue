@@ -36,7 +36,7 @@
       </li>
     </ul>
     <div v-if="isOpen && !filteredOptions.length" class="searchable-select-empty">
-      {{ t('common.noMatch') }}
+      {{ filterError ? t('common.filterInvalidRegex') : t('common.noMatch') }}
     </div>
   </div>
 </template>
@@ -44,6 +44,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from '@/composables/useI18n'
+import { matchFilter, parseFilter } from '@/utils/filterMatch'
 
 const { t } = useI18n()
 
@@ -82,13 +83,12 @@ const selectedCountText = computed(() =>
   t('common.selectedCount').replace('{count}', String(selectedCount.value))
 )
 
+// 过滤表达式：普通词空格分词 AND，/正则/ 与普通词可混合；编译失败时在下拉里提示
+const filterError = computed(() => (searchText.value.trim() ? parseFilter(searchText.value).error : null))
+
 const filteredOptions = computed(() => {
-  if (!searchText.value) return props.options
-  const keywords = searchText.value.toLowerCase().split(/\s+/).filter(Boolean)
-  return props.options.filter(opt => {
-    const label = opt.label.toLowerCase()
-    return keywords.every(kw => label.includes(kw))
-  })
+  if (!searchText.value.trim()) return props.options
+  return props.options.filter(opt => matchFilter(searchText.value, opt.label))
 })
 
 // 判断选项是否被选中

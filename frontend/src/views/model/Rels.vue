@@ -18,25 +18,27 @@
     <div class="action-bar filter-bar">
       <!-- 左侧：模式相关控件（自添加=添加/排序；继承=只读提示；源选择器独立显示） -->
       <div class="left">
-        <!-- 自添加模式：添加 + 排序 -->
+        <!-- 自添加模式：添加 + 排序（类型下拉 + 单输入框过滤选择） -->
         <template v-if="uiMode === 'self_add'">
+          <select
+            v-model="addType"
+            class="form-control rel-type-select"
+            :aria-label="t('model.rels.addType')"
+            :title="t('model.rels.addType')"
+          >
+            <option value="cm">{{ t('model.rels.addTypeChannel') }}</option>
+            <option value="g">{{ t('model.rels.addTypeGroup') }}</option>
+            <option value="m">{{ t('model.rels.addTypeModel') }}</option>
+          </select>
           <SearchableSelect
-            v-model="selectedModelIds"
-            :options="selectOptions"
-            :placeholder="t('model.rels.selectModel')"
+            v-model="selectedCandidateIds"
+            :options="candidateOptions"
+            :placeholder="candidatePlaceholder"
             :multiple="true"
             :width="300"
             :dropdown-width="500"
           />
-          <SearchableSelect
-            v-model="selectedGroupIds"
-            :options="groupOptions"
-            :placeholder="t('model.rels.selectGroup')"
-            :multiple="true"
-            :width="240"
-            :dropdown-width="420"
-          />
-          <button class="btn btn-primary btn-sm" :disabled="selectedModelIds.length === 0 && selectedGroupIds.length === 0" @click="addRel">
+          <button class="btn btn-primary btn-sm" :disabled="!canAdd" @click="addRel">
             <SvgIcon name="link" :size="14" /> {{ t('model.rels.addRel') }}
           </button>
           <button v-if="isDirty" class="btn btn-primary btn-sm" :disabled="isSaving" @click="saveOrder">
@@ -193,7 +195,19 @@
             </td>
             <!-- 小组行：与渠道模型行同样的列式布局；组内无对应数据的列显示 --。 -->
             <template v-if="entry.kind === 'g'">
-              <td class="text-muted">--</td>
+              <td>
+                <input
+                  v-if="currentMode === 'self_add'"
+                  class="form-control weight-input"
+                  type="number"
+                  min="1"
+                  max="1000"
+                  :value="gOf(entry).weight ?? 1"
+                  :title="t('model.rels.groupWeightHint')"
+                  @change="updateGroupRelWeight(gOf(entry), ($event.target as HTMLInputElement).value, $event)"
+                />
+                <span v-else class="text-muted">{{ gOf(entry).weight ?? 1 }}</span>
+              </td>
               <td class="rel-type-cell">
                 <span class="group-badge">{{ t('model.rels.typeGroup') }}</span>
               </td>
@@ -245,7 +259,7 @@
               </td>
               <td>
                 <span class="group-circuit">
-                  <span v-if="gOf(entry).circuitBroken === 1" class="badge badge-broken">{{ groupBrokenPrefix(gOf(entry)) }}<span class="ratio-n ratio-n--broken">{{ gOf(entry).brokenCount ?? 0 }}</span>/<span class="ratio-m ratio-m--broken">{{ gOf(entry).memberCount ?? 0 }}</span>）</span>
+                  <span v-if="gOf(entry).circuitBroken === 1" class="badge badge-broken">{{ groupBrokenPrefix(gOf(entry).circuitBrokenScope) }}<span class="ratio-n ratio-n--broken">{{ gOf(entry).brokenCount ?? 0 }}</span>/<span class="ratio-m ratio-m--broken">{{ gOf(entry).memberCount ?? 0 }}</span>）</span>
                   <span v-else class="text-muted">{{ t('model.rels.brokenNone') }}</span>
                   <!-- 正常态：状态词 + 熔断成员数/成员总数；n 有熔断即标红（表示已熔断个数），
                        全熔断时 n、m 同为红色。 -->
@@ -453,6 +467,7 @@
       </div>
     </div>
   </Teleport>
+
 </template>
 
 <script setup lang="ts">
@@ -479,13 +494,26 @@ const model = ref<CustomModel | null>(null)
 const rels = ref<ModelChannelRel[]>([])
 const groupRels = ref<ModelGroupRel[]>([])
 const availableGroups = ref<AvailableModelGroup[]>([])
-const selectedGroupIds = ref<number[]>([])
 const loading = ref(true)
 const availableModels = ref<any[]>([])
 const inheritableModels = ref<CustomModel[]>([])
 const inheritFromModelName = ref<string | null>(null)
-const selectedModelIds = ref<number[]>([])
 const showSourcePicker = ref(false)
+
+/* ---------- 添加关联：类型下拉 + 单输入框过滤选择 ---------- */
+/** 待添加的关联类型：cm=渠道模型 / g=模型小组 / m=入口模型（聚合其关联）/ r=规则匹配 */
+type AddType = 'cm' | 'g' | 'm'
+const addType = ref<AddType>('cm')
+/** 当前类型下勾选的候选 ID */
+const selectedCandidateIds = ref<number[]>([])
+// 切换类型时清空勾选与规则：不同类型的候选 ID 空间互不相通
+watch(addType, async (type) => {
+  selectedCandidateIds.value = []
+  // 入口模型候选按需加载（仅在该类型下使用）
+  if (type === 'm' && inheritableModels.value.length === 0) {
+    await loadInheritableModels()
+  }
+})
 // 用 0 而非 null：SearchableSelect 的 modelValue 类型不允许 null
 const pendingSourceId = ref<number>(0)
 const switchingMode = ref(false)
@@ -573,9 +601,10 @@ function removeSelectedRels() {
       try {
         // 与单条删除一致：若已调整过顺序（未保存），先持久化，避免 loadData 刷新丢失排序
         if (!(await persistOrder())) return
-        // 勾选集合存的是合并条目的 key（"cm:<id>" / "g:<id>"），按前缀分流删除。
+        // 勾选集合存的是合并条目的 key（"cm:<id>" / "g:<id>" / "r:<id>"），按前缀分流删除。
         const cmIds = ids.filter(k => k.startsWith('cm:')).map(k => Number(k.slice(3)))
         const gIds = ids.filter(k => k.startsWith('g:')).map(k => Number(k.slice(2)))
+        const rIds = ids.filter(k => k.startsWith('r:')).map(k => Number(k.slice(2)))
         let ok = true
         if (cmIds.length > 0) {
           const res = await modelApi.batchRemoveRels(cmIds)
@@ -586,6 +615,14 @@ function removeSelectedRels() {
         }
         if (ok && gIds.length > 0) {
           const res = await groupApi.batchRemoveModelRels(gIds)
+          if (!res.data.success) {
+            ok = false
+            openDialog({ title: t('model.rels.deleteFailed'), message: res.data.error || t('error.unknown') })
+          }
+        }
+        if (ok && rIds.length > 0) {
+          // 规则关联走同一个批量删除接口，用 "r:<id>" 前缀区分。
+          const res = await modelApi.batchRemoveRels(rIds.map(id => 'r:' + id))
           if (!res.data.success) {
             ok = false
             openDialog({ title: t('model.rels.deleteFailed'), message: res.data.error || t('error.unknown') })
@@ -607,7 +644,8 @@ function isRelUnavailable(rel: ModelChannelRel): boolean {
   return rel.channelEnabled !== 1 || rel.apiKeyAvailable === 0
 }
 
-/** 合并条目不可用：渠道模型行按渠道/Key 判定；小组行看小组被禁用或可用成员数为 0。 */
+/** 合并条目不可用：渠道模型行按渠道/Key 判定；小组行看小组被禁用或可用成员数为 0；
+ *  规则行看当前命中集合里是否有可路由的渠道模型。 */
 function isEntryUnavailable(entry: RelEntry): boolean {
   if (entry.kind === 'g') {
     const g = gOf(entry)
@@ -780,6 +818,23 @@ const inheritableOptions = computed(() => {
   }))
 })
 
+/* ---------- 添加关联：按类型给出候选与占位文案 ---------- */
+const candidateOptions = computed(() => {
+  if (addType.value === 'cm') return selectOptions.value
+  if (addType.value === 'g') return groupOptions.value
+  // 入口模型聚合：可重复聚合（后端按渠道模型/小组去重），因此不排除已聚合过的
+  return inheritableOptions.value
+})
+
+const candidatePlaceholder = computed(() => {
+  if (addType.value === 'g') return t('model.rels.selectGroup')
+  if (addType.value === 'm') return t('model.rels.selectEntryModel')
+  return t('model.rels.selectModel')
+})
+
+/** 添加按钮可用性：需有勾选候选 */
+const canAdd = computed(() => selectedCandidateIds.value.length > 0)
+
 /* ---------- 直连关联与小组关联的统一队列 ----------
  * 两类关联共用 sort_order，页面上展示为一张合并列表；拖拽排序后把合并顺序
  * 用 "cm:<relId>" / "g:<relId>" 前缀提交给后端统一编号。
@@ -812,13 +867,13 @@ function groupStrategyLabel(s?: string): string {
 }
 
 /**
- * 小组全部熔断时的徽章前缀：「熔断中（模型级 」——n/m 由模板单独渲染成可着色的
+ * 全部熔断时的徽章前缀：「熔断中（模型级 」——n/m 由模板单独渲染成可着色的
  * 两个 span，因此这里只返回到数字之前的部分。
- * 级别取组内成员聚合结果（两者 > 渠道级 > 模型级），与渠道模型行的
+ * 级别取成员/命中模型的聚合结果（两者 > 渠道级 > 模型级），与渠道模型行的
  * 「熔断中（渠道级）」保持同一读法。
  */
-function groupBrokenPrefix(g: ModelGroupRel): string {
-  const scopeKey = ({ model: 'model.rels.brokenModel', channel: 'model.rels.brokenChannel', both: 'model.rels.brokenBoth' } as Record<string, string>)[g.circuitBrokenScope || '']
+function groupBrokenPrefix(scope?: string | null): string {
+  const scopeKey = ({ model: 'model.rels.brokenModel', channel: 'model.rels.brokenChannel', both: 'model.rels.brokenBoth' } as Record<string, string>)[scope || '']
   if (!scopeKey) return `${t('model.rels.broken')}（`
   return `${t('model.rels.broken')}（${t(scopeKey)} `
 }
@@ -882,30 +937,39 @@ async function loadInheritableModels() {
 }
 
 async function addRel() {
-  if (selectedModelIds.value.length === 0 && selectedGroupIds.value.length === 0) return
   if (currentMode.value !== 'self_add') return
   const id = Number(route.params.id)
+
+  const ids = [...selectedCandidateIds.value]
+  if (ids.length === 0) return
   try {
     let ok = true
-    if (selectedModelIds.value.length > 0) {
-      const res = await modelApi.batchAddRels(id, selectedModelIds.value)
+    if (addType.value === 'cm') {
+      const res = await modelApi.batchAddRels(id, ids)
+      if (!res.data.success) {
+        ok = false
+        openDialog({ title: t('model.rels.addFailed'), message: res.data.error || t('error.unknown') })
+      }
+    } else if (addType.value === 'g') {
+      const res = await groupApi.addModelRel(id, ids)
+      if (!res.data.success) {
+        ok = false
+        openDialog({ title: t('model.rels.addFailed'), message: res.data.error || t('error.unknown') })
+      }
+    } else {
+      // 入口模型聚合：把所选入口模型当前生效的关联复制为快照（后端去重）
+      const res = await modelApi.aggregateRels(id, ids)
       if (res.data.success) {
-        selectedModelIds.value = []
+        showToast(t('model.rels.aggregateDone').replace('{count}', String(res.data.count ?? 0)))
       } else {
         ok = false
         openDialog({ title: t('model.rels.addFailed'), message: res.data.error || t('error.unknown') })
       }
     }
-    if (ok && selectedGroupIds.value.length > 0) {
-      const res = await groupApi.addModelRel(id, selectedGroupIds.value)
-      if (res.data.success) {
-        selectedGroupIds.value = []
-      } else {
-        ok = false
-        openDialog({ title: t('model.rels.addFailed'), message: res.data.error || t('error.unknown') })
-      }
+    if (ok) {
+      selectedCandidateIds.value = []
+      await loadData()
     }
-    if (ok) await loadData()
   } catch (e: any) {
     openDialog({ title: t('model.rels.addFailed'), message: e.message })
   }
@@ -991,6 +1055,29 @@ async function updateRelWeight(rel: ModelChannelRel, raw: string) {
       openDialog({ title: t('error.updateFailed'), message: res.data.error || t('error.unknown') })
     }
   } catch (e: any) {
+    openDialog({ title: t('error.updateFailed'), message: e.message })
+  }
+}
+
+/**
+ * 保存「入口模型 -> 小组」关联的粘性权重：1-1000，非法或空值按 1 处理。
+ * 这是小组整体在入口模型哈希环上的份额，与组内成员权重互不影响。
+ */
+async function updateGroupRelWeight(rel: ModelGroupRel, raw: string, evt?: Event) {
+  const parsed = Number.parseInt(raw, 10)
+  const weight = Number.isFinite(parsed) ? Math.min(1000, Math.max(1, parsed)) : 1
+  const input = evt?.target as HTMLInputElement | undefined
+  try {
+    const res = await modelApi.updateGroupRelWeight(rel.id, weight)
+    if (res.data.success) {
+      rel.weight = weight
+      if (input) input.value = String(weight)
+    } else {
+      if (input) input.value = String(rel.weight ?? 1)
+      openDialog({ title: t('error.updateFailed'), message: res.data.error || t('error.unknown') })
+    }
+  } catch (e: any) {
+    if (input) input.value = String(rel.weight ?? 1)
     openDialog({ title: t('error.updateFailed'), message: e.message })
   }
 }
@@ -1193,8 +1280,8 @@ watch(() => route.params.id, async (newId, oldId) => {
   if (newId === oldId) return
   showSourcePicker.value = false
   pendingSourceId.value = 0
-  selectedModelIds.value = []
-  selectedGroupIds.value = []
+  selectedCandidateIds.value = []
+  addType.value = 'cm'
   inheritableModels.value = []
   await loadData()
   await nextTick()
@@ -1310,6 +1397,15 @@ td.rel-channel-cell {
   font-size: 12px;
   margin-right: 4px;
   white-space: nowrap;
+}
+
+/* 添加关联的类型下拉 / 规则输入框：高度必须与右侧 SearchableSelect 的输入框一致。
+   两者都用全局 .form-control 的默认盒模型（padding 9px 12px、font-size 13.5px、
+   line-height 1.5），不要在这里覆盖 padding-top/bottom 或 font-size，否则会比
+   搜索框矮一截（此前 5px/12.5px 的覆盖正是这个问题）。 */
+.rel-type-select {
+  width: 150px;
+  flex-shrink: 0;
 }
 
 .mode-tabs {

@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -47,7 +48,7 @@ func OpenReadOnly(path string) *sql.DB {
 		"_pragma=cache_size(-16000)",
 		"_pragma=temp_store(MEMORY)",
 		"_pragma=mmap_size(268435456)",
-		"_pragma=query_only(true)",   // 强制只读，禁止写操作
+		"_pragma=query_only(true)", // 强制只读，禁止写操作
 		"_pragma=foreign_keys(ON)",
 	}, "&")
 
@@ -152,6 +153,12 @@ func Migrate(conn *sql.DB) error {
 
 	if err := repairModelConfigRules(conn); err != nil {
 		return fmt.Errorf("修复模型配置规则状态: %w", err)
+	}
+
+	// v1.56.0 的「规则转动态小组」是数据迁移（不是纯 DDL）：按状态修复，
+	// 版本号已记录但数据未转换的库也能自愈；健康库一次探测即返回。
+	if err := convertRuleRelsToDynamicGroups(conn); err != nil {
+		return fmt.Errorf("规则关联转动态小组: %w", err)
 	}
 
 	slog.Info("=== 数据库迁移完成 ===")
@@ -353,4 +360,167 @@ func executeMigration(conn *sql.DB, b migrationBlock) error {
 		}
 	}
 	return nil
+}
+
+// convertRuleRelsToDynamicGroups 把历史「规则匹配」关联（model_rule_rels）转换为
+// 动态小组：每条规则 = 一个 type='rule' 的小组（名称/策略/表达式）；每条
+// 入口模型 -> 规则 的关联 = 一条 model_group_rels（沿用 sort_order 与权重，
+// 按目标模型已有的最大序号统一重新编号，避免与同模型下其它关联冲突）。
+//
+// 按状态修复而非版本号：迁移版本 v1.56.0 可能被记录但转换中断，下一次启动仍
+// 能补齐；转换完成后 DROP model_rule_rels，重复执行直接跳过。
+func convertRuleRelsToDynamicGroups(conn *sql.DB) error {
+	// 1) 表已删除 → 转换已完成
+	var ruleTable string
+	err := conn.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='model_rule_rels'").Scan(&ruleTable)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("探测 model_rule_rels: %w", err)
+	}
+
+	// 2) 确认新列已存在（v1.56.0 的 ALTER）
+	var hasType, hasPattern int
+	if err := conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('model_groups') WHERE name='type'").Scan(&hasType); err != nil {
+		return err
+	}
+	if err := conn.QueryRow("SELECT COUNT(*) FROM pragma_table_info('model_groups') WHERE name='pattern'").Scan(&hasPattern); err != nil {
+		return err
+	}
+	if hasType != 1 || hasPattern != 1 {
+		return fmt.Errorf("model_groups.type/pattern 列缺失")
+	}
+
+	rows, err := conn.Query(`SELECT id, model_id, name, pattern, weight, strategy, enabled, sort_order, created_at
+		FROM model_rule_rels ORDER BY model_id ASC, sort_order ASC, id ASC`)
+	if err != nil {
+		return err
+	}
+	type ruleRow struct {
+		id, modelID, weight, enabled, sortOrder int64
+		name, pattern, strategy, createdAt      string
+	}
+	var rules []ruleRow
+	for rows.Next() {
+		var r ruleRow
+		var w, s, e any // nullable columns
+		var created any
+		if err := rows.Scan(&r.id, &r.modelID, &r.name, &r.pattern, &w, &s, &e, &r.sortOrder, &created); err != nil {
+			rows.Close()
+			return err
+		}
+		r.weight = toInt64Default(w, 1)
+		r.enabled = toInt64Default(e, 1)
+		r.strategy = toStringDefault(s, "sticky")
+		r.createdAt = toStringDefault(created, "")
+		rules = append(rules, r)
+	}
+	rows.Close()
+
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	for _, r := range rules {
+		// 每条规则创建一个动态小组；名称冲突时加后缀（UNIQUE(name) 保护）。
+		groupName := r.name
+		for i := 2; ; i++ {
+			var exists int
+			_ = conn.QueryRow("SELECT COUNT(*) FROM model_groups WHERE name=?", groupName).Scan(&exists)
+			if exists == 0 {
+				break
+			}
+			groupName = fmt.Sprintf("%s (%d)", r.name, i)
+		}
+		strategy := r.strategy
+		if strategy != "failover" && strategy != "sticky" {
+			strategy = "sticky"
+		}
+		created := r.createdAt
+		if created == "" {
+			created = now
+		}
+		res, err := conn.Exec(
+			`INSERT INTO model_groups (name, description, strategy, sticky, type, pattern, enabled, created_at, updated_at)
+			 VALUES (?, '', ?, 0, 'rule', ?, ?, ?, ?)`,
+			groupName, strategy, r.pattern, r.enabled, created, now)
+		if err != nil {
+			return fmt.Errorf("建动态小组 %q: %w", r.name, err)
+		}
+		groupID, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
+
+		// 入口模型关联：接在该模型现有三类关联的最大序号之后（转换阶段只剩
+		// 直连/小组两类，规则的旧 sort_order 不再直接沿用，避免序号冲突）。
+		var nextSort int64
+		_ = conn.QueryRow(`SELECT COALESCE(MAX(sort_order), -1) + 1 FROM (
+			SELECT sort_order FROM model_channel_rels WHERE model_id=?
+			UNION ALL SELECT sort_order FROM model_group_rels WHERE model_id=?)`, r.modelID, r.modelID).Scan(&nextSort)
+		if _, err := conn.Exec(
+			`INSERT OR IGNORE INTO model_group_rels
+			 (model_id, group_id, sort_order, weight, reasoning_effort, enabled, created_at)
+			 VALUES (?, ?, ?, ?, NULL, ?, ?)`,
+			r.modelID, groupID, nextSort, r.weight, r.enabled, created); err != nil {
+			return fmt.Errorf("建小组关联 %q: %w", r.name, err)
+		}
+
+		// 初始成员物化：按 channel_models.id 稳定顺序，新命中的追加到末尾。
+		cmRows, err := conn.Query(
+			`SELECT cm.id, c.name FROM channel_models cm
+			  JOIN channels c ON c.id = cm.channel_id
+			 WHERE cm.enabled = 1 AND c.enabled = 1 ORDER BY cm.id ASC`)
+		if err != nil {
+			return err
+		}
+		var matched []int64
+		for cmRows.Next() {
+			var cmID int64
+			var chName string
+			if err := cmRows.Scan(&cmID, &chName); err != nil {
+				cmRows.Close()
+				return err
+			}
+			_ = chName // 转换阶段不过滤表达式：由启动后的同步函数统一按规则重算
+			matched = append(matched, cmID)
+		}
+		cmRows.Close()
+		for _, cmID := range matched {
+			// 排序与权重交给启动同步（SyncAll）统一处理；此处只要物化即可。
+			if _, err := conn.Exec(
+				`INSERT OR IGNORE INTO model_group_members
+				 (group_id, channel_model_id, weight, reasoning_effort, sort_order, enabled, created_at)
+				 VALUES (?, ?, 1, NULL, 0, 1, ?)`, groupID, cmID, now); err != nil {
+				return fmt.Errorf("物化动态小组成员: %w", err)
+			}
+		}
+	}
+
+	if _, err := conn.Exec("DROP TABLE model_rule_rels"); err != nil {
+		return fmt.Errorf("DROP model_rule_rels: %w", err)
+	}
+	return nil
+}
+
+func toInt64Default(v any, def int64) int64 {
+	switch x := v.(type) {
+	case int64:
+		return x
+	case float64:
+		return int64(x)
+	case nil:
+		return def
+	default:
+		return def
+	}
+}
+
+func toStringDefault(v any, def string) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case []byte:
+		return string(x)
+	default:
+		return def
+	}
 }

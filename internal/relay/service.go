@@ -101,8 +101,9 @@ func (r *RouteResolver) BuildCandidates(ctx context.Context, req *InternalReques
 	// 注意继承模式下策略取自入口模型本身（与候选来源的继承无关）。
 	strategy = normalizeModelStrategy(strategy)
 
-	// stickyKey 供入口模型粘性排序与组内粘性排序共用；仅在确实需要哈希时计算
-	// （入口模型为粘性策略，或队列中存在粘性小组），避免每个请求都做前缀哈希。
+	// stickyKey 供入口模型粘性排序与组内/规则内粘性排序共用；仅在确实需要哈希时
+	// 计算（入口模型为粘性策略，或队列中存在粘性小组/粘性规则），避免每个请求
+	// 都做前缀哈希。
 	stickyKey := ""
 	if strategy == ModelStrategySticky || hasStickyGroup(entries) {
 		stickyKey = StickyKey(req)
@@ -264,8 +265,12 @@ type routingEntry struct {
 	// groupReasoningEffort 是这条「入口模型 -> 小组」关联配置的默认思考强度，
 	// 仅回填到组内未单独配置思考强度的成员候选上（成员配置优先）。
 	groupReasoningEffort *string
-	sortOrder            int
-	candidates           []RoutingCandidate
+	// groupWeight 是这条「入口模型 -> 小组」关联的粘性权重：小组整体作为一个
+	// 条目参与入口模型哈希环的份额。组内成员的权重由 groupMemberCandidates
+	// 单独维护，不在这里使用。
+	groupWeight int
+	sortOrder   int
+	candidates  []RoutingCandidate
 }
 
 // resolveRoutingEntries merges model_channel_rels and model_group_rels of one
@@ -309,7 +314,7 @@ func (r *RouteResolver) resolveRoutingEntries(ctx context.Context, modelID int64
 	}
 
 	groupRows, _ := r.Store.Query(ctx,
-		`SELECT rel.sort_order, rel.reasoning_effort, g.id, g.name, g.strategy, g.enabled
+		`SELECT rel.sort_order, rel.reasoning_effort, rel.weight, g.id, g.name, g.strategy, g.enabled
 		   FROM model_group_rels rel
 		   JOIN model_groups g ON g.id = rel.group_id
 		  WHERE rel.model_id = ? AND rel.enabled = 1
@@ -324,6 +329,7 @@ func (r *RouteResolver) resolveRoutingEntries(ctx context.Context, modelID int64
 			groupName:            row.Str("name"),
 			groupStrategy:        normalizeGroupStrategy(row.Str("strategy")),
 			groupReasoningEffort: row.StrPtr("reasoning_effort"),
+			groupWeight:          normalizeWeight(row.Int("weight", 1)),
 			sortOrder:            row.Int("sort_order", 0),
 		})
 	}

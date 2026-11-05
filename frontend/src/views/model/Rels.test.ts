@@ -7,7 +7,7 @@ import type { ModelChannelRel, ModelGroupRel } from '@/api/model'
  * 入口模型关联页「模型小组行」的渲染测试。
  *
  * 小组行必须与渠道模型行保持相同列式布局：
- *  - 权重列 = --（权重由小组内部成员各自维护）；
+ *  - 权重列 = 小组关联自身的粘性权重（可编辑，1-1000）；
  *  - 渠道列 = 小组徽章（禁用时附加禁用徽章）；
  *  - 模型列 = 成员模型名逐行 + 右侧策略文字（历史值 random/round_robin 按粘性展示）；
  *  - 熔断列 = 状态与熔断成员占比合并为「状态（n/m）」，n = 熔断成员数、m = 成员总数；
@@ -18,18 +18,31 @@ import type { ModelChannelRel, ModelGroupRel } from '@/api/model'
 
 const getRelsMock = vi.fn()
 const updateGroupRelEffortMock = vi.fn()
+const updateGroupRelWeightMock = vi.fn()
 const updateRelWeightMock = vi.fn()
+const getInheritableModelsMock = vi.fn()
+const aggregateRelsMock = vi.fn()
+const batchAddRelsMock = vi.fn()
+const addRuleRelMock = vi.fn()
+const updateRuleRelMock = vi.fn()
+const removeRuleRelMock = vi.fn()
 
 vi.mock('@/api/model', () => ({
   modelApi: {
     getRels: (...a: unknown[]) => getRelsMock(...a),
-    getInheritableModels: vi.fn().mockResolvedValue({ data: [] }),
+    getInheritableModels: (...a: unknown[]) => getInheritableModelsMock(...a),
+    batchAddRels: (...a: unknown[]) => batchAddRelsMock(...a),
+    aggregateRels: (...a: unknown[]) => aggregateRelsMock(...a),
+    addRuleRel: (...a: unknown[]) => addRuleRelMock(...a),
+    updateRuleRel: (...a: unknown[]) => updateRuleRelMock(...a),
+    removeRuleRel: (...a: unknown[]) => removeRuleRelMock(...a),
     batchUpdateSortOrders: vi.fn().mockResolvedValue({ data: { success: true } }),
     batchRemoveRels: vi.fn().mockResolvedValue({ data: { success: true } }),
     removeRel: vi.fn().mockResolvedValue({ data: { success: true } }),
     updateRelReasoningEffort: vi.fn().mockResolvedValue({ data: { success: true } }),
     updateRelWeight: (...a: unknown[]) => updateRelWeightMock(...a),
     updateGroupRelReasoningEffort: (...a: unknown[]) => updateGroupRelEffortMock(...a),
+    updateGroupRelWeight: (...a: unknown[]) => updateGroupRelWeightMock(...a),
     clearRelCircuitBreaker: vi.fn().mockResolvedValue({ data: { success: true } }),
   },
 }))
@@ -48,6 +61,7 @@ vi.mock('vue-router', () => ({
 }))
 
 import Rels from './Rels.vue'
+import SearchableSelect from '@/components/common/SearchableSelect.vue'
 
 function makeRel(over: Partial<ModelChannelRel> & { id: number }): ModelChannelRel {
   return {
@@ -66,6 +80,7 @@ function makeGroupRel(over: Partial<ModelGroupRel> & { id: number; groupId: numb
   return {
     modelId: 1,
     sortOrder: 0,
+    weight: 1,
     groupName: 'DF',
     groupStrategy: 'random',
     groupSticky: 1,
@@ -107,6 +122,7 @@ function relsPayload(rels: ModelChannelRel[], groupRels: ModelGroupRel[], relMod
   }
 }
 
+
 function groupRow(wrapper: ReturnType<typeof mount>) {
   const row = wrapper.find('tr.row-group')
   expect(row.exists()).toBe(true)
@@ -119,8 +135,16 @@ describe('入口模型关联页 - 小组行渲染', () => {
     getRelsMock.mockReset()
     updateGroupRelEffortMock.mockReset()
     updateGroupRelEffortMock.mockResolvedValue({ data: { success: true } })
+    updateGroupRelWeightMock.mockReset()
+    updateGroupRelWeightMock.mockResolvedValue({ data: { success: true } })
     updateRelWeightMock.mockReset()
     updateRelWeightMock.mockResolvedValue({ data: { success: true } })
+    getInheritableModelsMock.mockReset()
+    getInheritableModelsMock.mockResolvedValue({ data: [] })
+    aggregateRelsMock.mockReset()
+    aggregateRelsMock.mockResolvedValue({ data: { success: true, count: 0 } })
+    batchAddRelsMock.mockReset()
+    batchAddRelsMock.mockResolvedValue({ data: { success: true, count: 0 } })
   })
 
   it('渠道模型行权重列可编辑：修改后调用接口并夹取 1-1000', async () => {
@@ -148,8 +172,8 @@ describe('入口模型关联页 - 小组行渲染', () => {
     expect(row.findAll('td').length).toBe(12)
 
     const tds = row.findAll('td')
-    // 权重列：小组行由成员各自维护权重 → --
-    expect(tds[1].text()).toBe('--')
+    // 权重列：小组关联自身的粘性权重，可编辑（默认 1）
+    expect((tds[1].find('.weight-input').element as HTMLInputElement).value).toBe('1')
     // 类型列：小组徽章
     expect(tds[2].text()).toContain('小组')
     // 名称列：组名
@@ -281,6 +305,21 @@ describe('入口模型关联页 - 小组行渲染', () => {
     expect(tds[11].text()).toBe('--')
   })
 
+  it('小组行权重列可编辑：夹取 1-1000 后调用接口并回写', async () => {
+    const groupRel = makeGroupRel({ id: 22, groupId: 32, weight: 4 })
+    const wrapper = await mountRels([], [groupRel])
+    const input = groupRow(wrapper).findAll('td')[1].find('.weight-input')
+    expect(input.exists()).toBe(true)
+    expect((input.element as HTMLInputElement).value).toBe('4')
+
+    await input.setValue('0')
+    await input.trigger('change')
+    await flushPromises()
+    expect(updateGroupRelWeightMock).toHaveBeenCalledWith(22, 1)
+    expect(groupRel.weight).toBe(1)
+    expect((input.element as HTMLInputElement).value).toBe('1')
+  })
+
   it('小组行思考强度可编辑：已有值回填，修改后调用接口并回写', async () => {
     const groupRel = makeGroupRel({ id: 20, groupId: 30, reasoningEffort: 'high' })
     const wrapper = await mountRels([], [groupRel])
@@ -321,3 +360,115 @@ describe('入口模型关联页 - 小组行渲染', () => {
     expect(rows[1].findAll('td')[10].text()).toBe('--')
   })
 })
+
+describe('入口模型关联页 - 添加栏（类型下拉 + 过滤选择）', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    getRelsMock.mockReset()
+    getInheritableModelsMock.mockReset()
+    getInheritableModelsMock.mockResolvedValue({ data: [] })
+    aggregateRelsMock.mockReset()
+    aggregateRelsMock.mockResolvedValue({ data: { success: true, count: 0 } })
+    batchAddRelsMock.mockReset()
+    batchAddRelsMock.mockResolvedValue({ data: { success: true, count: 0 } })
+    addRuleRelMock.mockReset()
+    addRuleRelMock.mockResolvedValue({ data: { success: true, id: 9, count: 1 } })
+    updateRuleRelMock.mockReset()
+    updateRuleRelMock.mockResolvedValue({ data: { success: true } })
+    removeRuleRelMock.mockReset()
+    removeRuleRelMock.mockResolvedValue({ data: { success: true } })
+  })
+
+  async function pickCandidate(wrapper: ReturnType<typeof mount>, filter: string, label: string) {
+    const sel = wrapper.findComponent(SearchableSelect)
+    const input = sel.find('input.form-control')
+    await input.setValue(filter)
+    await input.trigger('focus')
+    const opt = sel.findAll('li').find(li => li.text().includes(label))
+    expect(opt, `候选「${label}」应出现在过滤结果中`).toBeTruthy()
+    await opt!.trigger('mousedown')
+  }
+
+  it('默认类型为渠道模型：候选来自 availableModels，添加走 batchAddRels', async () => {
+    getRelsMock.mockResolvedValue({
+      data: {
+        ...relsPayload([], [], 'self_add').data,
+        availableModels: [{ id: 101, modelName: 'glm-4.6', channelName: 'chA' }],
+      },
+    })
+    getRelsPreset = true
+    const wrapper = await mountRels([], [])
+
+    const typeSelect = wrapper.find('select.rel-type-select')
+    expect(typeSelect.exists()).toBe(true)
+    expect((typeSelect.element as HTMLSelectElement).value).toBe('cm')
+
+    await pickCandidate(wrapper, 'glm', 'glm-4.6')
+    const addBtn = wrapper.findAll('button').find(b => b.text().includes('添加关联'))!
+    await addBtn.trigger('click')
+    await flushPromises()
+    expect(batchAddRelsMock).toHaveBeenCalledWith(1, [101])
+    expect(aggregateRelsMock).not.toHaveBeenCalled()
+  })
+
+  it('普通/正则/混合过滤：正则段按表达式求值，混合需同时命中', async () => {
+    getRelsMock.mockResolvedValue({
+      data: {
+        ...relsPayload([], [], 'self_add').data,
+        availableModels: [
+          { id: 1, modelName: 'glm-4.6', channelName: 'chA' },
+          { id: 2, modelName: 'gpt-4o', channelName: 'openai' },
+          { id: 3, modelName: 'deepseek-v3', channelName: 'AI 站' },
+        ],
+      },
+    })
+    getRelsPreset = true
+    const wrapper = await mountRels([], [])
+    const sel = wrapper.findComponent(SearchableSelect)
+    const input = sel.find('input.form-control')
+    await input.trigger('focus')
+
+    // 正则：/AI|人工智能/ 只命中渠道名含 AI 的行
+    await input.setValue('/AI|人工智能/')
+    await flushPromises()
+    let labels = sel.findAll('li').map(li => li.text())
+    expect(labels.join('|')).not.toContain('glm-4.6')
+    expect(labels.join('|')).toContain('deepseek-v3')
+
+    // 混合：正则 + 普通词同时命中
+    await input.setValue('/AI|人工智能/ deepseek')
+    await flushPromises()
+    labels = sel.findAll('li').map(li => li.text())
+    expect(labels.length).toBe(1)
+    expect(labels[0]).toContain('deepseek-v3')
+
+    // 非法正则：无候选且显示错误提示
+    await input.setValue('/[a-/')
+    await flushPromises()
+    expect(sel.findAll('li').length).toBe(0)
+    expect(sel.text()).toContain('正则表达式无效')
+  })
+
+  it('切到入口模型类型：按需加载候选，添加走 aggregateRels 快照聚合', async () => {
+    getInheritableModelsMock.mockResolvedValue({ data: [{ id: 7, modelName: 'glm-all' }] })
+    aggregateRelsMock.mockResolvedValue({ data: { success: true, count: 3 } })
+    const wrapper = await mountRels([makeRel({ id: 40, sortOrder: 0 })], [])
+
+    await wrapper.find('select.rel-type-select').setValue('m')
+    await flushPromises()
+    // 切换类型后按需加载入口模型候选，且清空了上一类型的勾选
+    expect(getInheritableModelsMock).toHaveBeenCalledWith(1)
+
+    await pickCandidate(wrapper, 'glm', 'glm-all')
+    const addBtn = wrapper.findAll('button').find(b => b.text().includes('添加关联'))!
+    await addBtn.trigger('click')
+    await flushPromises()
+    expect(aggregateRelsMock).toHaveBeenCalledWith(1, [7])
+    expect(batchAddRelsMock).not.toHaveBeenCalled()
+    // 添加成功后重载关联列表
+    expect(getRelsMock.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+
+})
+

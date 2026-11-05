@@ -13,6 +13,7 @@ A personal unified AI gateway that provides multi-channel aggregation, model rou
 - **Circuit Breaking** — Two-level circuit breaking at channel level (per API Key) and model level, automatically isolating faulty channels, with configurable retry counts and breaker durations, plus breaker status visualization and manual recovery
 - **Multimodal Rules** — Match model names via regular expressions, automatically mark supported input types (text / image / audio / video), supporting routing decisions for video and audio content
 - **Model Inheritance** — Entry models can inherit channel associations from another entry model, reducing duplicate configuration
+- **Rule-matched Relations** — Entry models can define dynamic model sets with a name plus a match expression (plain words / regex / mixed); the matched channel models are resolved per request, so new or renamed models join the set automatically
 - **Prompt Injection** — Define per-model prompt injection rules (role, position, content, priority), automatically injected during request preprocessing
 - **API Key Management** — Gateway-level key control with enable/disable, share link generation and revocation
 - **Request Logs** — End-to-end request tracing with retry chain indentation, SSE real-time push, on-demand raw request payload loading and JSON file download

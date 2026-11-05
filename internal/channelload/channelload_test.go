@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
+	"github.com/my-search/my-ai-gateway/internal/groups"
 	"github.com/my-search/my-ai-gateway/internal/store"
 )
 
@@ -584,5 +586,110 @@ func TestReplaceAPIModelsSkipsManualModelsForGroups(t *testing.T) {
 	}
 	if member.Int("weight", 0) != 6 {
 		t.Errorf("manual member weight = %d, want 6", member.Int("weight", 0))
+	}
+}
+
+// TestDynamicGroupMembersFollowChannelModelRefresh exercises the full chain the
+// user asked for: a dynamic group's members are materialised rows that follow
+// channel model refreshes — newly matched models go to the BOTTOM, models that
+// disappear are removed, and a model that returns is treated as new (bottom again).
+// This is an integration guard across ReplaceAPIModels (which re-points surviving
+// member rows by model name, keeping sort_order) and groups.SyncAll.
+func TestDynamicGroupMembersFollowChannelModelRefresh(t *testing.T) {
+	st := newRuleTestStore(t)
+	ctx := context.Background()
+	for _, stmt := range []string{
+		`CREATE TABLE model_groups (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
+			type TEXT DEFAULT 'manual', pattern TEXT DEFAULT '',
+			strategy TEXT DEFAULT 'sticky', sticky INTEGER DEFAULT 1,
+			enabled INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT)`,
+		`CREATE TABLE model_group_members (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL,
+			channel_model_id INTEGER NOT NULL, weight INTEGER DEFAULT 1,
+			reasoning_effort TEXT, sort_order INTEGER DEFAULT 0,
+			enabled INTEGER DEFAULT 1, created_at TEXT)`,
+		`CREATE TABLE channels (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, channel_type TEXT,
+			base_url TEXT, enabled INTEGER DEFAULT 1, custom_headers TEXT)`,
+	} {
+		if _, err := st.Exec(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st.Exec(ctx, "INSERT INTO channels (id, name, channel_type, enabled) VALUES (1, 'provider', 'openai', 1)")
+	groupID, err := st.Insert(ctx,
+		"INSERT INTO model_groups (name, type, pattern, strategy) VALUES ('ds', 'rule', 'deepseek', 'failover')")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// helper: run the same two steps the refresh path runs (LoadModels →
+	// ReplaceAPIModels → groups.SyncAll) and return member model names in order.
+	refresh := func(names ...string) []string {
+		t.Helper()
+		var pairs []ModelPair
+		for _, n := range names {
+			pairs = append(pairs, ModelPair{Name: n})
+		}
+		ReplaceAPIModels(ctx, st, 1, pairs)
+		if _, err := groups.SyncAll(ctx, st); err != nil {
+			t.Fatal(err)
+		}
+		rows, _ := st.Query(ctx,
+			`SELECT cm.model_name FROM model_group_members m
+			   JOIN channel_models cm ON cm.id = m.channel_model_id
+			  WHERE m.group_id = ? ORDER BY m.sort_order ASC, m.id ASC`, groupID)
+		out := make([]string, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, r.Str("model_name"))
+		}
+		return out
+	}
+	join := func(got []string, want string) {
+		t.Helper()
+		if strings.Join(got, ",") != want {
+			t.Fatalf("members = [%s], want [%s]", strings.Join(got, ","), want)
+		}
+	}
+
+	// 初次刷新：deepseek-a 命中入组；gpt（不命中）不入组。
+	join(refresh("deepseek-a", "gpt-4o"), "deepseek-a")
+
+	// 新模型加入 → 排在已有成员下面；已有成员仍保持原位置（渠道模型行 ID 被重建也不影响）。
+	join(refresh("deepseek-a", "gpt-4o", "deepseek-b"), "deepseek-a,deepseek-b")
+
+	// 上游移除 deepseek-a → 成员行删除；deepseek-b 留在原位。
+	join(refresh("gpt-4o", "deepseek-b"), "deepseek-b")
+
+	// deepseek-a 回来 → 像新加的一样排在最下面。
+	join(refresh("deepseek-a", "gpt-4o", "deepseek-b"), "deepseek-b,deepseek-a")
+}
+
+func TestBuildModelsURL(t *testing.T) {
+	cases := []struct {
+		name      string
+		baseURL   string
+		modelsURL string
+		chType    string
+		want      string
+	}{
+		{"default", "https://api.example.com/v1/", "", "openai", "https://api.example.com/v1/models"},
+		{"empty base openai", "", "", "openai", "https://api.openai.com/v1/models"},
+		{"empty base anthropic", "", "", "anthropic", "https://api.anthropic.com/v1/models"},
+		{"absolute http", "https://api.example.com/v1", "http://other.host/custom/models", "openai", "http://other.host/custom/models"},
+		{"absolute https", "https://api.example.com/v1", "https://other.host/custom/models", "openai", "https://other.host/custom/models"},
+		{"absolute uppercase scheme", "https://api.example.com/v1", "HTTPS://other.host/v2/models", "openai", "HTTPS://other.host/v2/models"},
+		{"relative with slash", "https://api.example.com/v1/", "/v1/model-list", "openai", "https://api.example.com/v1/v1/model-list"},
+		{"relative without slash", "https://api.example.com/v1/", "model-list", "openai", "https://api.example.com/v1/model-list"},
+		{"relative empty base", "", "custom/models", "openai", "https://api.openai.com/v1/custom/models"},
+		{"whitespace trimmed", "  ", "", "openai", "https://api.openai.com/v1/models"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := BuildModelsURL(c.baseURL, c.modelsURL, c.chType); got != c.want {
+				t.Fatalf("BuildModelsURL() = %q, want %q", got, c.want)
+			}
+		})
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/my-search/my-ai-gateway/internal/auth"
 	"github.com/my-search/my-ai-gateway/internal/config"
 	"github.com/my-search/my-ai-gateway/internal/db"
+	"github.com/my-search/my-ai-gateway/internal/groups"
 	"github.com/my-search/my-ai-gateway/internal/httpx"
 	"github.com/my-search/my-ai-gateway/internal/metrics"
 	"github.com/my-search/my-ai-gateway/internal/relay"
@@ -60,6 +61,14 @@ func main() {
 	}
 
 	st := store.New(conn, readConn)
+
+	// 动态小组成员物化：启动时兜底同步一次（渠道模型变更路径上也会增量触发）。
+	if n, err := groups.SyncAll(context.Background(), st); err != nil {
+		slog.Warn("动态小组成员启动同步失败", "error", err)
+	} else if n > 0 {
+		slog.Info("动态小组成员启动同步完成", "changedMembers", n)
+	}
+
 	cfgSvc := service.NewConfigService(st)
 
 	metricsRegistry := metrics.NewRegistry()

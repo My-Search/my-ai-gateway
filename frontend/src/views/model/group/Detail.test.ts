@@ -16,6 +16,7 @@ import type { ModelGroupMember } from '@/api/group'
 const getMock = vi.fn()
 const removeMemberMock = vi.fn()
 const clearBreakerMock = vi.fn()
+const pushMock = vi.fn()
 
 vi.mock('@/api/group', () => ({
   groupApi: {
@@ -30,7 +31,7 @@ vi.mock('@/api/group', () => ({
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ params: { id: '1' } }),
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => ({ push: pushMock }),
 }))
 
 import Detail from './Detail.vue'
@@ -52,10 +53,10 @@ function makeMember(over: Partial<ModelGroupMember> & { id: number }): ModelGrou
 /** 已挂载的组件：用例结束后统一卸载，避免 Teleport 到 body 的对话框串到下一个用例。 */
 const mounted: Array<{ unmount: () => void }> = []
 
-async function mountDetail(members: ModelGroupMember[]) {
+async function mountDetail(members: ModelGroupMember[], group: Record<string, unknown> = {}) {
   getMock.mockResolvedValue({
     data: {
-      group: { id: 1, name: 'DF', strategy: 'random', sticky: 1 },
+      group: { id: 1, name: 'DF', strategy: 'random', sticky: 1, ...group },
       members,
       availableModels: [],
       usedByModels: [],
@@ -101,6 +102,7 @@ describe('模型小组成员页', () => {
     getMock.mockReset()
     removeMemberMock.mockReset()
     clearBreakerMock.mockReset()
+    pushMock.mockReset()
   })
 
   // Dialog 通过 Teleport 挂到 body，用例之间必须卸载组件，
@@ -174,5 +176,44 @@ describe('模型小组成员页', () => {
     await flushPromises()
     // channelModelId = id + 100
     expect(clearBreakerMock).toHaveBeenCalledWith(107)
+  })
+
+  // ── 动态小组（type='rule'）──
+  // 成员集合由规则维护（不可增删），但顺序 / 权重 / 思考强度与普通小组一样可调；
+  // 匹配规则可点击跳到编辑表单并定位到规则配置。
+
+  it('动态小组：成员行显示权重/思考强度输入框与拖拽手柄，无添加栏和删除按钮', async () => {
+    const wrapper = await mountDetail(
+      [makeMember({ id: 10 })],
+      { type: 'rule', pattern: 'deepseek 4.1 flash' },
+    )
+    // 权重 / 思考强度输入框可用
+    expect(wrapper.find('.weight-input').exists()).toBe(true)
+    expect(wrapper.find('.effort-select').exists()).toBe(true)
+    // 拖拽手柄存在
+    expect(wrapper.find('.drag-handle').exists()).toBe(true)
+    // 成员集合由规则维护：添加栏与删除按钮不渲染
+    expect(wrapper.find('.filter-bar .searchable-select').exists()).toBe(false)
+    const row = wrapper.findAll('tbody tr')[0]
+    expect(row.find('.btn-danger').exists()).toBe(false)
+    // 提示条显示规则文本
+    expect(wrapper.find('.dynamic-pattern').text()).toBe('deepseek 4.1 flash')
+  })
+
+  it('动态小组：点击匹配规则跳到编辑表单并携带 focus=rule', async () => {
+    const wrapper = await mountDetail(
+      [makeMember({ id: 11 })],
+      { type: 'rule', pattern: '/deepseek|glm/ flash' },
+    )
+    await wrapper.find('.dynamic-pattern').trigger('click')
+    expect(pushMock).toHaveBeenCalledWith({
+      path: '/admin/model/group/form/1',
+      query: { focus: 'rule' },
+    })
+  })
+
+  it('手动小组：匹配规则提示条不渲染', async () => {
+    const wrapper = await mountDetail([makeMember({ id: 12 })])
+    expect(wrapper.find('.dynamic-pattern').exists()).toBe(false)
   })
 })

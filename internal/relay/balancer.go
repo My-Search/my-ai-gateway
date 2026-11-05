@@ -48,15 +48,15 @@ func orderEntries(strategy string, entries []routingEntry, modelID int64, sticky
 
 // entryRing builds the (cached) consistent-hash ring over routing entries.
 // 直连关联用渠道模型 ID 作为环身份、关联权重作为份额；小组整体作为一个
-// 单位参与哈希（权重固定为 1，组内权重由小组策略自己处理）。小组身份取
-// groupID 的负数，避免与渠道模型 ID 在同一环上碰撞。
+// 单位参与哈希，份额取「入口模型 -> 小组」关联自身的粘性权重（组内成员权重
+// 由小组策略独立处理）。小组身份取 groupID 的负数，避免与渠道模型 ID 碰撞。
 func entryRing(modelID int64, entries []routingEntry) *hashRing {
 	reps := make([]RoutingCandidate, len(entries))
 	weights := make([]int, len(entries))
 	for i, e := range entries {
 		if e.isGroup {
 			reps[i] = RoutingCandidate{GroupMemberID: -e.groupID}
-			weights[i] = 1
+			weights[i] = normalizeWeight(e.groupWeight)
 			continue
 		}
 		reps[i] = e.candidates[0]
@@ -65,8 +65,8 @@ func entryRing(modelID int64, entries []routingEntry) *hashRing {
 	return groupRing(modelID, "entry", reps, weights)
 }
 
-// sortEntriesByOrder 是 failover 顺序的基准比较：先 sort_order，同序号时直连
-// 关联排在小组之前（保持“先直连、后分组”的稳定直觉顺序）。
+// sortEntriesByOrder 是 failover 顺序的基准比较：先 sort_order，同序号时按
+// 「直连关联 → 小组 → 规则匹配」的稳定顺序排列（“先直连、后分组、再动态集合”）。
 func sortEntriesByOrder(entries []routingEntry) {
 	sort.SliceStable(entries, func(i, j int) bool {
 		if entries[i].sortOrder != entries[j].sortOrder {

@@ -26,6 +26,42 @@
       </ConfigField>
     </ConfigSection>
 
+    <!-- ══ 小组类型 ══ -->
+    <ConfigSection id="grp-type" :title="t('group.form.type')" :desc="t('group.form.typeHint')" icon="grid">
+      <ConfigField :label="t('group.form.type')" :stack="true" hide-label>
+        <div class="strategy-grid">
+          <button
+            v-for="opt in typeOptions"
+            :key="opt.value"
+            type="button"
+            class="strategy-card"
+            :class="{ active: form.type === opt.value }"
+            @click="form.type = opt.value"
+          >
+            <span class="strategy-top">
+              <SvgIcon :name="opt.icon" :size="15" />
+              <strong>{{ opt.label }}</strong>
+              <span v-if="form.type === opt.value" class="strategy-check">
+                <SvgIcon name="check-bold" :size="10" />
+              </span>
+            </span>
+            <span class="strategy-desc">{{ opt.desc }}</span>
+          </button>
+        </div>
+        <!-- 编辑态切换类型时提示互转后果（新建态 typeHint 已说明，无需重复） -->
+        <p v-if="typeChangeTip" class="type-change-tip">{{ typeChangeTip }}</p>
+      </ConfigField>
+      <!-- 动态小组：匹配规则（含写法提示） -->
+      <ConfigField v-if="form.type === 'rule'" :label="t('model.rels.rulePattern')" :stack="true">
+        <div class="pattern-row" :class="{ 'pattern-flash': flashPattern }">
+          <input ref="patternInputRef" v-model.trim="form.pattern" type="text" class="form-control" required
+                 :placeholder="t('model.rels.rulePatternPlaceholder')" :title="t('model.rels.ruleHint')" />
+          <RuleSyntaxHint />
+        </div>
+        <p class="pattern-hint">{{ t('group.form.patternHint') }}</p>
+      </ConfigField>
+    </ConfigSection>
+
     <!-- ══ 路由方式 ══ -->
     <ConfigSection id="grp-strategy" :title="t('group.form.strategy')" :desc="t('group.form.strategyHint')" icon="rank">
       <ConfigField :label="t('group.form.strategy')" :hint="t('group.form.strategyHint')" :stack="true" hide-label>
@@ -57,7 +93,7 @@
       </span>
       <div class="footer-actions">
         <router-link to="/admin/model/group/list" class="btn btn-secondary">{{ t('common.cancel') }}</router-link>
-        <button type="button" class="btn btn-primary" :disabled="saving || !form.name" @click="save">
+        <button type="button" class="btn btn-primary" :disabled="saving || !canSave" @click="save">
           <SvgIcon name="check" :size="14" /> {{ saving ? t('common.saving') : t('common.save') }}
         </button>
       </div>
@@ -66,7 +102,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useToast } from '@/composables/useToast'
@@ -75,6 +111,7 @@ import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import ConfigShell from '@/components/common/ConfigShell.vue'
 import ConfigSection from '@/components/common/ConfigSection.vue'
 import ConfigField from '@/components/common/ConfigField.vue'
+import RuleSyntaxHint from '@/components/common/RuleSyntaxHint.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -88,7 +125,13 @@ const loading = ref(isEdit.value)
 
 const sections = computed(() => [
   { id: 'grp-basic', label: t('cfg.basic'), icon: 'grid' },
+  { id: 'grp-type', label: t('group.form.type'), icon: 'grid' },
   { id: 'grp-strategy', label: t('group.form.strategy'), icon: 'rank' },
+])
+
+const typeOptions = computed(() => [
+  { value: 'manual' as const, label: t('group.type.manual'), desc: t('group.type.manualDesc'), icon: 'list' },
+  { value: 'rule' as const, label: t('group.type.rule'), desc: t('group.type.ruleDesc'), icon: 'link' },
 ])
 
 const strategyOptions = computed(() => [
@@ -98,8 +141,29 @@ const strategyOptions = computed(() => [
 
 const form = ref({
   name: '',
+  // 类型：manual 手动添加成员 / rule 动态匹配渠道模型（成员跟随渠道配置更新）
+  type: 'manual' as 'manual' | 'rule',
+  pattern: '',
   // 粘性默认：按成员权重一致性哈希把同一会话固定到同一成员，命中上游 prompt cache
   strategy: 'sticky' as GroupStrategy
+})
+
+/** 保存按钮可用性：动态小组还需要有效表达式 */
+const canSave = computed(() => !!form.value.name && (form.value.type !== 'rule' || !!form.value.pattern.trim()))
+
+// 加载时的原始类型（新建态为空）：编辑态切换类型时用于显示互转后果提示
+const originalType = ref<'' | 'manual' | 'rule'>('')
+
+// ?focus=rule 跳转定位：滚动到类型区并闪烁高亮匹配规则输入框
+const patternInputRef = ref<HTMLInputElement | null>(null)
+const flashPattern = ref(false)
+
+/** 编辑态类型互转提示：转动态 → 成员将按规则重建；转手动 → 成员保留、规则休眠。 */
+const typeChangeTip = computed(() => {
+  if (!isEdit.value || !originalType.value || form.value.type === originalType.value) return ''
+  return form.value.type === 'rule'
+    ? t('group.form.switchToRuleTip')
+    : t('group.form.switchToManualTip')
 })
 
 onMounted(async () => {
@@ -109,14 +173,28 @@ onMounted(async () => {
     const g = res.data.group
     form.value = {
       name: g.name,
+      type: g.type === 'rule' ? 'rule' : 'manual',
+      // 手动小组的 pattern 是休眠值：保留加载，切回动态小组时自动恢复
+      pattern: g.pattern || '',
       // 历史策略值（random / round_robin）已由数据库迁移统一为粘性。
       strategy: (g.strategy === 'failover' ? 'failover' : 'sticky') as GroupStrategy
     }
+    originalType.value = form.value.type
   } catch (e: any) {
     showToast(e.message || t('error.loadFailed'), { type: 'error' })
     router.push('/admin/model/group/list')
+    return
   } finally {
     loading.value = false
+  }
+  // 详情页点击匹配规则跳转过来（?focus=rule）：加载完成、类型区渲染后，
+  // 定位到类型区并聚焦规则输入框，闪烁提示目标位置。
+  if (route.query.focus === 'rule' && form.value.type === 'rule') {
+    await nextTick()
+    document.getElementById('grp-type')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+    flashPattern.value = true
+    patternInputRef.value?.focus()
+    window.setTimeout(() => { flashPattern.value = false }, 2400)
   }
 })
 
@@ -150,6 +228,45 @@ async function save() {
 </script>
 
 <style scoped>
+/* 动态小组的匹配规则输入行：输入框 + 写法提示图标 */
+.pattern-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pattern-row .form-control {
+  flex: 1;
+}
+
+.pattern-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* 编辑态类型互转的后果提示：与匹配规则的 pattern-hint 同级弱化样式 */
+.type-change-tip {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* ?focus=rule 跳转定位的闪烁高亮：两轮柔和的描边脉冲，2.4s 后由脚本移除 */
+.pattern-flash {
+  animation: pattern-flash 1.2s ease-in-out 2;
+}
+
+@keyframes pattern-flash {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 25%, transparent); }
+}
+
+.pattern-flash .form-control {
+  border-color: var(--accent-blue);
+}
+
 .cfg-page-header {
   align-items: flex-start;
 }

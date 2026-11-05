@@ -174,6 +174,15 @@
 
       <div class="cfg-block">
         <div class="cfg-block-head">
+          <span class="cfg-block-title">{{ t('channel.form.modelsUrl') }}</span>
+        </div>
+        <p class="block-hint">{{ t('channel.form.modelsUrlHint') }}</p>
+        <input v-model="form.modelsUrl" type="text" class="form-control mono-input"
+               :placeholder="t('channel.form.modelsUrlPlaceholder')" spellcheck="false" />
+      </div>
+
+      <div class="cfg-block">
+        <div class="cfg-block-head">
           <span class="cfg-block-title">{{ t('channel.form.customHeaders') }}</span>
         </div>
         <p class="block-hint">{{ t('channel.form.customHeadersHint') }}</p>
@@ -548,7 +557,8 @@ async function doFetchModels() {
       const res = await channelApi.fetchModels(
         form.value.baseUrl || '',
         apiKeys.value[0].apiKey,
-        form.value.channelType
+        form.value.channelType,
+        (form.value.modelsUrl || '').trim()
       )
       if (res.data.success) {
         const existing = new Set(models.value.map(m => m.modelName))
@@ -600,6 +610,7 @@ async function handleSave() {
     const payload: any = {
       ...form.value,
       baseUrl: (form.value.baseUrl || '').trim(),
+      modelsUrl: (form.value.modelsUrl || '').trim(),
       manualModels: JSON.stringify(activeModels.map(m => ({
         id: m.id,
         modelName: m.modelName,

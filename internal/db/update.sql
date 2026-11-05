@@ -715,6 +715,7 @@ CREATE TABLE IF NOT EXISTS model_group_rels (
     model_id INTEGER NOT NULL,
     group_id INTEGER NOT NULL,
     sort_order INTEGER DEFAULT 0,
+    weight INTEGER DEFAULT 1,
     enabled INTEGER DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE,
@@ -877,6 +878,7 @@ CREATE TABLE IF NOT EXISTS model_group_rels (
     group_id INTEGER NOT NULL,
     sort_order INTEGER DEFAULT 0,
     reasoning_effort TEXT,
+    weight INTEGER DEFAULT 1,
     enabled INTEGER DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE,
@@ -896,3 +898,73 @@ UPDATE model_groups SET strategy = 'sticky' WHERE strategy IN ('random', 'round_
 UPDATE model_groups SET strategy = 'failover' WHERE strategy NOT IN ('failover', 'sticky');
 
 
+-- ========================================
+-- VERSION:v1.52.0
+-- 入口模型关联新增「规则匹配」（动态模型集合）：
+--   · 一条 rule rel = 一个名称 + 一个匹配表达式（普通词 / /正则/ / 混合）；
+--   · 命中的渠道模型在路由时动态解析，渠道模型增减后自动跟随，无需重新维护；
+--   · 与直连关联、小组关联共用 sort_order 序号空间，按顺序参与候选队列。
+-- ========================================
+
+CREATE TABLE IF NOT EXISTS model_rule_rels (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    pattern TEXT NOT NULL DEFAULT '',
+    weight INTEGER DEFAULT 1,
+    strategy TEXT DEFAULT 'sticky',
+    enabled INTEGER DEFAULT 1,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (model_id) REFERENCES models(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_rule_rels_model_id ON model_rule_rels(model_id);
+-- ========================================
+-- VERSION:v1.53.0
+-- 「规则匹配」关联支持粘性权重（1-1000）：与直连关联、小组一样参与入口模型的
+-- 一致性哈希环——权重决定该动态集合分到的会话份额（failover 策略忽略该值）。
+-- 幂等：新库由 v1.52.0 建表时已带 weight，重复 ADD COLUMN 由迁移器容忍。
+-- ========================================
+
+ALTER TABLE model_rule_rels ADD COLUMN weight INTEGER DEFAULT 1;
+-- ========================================
+-- VERSION:v1.54.0
+-- 「规则匹配」关联支持独立路由策略：failover（顺序）/ sticky（粘性，集合内按
+-- 会话前缀哈希固定到同一渠道模型，命中失败后按命中集合的稳定顺序回退）。
+-- 空值与历史数据按粘性处理（与小组策略语义一致）。幂等：新库由 v1.52.0 建表
+-- 时已带 strategy，重复 ADD COLUMN 由迁移器容忍。
+-- ========================================
+
+ALTER TABLE model_rule_rels ADD COLUMN strategy TEXT DEFAULT 'sticky';
+-- ========================================
+-- VERSION:v1.55.0
+-- 「入口模型 -> 小组」关联支持粘性权重（1-1000）：小组整体作为候选队列里的
+-- 一个条目参与入口模型的一致性哈希环，权重决定分到的会话份额。组内成员的
+-- 权重继续独立作用于小组内部排序，两者互不影响。failover 策略忽略该值。
+-- 幂等：新库由 v1.43.0 / v1.51.0 建表时已带 weight，重复 ADD COLUMN 由
+-- 迁移器容忍。
+-- ========================================
+
+ALTER TABLE model_group_rels ADD COLUMN weight INTEGER DEFAULT 1;
+-- ========================================
+-- VERSION:v1.56.0
+-- 「规则匹配」并入小组体系：规则就是一种小组——动态小组（type='rule'，成员由
+-- 匹配表达式从启用的渠道模型中自动得出，跟随渠道模型的增删改/刷新而更新），
+-- 原有小组即手动小组（type='manual'，成员手动维护）。入口模型统一通过
+-- model_group_rels 关联小组，model_rule_rels 废弃。
+-- 动态小组成员的顺序语义：新命中的渠道模型追加到成员表末尾；因渠道刷新移除的
+-- 成员行删除，之后重新出现时按新加入处理（排在最后）。成员物化由应用层在
+-- 渠道模型变更/小组保存/启动时同步（internal/groups）。
+-- ========================================
+
+ALTER TABLE model_groups ADD COLUMN type TEXT DEFAULT 'manual';
+ALTER TABLE model_groups ADD COLUMN pattern TEXT DEFAULT '';
+-- ========================================
+-- VERSION:v1.57.0
+-- 渠道支持自定义获取模型列表的接口：channels 新增 models_url TEXT 字段。
+-- 填 http:// 或 https:// 开头的完整 URL 时直接使用（不再与 base_url 拼接）；
+-- 填相对路径（如 /v1/model-list）时与 base_url 拼接；为空保持默认的 base_url + /models。
+-- ========================================
+
+ALTER TABLE channels ADD COLUMN models_url TEXT;

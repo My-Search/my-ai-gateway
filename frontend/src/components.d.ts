@@ -22,6 +22,7 @@ declare module 'vue' {
     PhaseBadge: typeof import('./components/common/PhaseBadge.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
+    RuleSyntaxHint: typeof import('./components/common/RuleSyntaxHint.vue')['default']
     SearchableSelect: typeof import('./components/common/SearchableSelect.vue')['default']
     Sidebar: typeof import('./components/layout/Sidebar.vue')['default']
     SvgIcon: typeof import('./components/common/SvgIcon.vue')['default']
