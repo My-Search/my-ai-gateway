@@ -13,6 +13,8 @@ export interface ModelGroup {
   type?: 'manual' | 'rule'
   /** 动态小组的匹配规则（type='rule' 时有效） */
   pattern?: string
+  /** 动态小组规则匹配的渠道范围（仅在这些渠道内做规则匹配与成员同步）；空 = 全部渠道。手动小组为休眠值 */
+  channelIds?: number[]
   /** 组内路由方式：failover（顺序）/ sticky（粘性，按权重一致性哈希） */
   strategy?: GroupStrategy
   /** 历史字段：路由已由 strategy 决定，不再参与路由（保留仅为兼容旧数据） */

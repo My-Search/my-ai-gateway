@@ -602,6 +602,7 @@ func TestDynamicGroupMembersFollowChannelModelRefresh(t *testing.T) {
 		`CREATE TABLE model_groups (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
 			type TEXT DEFAULT 'manual', pattern TEXT DEFAULT '',
+			channel_ids TEXT DEFAULT '',
 			strategy TEXT DEFAULT 'sticky', sticky INTEGER DEFAULT 1,
 			enabled INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT)`,
 		`CREATE TABLE model_group_members (

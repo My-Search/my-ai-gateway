@@ -23,6 +23,7 @@ func newSyncStore(t *testing.T) *store.Store {
 		`CREATE TABLE model_groups (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
 			type TEXT DEFAULT 'manual', pattern TEXT DEFAULT '',
+			channel_ids TEXT DEFAULT '',
 			strategy TEXT DEFAULT 'sticky', sticky INTEGER DEFAULT 1,
 			enabled INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT)`,
 		`CREATE TABLE model_group_members (
@@ -155,5 +156,78 @@ func TestSyncOneGuards(t *testing.T) {
 	rows, _ := st.Query(ctx, "SELECT COUNT(*) cnt FROM model_group_members")
 	if rows[0].I64("cnt", 0) != 0 {
 		t.Fatalf("members were materialized for guarded groups")
+	}
+}
+
+// TestSyncAllChannelScope 覆盖渠道范围过滤：channel_ids 非空时只在指定渠道内
+// 匹配；范围外的命中模型不入组。缩小范围移出成员，恢复全部后按新成员追加到末尾。
+func TestSyncAllChannelScope(t *testing.T) {
+	st := newSyncStore(t)
+	ctx := context.Background()
+
+	chA, err := st.Insert(ctx, "INSERT INTO channels (name, channel_type, enabled) VALUES ('渠道A', 'openai', 1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chB, err := st.Insert(ctx, "INSERT INTO channels (name, channel_type, enabled) VALUES ('渠道B', 'openai', 1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmA, err := st.Insert(ctx, "INSERT INTO channel_models (channel_id, model_name, enabled) VALUES (?, 'deepseek-v4', 1)", chA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmB, err := st.Insert(ctx, "INSERT INTO channel_models (channel_id, model_name, enabled) VALUES (?, 'deepseek-v4', 1)", chB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	groupID, err := st.Insert(ctx,
+		"INSERT INTO model_groups (name, type, pattern, strategy, channel_ids) VALUES ('ds-a', 'rule', 'deepseek', 'failover', ?)",
+		store.FormatIDList([]int64{chA}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 渠道范围 = 渠道A：只有渠道A的命中模型入组。
+	if _, err := SyncAll(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	if got := memberOrder(t, st, groupID); len(got) != 1 || got[0] != cmA {
+		t.Fatalf("members with scope A = %v, want [cmA]", got)
+	}
+
+	// 渠道范围 = 渠道B：渠道A成员移出，渠道B成员加入。
+	if _, err := st.Exec(ctx, "UPDATE model_groups SET channel_ids = ? WHERE id = ?",
+		store.FormatIDList([]int64{chB}), groupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SyncAll(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	if got := memberOrder(t, st, groupID); len(got) != 1 || got[0] != cmB {
+		t.Fatalf("members with scope B = %v, want [cmB]", got)
+	}
+
+	// 渠道范围清空（恢复全部渠道）：渠道A按新成员追加到末尾。
+	if _, err := st.Exec(ctx, "UPDATE model_groups SET channel_ids = '' WHERE id = ?", groupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SyncAll(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	if got := memberOrder(t, st, groupID); len(got) != 2 || got[0] != cmB || got[1] != cmA {
+		t.Fatalf("members after restore-all = %v, want [cmB cmA]（重新命中按新加入排最后）", got)
+	}
+
+	// 渠道范围指向已删除的渠道：范围内无候选，成员清空。
+	if _, err := st.Exec(ctx, "UPDATE model_groups SET channel_ids = '99999' WHERE id = ?", groupID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SyncAll(ctx, st); err != nil {
+		t.Fatal(err)
+	}
+	if got := memberOrder(t, st, groupID); len(got) != 0 {
+		t.Fatalf("members with unknown channel scope = %v, want empty", got)
 	}
 }

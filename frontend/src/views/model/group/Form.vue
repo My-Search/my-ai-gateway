@@ -60,6 +60,22 @@
         </div>
         <p class="pattern-hint">{{ t('group.form.patternHint') }}</p>
       </ConfigField>
+      <!-- 动态小组：渠道范围（默认全部渠道；指定后只在所选渠道内做规则匹配与成员同步） -->
+      <ConfigField v-if="form.type === 'rule'" :label="t('group.form.channelScope')" :hint="t('group.form.channelScopeHint')" :stack="true">
+        <div class="scope-row">
+          <TabSwitch v-model="channelScope" :tabs="channelScopeTabs" />
+          <SearchableSelect
+            v-if="channelScope === 'custom'"
+            v-model="form.channelIds"
+            :options="channelOptions"
+            :multiple="true"
+            :placeholder="t('group.form.channelScopePlaceholder')"
+            :width="300"
+            :dropdown-width="360"
+          />
+        </div>
+        <p v-if="channelScopeEmpty" class="scope-warn">{{ t('group.form.channelScopeEmpty') }}</p>
+      </ConfigField>
     </ConfigSection>
 
     <!-- ══ 路由方式 ══ -->
@@ -102,16 +118,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useToast } from '@/composables/useToast'
 import { groupApi, type GroupStrategy } from '@/api/group'
+import { channelApi, type Channel } from '@/api/channel'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import ConfigShell from '@/components/common/ConfigShell.vue'
 import ConfigSection from '@/components/common/ConfigSection.vue'
 import ConfigField from '@/components/common/ConfigField.vue'
 import RuleSyntaxHint from '@/components/common/RuleSyntaxHint.vue'
+import TabSwitch from '@/components/common/TabSwitch.vue'
+import SearchableSelect from '@/components/common/SearchableSelect.vue'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -144,12 +163,48 @@ const form = ref({
   // 类型：manual 手动添加成员 / rule 动态匹配渠道模型（成员跟随渠道配置更新）
   type: 'manual' as 'manual' | 'rule',
   pattern: '',
+  // 渠道范围：动态小组规则匹配的渠道 ID 集合；channelScope='all' 时提交空数组（全部渠道）
+  channelIds: [] as number[],
   // 粘性默认：按成员权重一致性哈希把同一会话固定到同一成员，命中上游 prompt cache
   strategy: 'sticky' as GroupStrategy
 })
 
-/** 保存按钮可用性：动态小组还需要有效表达式 */
-const canSave = computed(() => !!form.value.name && (form.value.type !== 'rule' || !!form.value.pattern.trim()))
+// 渠道范围模式：all 全部渠道 / custom 指定渠道。channelIds 始终保存在表单里，
+// 切回手动小组或改回「全部」时与 pattern 一样按休眠值语义保留。
+const channelScope = ref<'all' | 'custom'>('all')
+
+const channelScopeTabs = computed(() => [
+  { value: 'all' as const, label: t('group.form.channelScopeAll') },
+  { value: 'custom' as const, label: t('group.form.channelScopeCustom') },
+])
+
+// 渠道列表懒加载：选中动态小组时才请求（手动小组用不到）
+const channels = ref<Channel[]>([])
+const channelsLoaded = ref(false)
+async function ensureChannels() {
+  if (channelsLoaded.value) return
+  channelsLoaded.value = true
+  try {
+    const res = await channelApi.list()
+    channels.value = res.data || []
+  } catch {
+    // 加载失败不阻塞表单：选择器为空时可切回「全部渠道」保存
+  }
+}
+watch(() => form.value.type, (t) => { if (t === 'rule') void ensureChannels() }, { immediate: true })
+
+const channelOptions = computed(() =>
+  channels.value
+    .filter(c => c.id != null)
+    .map(c => ({ value: c.id as number, label: c.name })))
+
+/** 指定渠道但一个都没选：保存会导致小组没有任何成员，禁用保存并提示 */
+const channelScopeEmpty = computed(() =>
+  form.value.type === 'rule' && channelScope.value === 'custom' && form.value.channelIds.length === 0)
+
+/** 保存按钮可用性：动态小组还需要有效表达式与合法的渠道范围 */
+const canSave = computed(() =>
+  !!form.value.name && (form.value.type !== 'rule' || !!form.value.pattern.trim()) && !channelScopeEmpty.value)
 
 // 加载时的原始类型（新建态为空）：编辑态切换类型时用于显示互转后果提示
 const originalType = ref<'' | 'manual' | 'rule'>('')
@@ -176,9 +231,12 @@ onMounted(async () => {
       type: g.type === 'rule' ? 'rule' : 'manual',
       // 手动小组的 pattern 是休眠值：保留加载，切回动态小组时自动恢复
       pattern: g.pattern || '',
+      // 渠道范围同 pattern 一样是休眠值：手动小组也保留加载
+      channelIds: Array.isArray(g.channelIds) ? [...g.channelIds] : [],
       // 历史策略值（random / round_robin）已由数据库迁移统一为粘性。
       strategy: (g.strategy === 'failover' ? 'failover' : 'sticky') as GroupStrategy
     }
+    channelScope.value = form.value.channelIds.length > 0 ? 'custom' : 'all'
     originalType.value = form.value.type
   } catch (e: any) {
     showToast(e.message || t('error.loadFailed'), { type: 'error' })
@@ -202,8 +260,10 @@ async function save() {
   if (saving.value || !form.value.name) return
   saving.value = true
   try {
+    // 渠道范围：「全部渠道」提交空数组；「指定渠道」提交所选 ID（后端去重归一化）
+    const payload = { ...form.value, channelIds: channelScope.value === 'custom' ? [...form.value.channelIds] : [] }
     if (isEdit.value) {
-      const res = await groupApi.update(Number(route.params.id), form.value)
+      const res = await groupApi.update(Number(route.params.id), payload)
       if (res.data.success) {
         showToast(t('group.form.saved'), { type: 'success' })
         router.push('/admin/model/group/' + route.params.id)
@@ -212,7 +272,7 @@ async function save() {
       }
       return
     }
-    const res = await groupApi.create(form.value)
+    const res = await groupApi.create(payload)
     if (res.data.success) {
       showToast(t('group.form.saved'), { type: 'success' })
       router.push(res.data.id ? '/admin/model/group/' + res.data.id : '/admin/model/group/list')
@@ -243,6 +303,27 @@ async function save() {
   margin: 6px 0 0;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* 渠道范围行：模式切换 + 渠道多选（选中「指定渠道」时出现） */
+.scope-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.scope-row .searchable-select {
+  flex: 1;
+  min-width: 200px;
+  max-width: 360px;
+}
+
+/* 指定渠道但一个都没选的告警提示 */
+.scope-warn {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--accent-red);
 }
 
 /* 编辑态类型互转的后果提示：与匹配规则的 pattern-hint 同级弱化样式 */

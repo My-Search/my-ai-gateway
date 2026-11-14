@@ -42,6 +42,7 @@
             :title="t('group.detail.editPatternTip')"
             @click="goEditRule"
           >{{ group?.pattern }}</code>
+          <span class="dynamic-scope">{{ channelScopeText }}</span>
         </span>
         <button v-if="isDirty" class="btn btn-primary btn-sm" :disabled="isSaving" @click="saveOrder">
           <SvgIcon name="check" :size="14" /> {{ isSaving ? t('common.saving') : t('group.detail.saveOrder') }}
@@ -268,6 +269,13 @@ const { showToast } = useToast()
 const group = ref<ModelGroup | null>(null)
 // 动态小组（type='rule'）：成员由匹配规则自动维护，页面进入只读模式
 const isDynamic = computed(() => group.value?.type === 'rule')
+/** 渠道范围摘要：全部渠道 / 指定 N 个渠道（详情不拉渠道名单，只给数量） */
+const channelScopeText = computed(() => {
+  const ids = group.value?.channelIds ?? []
+  return ids.length > 0
+    ? t('group.detail.channelScopeCustom').replace('{count}', String(ids.length))
+    : t('group.detail.channelScopeAll')
+})
 const members = ref<ModelGroupMember[]>([])
 const availableModels = ref<any[]>([])
 const usedByModels = ref<CustomModel[]>([])
@@ -593,6 +601,18 @@ onBeforeUnmount(() => {
 .dynamic-pattern:hover {
   border-color: var(--accent-blue);
   background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-tertiary));
+}
+
+/* 渠道范围摘要：跟随提示文案的弱化样式，与规则之间用分隔点区分 */
+.dynamic-scope {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.dynamic-scope::before {
+  content: '·';
+  margin-right: 6px;
+  color: var(--text-muted);
 }
 
 .cfg-page-header {

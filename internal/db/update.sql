@@ -968,3 +968,12 @@ ALTER TABLE model_groups ADD COLUMN pattern TEXT DEFAULT '';
 -- ========================================
 
 ALTER TABLE channels ADD COLUMN models_url TEXT;
+-- ========================================
+-- VERSION:v1.58.0
+-- 动态小组支持限定规则匹配的渠道范围：model_groups 新增 channel_ids TEXT，
+-- 存逗号分隔的渠道 ID；空串（默认）= 全部渠道。成员同步时先按渠道范围过滤
+-- 候选（仅启用渠道参与），再对「模型名 (渠道名)」求值匹配表达式；范围内的
+-- 渠道被禁用/删除后自然不再命中。手动小组该列为休眠值，改回动态小组时恢复。
+-- ========================================
+
+ALTER TABLE model_groups ADD COLUMN channel_ids TEXT DEFAULT '';

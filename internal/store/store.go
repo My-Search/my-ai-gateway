@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -488,12 +489,49 @@ func RowToModelGroup(r Row) models.ModelGroup {
 		Description: r.StrPtr("description"),
 		Type:        r.StrPtr("type"),
 		Pattern:     r.StrPtr("pattern"),
+		ChannelIDs:  ParseIDList(r.Str("channel_ids")),
 		Strategy:    r.StrPtr("strategy"),
 		Sticky:      r.IntPtr("sticky"),
 		Enabled:     r.IntPtr("enabled"),
 		CreatedAt:   r.TimePtr("created_at"),
 		UpdatedAt:   r.TimePtr("updated_at"),
 	}
+}
+
+// ParseIDList 解析逗号分隔的整数 ID 列表（channel_ids 等范围列的存储格式）：
+// 空串返回 nil（表示「全部」），空白项与非法项忽略，重复 ID 去重（保持首次出现顺序）。
+func ParseIDList(s string) []int64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	seen := make(map[int64]bool, 8)
+	var out []int64
+	for _, part := range strings.Split(s, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil || id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
+}
+
+// FormatIDList 把 ID 列表序列化为逗号分隔文本；nil/空列表返回空串（表示「全部」）。
+func FormatIDList(ids []int64) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	return strings.Join(parts, ",")
 }
 
 func RowToModelGroupMember(r Row) models.ModelGroupMember {

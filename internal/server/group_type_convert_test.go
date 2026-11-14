@@ -30,6 +30,7 @@ func newGroupConvertStore(t *testing.T) *store.Store {
 		`CREATE TABLE model_groups (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL,
 			type TEXT DEFAULT 'manual', pattern TEXT DEFAULT '',
+			channel_ids TEXT DEFAULT '',
 			strategy TEXT DEFAULT 'sticky', sticky INTEGER DEFAULT 1,
 			enabled INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT)`,
 		`CREATE TABLE model_group_members (
@@ -289,5 +290,91 @@ func TestDynamicMemberAttributesAllowed(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || out["success"] != false {
 		t.Fatalf("dynamic member add must be denied, got %v", out)
+	}
+}
+
+// TestDynamicGroupChannelScope 覆盖动态小组的渠道范围（channelIds）：
+// 创建时限定范围只物化范围内渠道；GET 返回解析后的 ID 列表；PUT 修改范围后
+// 成员随之增减；范围清空恢复全部渠道；手动小组的范围作为休眠值存储。
+func TestDynamicGroupChannelScope(t *testing.T) {
+	st := newGroupConvertStore(t)
+	ctx := context.Background()
+
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	registerModelGroupRoutes(r.Group("/admin/api"), Deps{Store: st})
+
+	chA, _ := st.Insert(ctx, "INSERT INTO channels (name, channel_type, enabled) VALUES ('渠道A', 'openai', 1)")
+	chB, _ := st.Insert(ctx, "INSERT INTO channels (name, channel_type, enabled) VALUES ('渠道B', 'openai', 1)")
+	cmA, _ := st.Insert(ctx, "INSERT INTO channel_models (channel_id, model_name, enabled) VALUES (?, 'deepseek-v4', 1)", chA)
+	cmB, _ := st.Insert(ctx, "INSERT INTO channel_models (channel_id, model_name, enabled) VALUES (?, 'deepseek-v4', 1)", chB)
+
+	post := func(payload string) map[string]any {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/admin/api/model-groups", bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+		r.ServeHTTP(w, req)
+		var out map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode: %v; body = %s", err, w.Body.String())
+		}
+		return out
+	}
+
+	// 1) 创建动态小组并限定渠道范围 = 渠道A：只有渠道A的命中模型入组。
+	out := post(`{"name":"ds-a","type":"rule","pattern":"deepseek","channelIds":[` + strconv.FormatInt(chA, 10) + `]}`)
+	if out["success"] != true {
+		t.Fatalf("rule create with channelIds rejected: %v", out)
+	}
+	groupID := int64(out["id"].(float64))
+	if members := groupMemberIDs(t, st, groupID); len(members) != 1 || members[0] != cmA {
+		t.Fatalf("members after scoped create = %v, want [cmA]", members)
+	}
+	row, _ := st.QueryOne(ctx, "SELECT channel_ids FROM model_groups WHERE id = ?", groupID)
+	if row.Str("channel_ids") != strconv.FormatInt(chA, 10) {
+		t.Fatalf("channel_ids = %q, want %q", row.Str("channel_ids"), strconv.FormatInt(chA, 10))
+	}
+
+	// 2) GET 详情返回解析后的 channelIds（响应体即载荷，无外层信封）。
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/admin/api/model-groups/"+strconv.FormatInt(groupID, 10), nil)
+	r.ServeHTTP(w, req)
+	var detail struct {
+		Group struct {
+			ChannelIDs []int64 `json:"channelIds"`
+		} `json:"group"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode detail: %v; body = %s", err, w.Body.String())
+	}
+	if len(detail.Group.ChannelIDs) != 1 || detail.Group.ChannelIDs[0] != chA {
+		t.Fatalf("detail channelIds = %v, want [%d]", detail.Group.ChannelIDs, chA)
+	}
+
+	// 3) PUT 修改渠道范围 = 渠道B：成员随之增减（渠道A移出、渠道B加入）。
+	if out := putGroup(t, r, groupID,
+		`{"channelIds":[`+strconv.FormatInt(chB, 10)+`]}`); out["success"] != true {
+		t.Fatalf("PUT channelIds rejected: %v", out)
+	}
+	if members := groupMemberIDs(t, st, groupID); len(members) != 1 || members[0] != cmB {
+		t.Fatalf("members after rescope = %v, want [cmB]", members)
+	}
+
+	// 4) PUT 渠道范围 = 空：恢复全部渠道，渠道A按新成员追加到末尾。
+	if out := putGroup(t, r, groupID, `{"channelIds":[]}`); out["success"] != true {
+		t.Fatalf("PUT empty channelIds rejected: %v", out)
+	}
+	if members := groupMemberIDs(t, st, groupID); len(members) != 2 || members[0] != cmB || members[1] != cmA {
+		t.Fatalf("members after clear scope = %v, want [cmB cmA]", members)
+	}
+
+	// 5) 手动小组携带 channelIds：休眠存储（不参与成员同步），类型仍为 manual。
+	if out := post(`{"name":"m2","type":"manual","channelIds":[1,1,0,-2]}`); out["success"] != true {
+		t.Fatalf("manual create with channelIds rejected: %v", out)
+	}
+	row, _ = st.QueryOne(ctx, "SELECT type, channel_ids FROM model_groups WHERE name = 'm2'")
+	// 归一化：去重、丢弃非正数。
+	if row.Str("type") != "manual" || row.Str("channel_ids") != "1" {
+		t.Fatalf("dormant channel_ids = %q (type %q), want \"1\" (manual)", row.Str("channel_ids"), row.Str("type"))
 	}
 }

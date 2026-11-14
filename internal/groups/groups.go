@@ -1,10 +1,11 @@
 // Package groups 维护「动态小组」的成员物化。
 //
 // 动态小组（model_groups.type='rule'）的成员不是手动添加的，而是按匹配表达式
-// （pattern）从「启用的渠道模型 + 启用渠道」中自动得出。成员物化到
-// model_group_members，语义与用户约定一致：
+// （pattern）从「启用的渠道模型 + 启用渠道」中自动得出；channel_ids 非空时先
+// 把候选限定到指定渠道（默认全部渠道）。成员物化到 model_group_members，语义
+// 与用户约定一致：
 //   - 新命中的渠道模型 → 追加到成员表末尾（sort_order 递增），不打乱已有顺序；
-//   - 因渠道刷新/禁用/删除而移出的成员 → 成员行删除；
+//   - 因渠道刷新/禁用/删除/移出渠道范围而移出的成员 → 成员行删除；
 //   - 之后重新命中时按新加入处理（再次追加到末尾）。
 //
 // 路由层不感知动态与手动的区别：动态小组就是成员由本包维护的普通小组。
@@ -40,25 +41,25 @@ func SyncAll(ctx context.Context, st *store.Store) (int, error) {
 	return syncAllLocked(ctx, st)
 }
 
-// SyncOne 只同步一个动态小组（保存小组 / 修改表达式后调用），返回变更的成员行数。
+// SyncOne 只同步一个动态小组（保存小组 / 修改表达式或渠道范围后调用），返回变更的成员行数。
 // 小组不存在、非动态类型或表达式为空时返回 0（不报错）。
 func SyncOne(ctx context.Context, st *store.Store, groupID int64) (int, error) {
 	mu.Lock()
 	defer mu.Unlock()
 	row, _ := st.QueryOne(ctx,
-		"SELECT id, pattern FROM model_groups WHERE id = ? AND type = 'rule' AND enabled = 1", groupID)
+		"SELECT id, pattern, channel_ids FROM model_groups WHERE id = ? AND type = 'rule' AND enabled = 1", groupID)
 	if row == nil {
 		return 0, nil
 	}
-	return syncGroup(ctx, st, row.I64("id", 0), row.Str("pattern"))
+	return syncGroup(ctx, st, row.I64("id", 0), row.Str("pattern"), store.ParseIDList(row.Str("channel_ids")))
 }
 
 func syncAllLocked(ctx context.Context, st *store.Store) (int, error) {
 	groups, _ := st.Query(ctx,
-		"SELECT id, pattern FROM model_groups WHERE type = 'rule' AND enabled = 1 AND TRIM(pattern) != ''")
+		"SELECT id, pattern, channel_ids FROM model_groups WHERE type = 'rule' AND enabled = 1 AND TRIM(pattern) != ''")
 	changed := 0
 	for _, g := range groups {
-		n, err := syncGroup(ctx, st, g.I64("id", 0), g.Str("pattern"))
+		n, err := syncGroup(ctx, st, g.I64("id", 0), g.Str("pattern"), store.ParseIDList(g.Str("channel_ids")))
 		if err != nil {
 			return changed, err
 		}
@@ -71,8 +72,9 @@ func syncAllLocked(ctx context.Context, st *store.Store) (int, error) {
 }
 
 // syncGroup 对齐一个动态小组的成员表：删除不再命中的成员行，把新命中的渠道模型
-// 按 channel_models.id 稳定顺序追加到现有成员之后。
-func syncGroup(ctx context.Context, st *store.Store, groupID int64, pattern string) (int, error) {
+// 按 channel_models.id 稳定顺序追加到现有成员之后。channelIDs 非空时候选先按
+// 渠道范围过滤（范围内的渠道被禁用/删除后自然不再命中）。
+func syncGroup(ctx context.Context, st *store.Store, groupID int64, pattern string, channelIDs []int64) (int, error) {
 	if strings.TrimSpace(pattern) == "" {
 		return 0, nil
 	}
@@ -83,13 +85,23 @@ func syncGroup(ctx context.Context, st *store.Store, groupID int64, pattern stri
 		return 0, nil
 	}
 
-	// 候选：启用的渠道模型 + 启用渠道，匹配文本与前端/路由一致（模型名 (渠道名)）。
-	cands, _ := st.Query(ctx,
-		`SELECT cm.id, cm.model_name, c.name AS channel_name
-		   FROM channel_models cm
-		   JOIN channels c ON c.id = cm.channel_id
-		  WHERE cm.enabled = 1 AND c.enabled = 1
-		  ORDER BY cm.id ASC`)
+	// 候选：启用的渠道模型 + 启用渠道（指定渠道范围时再按渠道过滤），
+	// 匹配文本与前端/路由一致（模型名 (渠道名)）。
+	query := `SELECT cm.id, cm.model_name, c.name AS channel_name
+			   FROM channel_models cm
+			   JOIN channels c ON c.id = cm.channel_id
+			  WHERE cm.enabled = 1 AND c.enabled = 1`
+	args := make([]any, 0, len(channelIDs))
+	if len(channelIDs) > 0 {
+		placeholders := make([]string, 0, len(channelIDs))
+		for _, id := range channelIDs {
+			placeholders = append(placeholders, "?")
+			args = append(args, id)
+		}
+		query += " AND cm.channel_id IN (" + strings.Join(placeholders, ",") + ")"
+	}
+	query += " ORDER BY cm.id ASC"
+	cands, _ := st.Query(ctx, query, args...)
 	matched := make(map[int64]bool, len(cands))
 	var matchedIDs []int64
 	for _, r := range cands {

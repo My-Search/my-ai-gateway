@@ -58,9 +58,11 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 			Description *string `json:"description"`
 			Strategy    *string `json:"strategy"`
 			Sticky      *int    `json:"sticky"`
-			// Type/Pattern：动态小组（type='rule'）的成员由匹配表达式自动得出。
-			Type    *string `json:"type"`
-			Pattern *string `json:"pattern"`
+			// Type/Pattern/ChannelIDs：动态小组（type='rule'）的成员由匹配表达式在
+			// 指定渠道范围（channelIds，空 = 全部渠道）内自动得出。
+			Type       *string `json:"type"`
+			Pattern    *string `json:"pattern"`
+			ChannelIDs []int64 `json:"channelIds"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			httpx.OK(c, failureEnvelope("请求参数错误"))
@@ -101,9 +103,10 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 		}
 		now := jtime.FormatApp(time.Now().UTC())
 		id, err := d.Store.Insert(ctx,
-			`INSERT INTO model_groups (name, strategy, sticky, type, pattern, enabled, created_at, updated_at)
-			 VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
-			name, strategy, groupStickyDefault(body.Sticky), groupType, pattern, now, now)
+			`INSERT INTO model_groups (name, strategy, sticky, type, pattern, channel_ids, enabled, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+			name, strategy, groupStickyDefault(body.Sticky), groupType, pattern,
+			store.FormatIDList(normalizeChannelIDs(body.ChannelIDs)), now, now)
 		if err != nil {
 			httpx.OK(c, failureEnvelope(err.Error()))
 			return
@@ -236,6 +239,11 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 				}
 			}
 		}
+		// 渠道范围：动态小组规则匹配的渠道集合（空 = 全部渠道）。手动小组同样
+		// 接受（休眠值存储，改回动态小组时恢复生效）。
+		if v, exists := body["channelIds"]; exists {
+			sets["channel_ids"] = store.FormatIDList(normalizeChannelIDs(toInt64Slice(v)))
+		}
 		if newType == "rule" {
 			if pattern == "" {
 				httpx.OK(c, failureEnvelope("动态小组需要匹配规则"))
@@ -259,8 +267,10 @@ func registerModelGroupRoutes(g *gin.RouterGroup, d Deps) {
 			httpx.OK(c, failureEnvelope(err.Error()))
 			return
 		}
-		// 动态小组（含刚转为动态的）：表达式变化会触发成员重新同步（新命中追加到
-		// 末尾、不再命中的移除，重新出现时按新成员处理）。
+		// 动态小组（含刚转为动态的）：每次保存都会重新同步成员（匹配表达式与
+		// 渠道范围可能变化，渠道范围变化同样影响命中集合）——新命中的追加到
+		// 末尾、不再命中的移除，重新出现时按新成员处理。SyncOne 在更新落库后
+		// 执行，读到的是最新的表达式与渠道范围。
 		if newType == "rule" {
 			if _, ok := sets["pattern"]; ok {
 				if _, err := groups.SyncOne(ctx, d.Store, id); err != nil {
@@ -670,4 +680,34 @@ func anyStrPtr(v any) *string {
 		return &s
 	}
 	return nil
+}
+
+// toInt64Slice 把 JSON 数组（[]any，元素为 float64）转为 int64 切片，非法项忽略。
+func toInt64Slice(v any) []int64 {
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]int64, 0, len(list))
+	for _, item := range list {
+		if f, ok := item.(float64); ok {
+			out = append(out, int64(f))
+		}
+	}
+	return out
+}
+
+// normalizeChannelIDs 归一化渠道范围：丢弃非正数并按请求顺序去重；
+// 空结果 = 全部渠道。
+func normalizeChannelIDs(ids []int64) []int64 {
+	seen := make(map[int64]bool, len(ids))
+	out := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }

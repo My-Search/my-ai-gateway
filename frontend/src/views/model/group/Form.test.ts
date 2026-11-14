@@ -7,6 +7,7 @@ import { createPinia } from 'pinia'
  *
  * 编辑态允许手动 ↔ 动态互转：切回动态时要恢复休眠保留的匹配规则
  * （往返切换不丢），切换时显示互转后果提示，保存载荷携带转换后的类型与规则。
+ * 动态小组还支持渠道范围（channelIds）：默认全部渠道，指定后只在所选渠道内匹配。
  */
 
 const getMock = vi.fn()
@@ -17,6 +18,20 @@ vi.mock('@/api/group', () => ({
     get: (...a: unknown[]) => getMock(...a),
     update: (...a: unknown[]) => updateMock(...a),
     create: vi.fn().mockResolvedValue({ data: { success: true } }),
+  },
+}))
+
+// 渠道范围选择器会拉取渠道列表（选中动态小组时懒加载）
+const channelListMock = vi.fn().mockResolvedValue({
+  data: [
+    { id: 1, name: '渠道A', channelType: 'openai', baseUrl: 'https://a', enabled: 1 },
+    { id: 2, name: '渠道B', channelType: 'openai', baseUrl: 'https://b', enabled: 1 },
+  ],
+})
+
+vi.mock('@/api/channel', () => ({
+  channelApi: {
+    list: (...a: unknown[]) => channelListMock(...a),
   },
 }))
 
@@ -130,5 +145,60 @@ describe('小组类型互转', () => {
     expect(wrapper.find('.pattern-flash').exists()).toBe(true)
     expect(document.activeElement).toBe(wrapper.find('.pattern-row input').element)
     routeQuery = {}
+  })
+})
+
+describe('动态小组的渠道范围', () => {
+  /** 渠道范围区的两张模式卡片：[全部渠道, 指定渠道]。 */
+  function scopeTabs(wrapper: ReturnType<typeof mount>) {
+    return wrapper.findAll('.scope-row .tab-btn')
+  }
+
+  function saveButton(wrapper: ReturnType<typeof mount>) {
+    const btns = wrapper.findAll('.footer-actions button')
+    return btns[btns.length - 1]
+  }
+
+  it('加载带 channelIds 的动态小组：切到指定渠道且回填，保存载荷携带所选渠道', async () => {
+    updateMock.mockResolvedValue({ data: { success: true } })
+    const wrapper = await mountForm({ id: 7, name: 'DF', type: 'rule', pattern: 'deepseek', strategy: 'sticky', channelIds: [1, 2] })
+
+    // 默认全部渠道；手动切到「指定渠道」出现渠道多选
+    expect(scopeTabs(wrapper).length).toBe(2)
+    await scopeTabs(wrapper)[1].trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.scope-row .searchable-select').exists()).toBe(true)
+    expect(wrapper.find('.scope-warn').exists()).toBe(false)
+
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledWith(7, expect.objectContaining({ channelIds: [1, 2] }))
+  })
+
+  it('渠道范围切回全部渠道：保存载荷携带空数组（后端恢复全部渠道）', async () => {
+    updateMock.mockResolvedValue({ data: { success: true } })
+    const wrapper = await mountForm({ id: 7, name: 'DF', type: 'rule', pattern: 'deepseek', strategy: 'sticky', channelIds: [1] })
+
+    await scopeTabs(wrapper)[0].trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.scope-row .searchable-select').exists()).toBe(false)
+
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+    expect(updateMock).toHaveBeenCalledWith(7, expect.objectContaining({ channelIds: [] }))
+  })
+
+  it('指定渠道但一个都没选：显示告警且保存按钮禁用', async () => {
+    const wrapper = await mountForm({ id: 7, name: 'DF', type: 'rule', pattern: 'deepseek', strategy: 'sticky' })
+
+    await scopeTabs(wrapper)[1].trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.scope-warn').exists()).toBe(true)
+    expect((saveButton(wrapper).element as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('手动小组不渲染渠道范围区（休眠值不影响界面）', async () => {
+    const wrapper = await mountForm({ id: 7, name: 'DF', type: 'manual', pattern: '', strategy: 'sticky', channelIds: [1] })
+    expect(wrapper.find('.scope-row').exists()).toBe(false)
   })
 })

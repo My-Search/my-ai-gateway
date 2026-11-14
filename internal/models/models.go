@@ -154,6 +154,9 @@ type ModelGroup struct {
 	Type *string `json:"type"`
 	// Pattern 是动态小组的匹配表达式（type='rule' 时有效）；手动小组为空。
 	Pattern *string `json:"pattern"`
+	// ChannelIDs 是动态小组规则匹配的渠道范围（channel_ids 列，逗号分隔存储）：
+	// 空 = 全部启用渠道；手动小组为休眠值，不参与成员同步。
+	ChannelIDs []int64 `json:"channelIds,omitempty"`
 	// Strategy 是组内路由方式：failover（顺序）/ sticky（粘性，按权重一致性哈希）。
 	Strategy *string `json:"strategy"`
 	// Sticky=1 时按请求消息前缀的一致性哈希固定组内成员，命中上游 prompt cache。
