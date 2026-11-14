@@ -1479,6 +1479,20 @@ onUnmounted(() => {
     gap: 6px;
     font-size: 11px;
   }
+  /* 路由/重试较多时单行内容会远超屏宽：中间信息区改为横向滚动，
+     左侧阶段徽章与右侧时间保持可见，避免行尾内容被 ellipsis 永久裁掉 */
+  .log-info {
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    text-overflow: clip;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+  .log-info::-webkit-scrollbar {
+    display: none;
+  }
   .log-filter-summary {
     max-width: 100%;
     white-space: normal;
