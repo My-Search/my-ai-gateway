@@ -782,19 +782,6 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* 顶部品牌色细边，作为卡片的身份标识 */
-.stat-card::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 2px;
-  opacity: 0.85;
-}
-.stat-card--blue::before { background: linear-gradient(90deg, transparent, var(--accent-blue), transparent); }
-.stat-card--green::before { background: linear-gradient(90deg, transparent, var(--accent-green), transparent); }
-.stat-card--purple::before { background: linear-gradient(90deg, transparent, var(--accent-purple), transparent); }
-.stat-card--yellow::before { background: linear-gradient(90deg, transparent, var(--accent-yellow), transparent); }
-
 .stat-card:hover {
   box-shadow: var(--shadow-md);
   transform: translateY(-2px);
