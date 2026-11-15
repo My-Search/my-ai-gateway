@@ -177,7 +177,7 @@
         </div>
       </div>
       <div v-if="expandedTraces.has(trace.traceId)" class="trace-detail">
-        <div v-for="(group, gIdx) in groupedTraceLogs.get(trace.traceId) || []" :key="group.key + '-' + gIdx" class="log-entry" :class="{ 'log-entry-clickable': group.hasMessage }" :style="{ paddingLeft: `calc(var(--indent-base, 12px) + ${gIdx} * var(--indent-step, 16px))` }" @click.stop="openLogDetail(group)">
+        <div v-for="(group, gIdx) in groupedTraceLogs.get(trace.traceId) || []" :key="group.key + '-' + gIdx" class="log-entry" :class="{ 'log-entry-clickable': group.hasMessage }" :style="{ paddingLeft: `calc(var(--indent-base, 12px) + min(${gIdx} * var(--indent-step, 16px), var(--indent-max)))` }" @click.stop="openLogDetail(group)">
           <PhaseBadge :phase="group.logs[0].phase" :count="group.logs.length > 1 ? group.logs.length : undefined" />
           <span class="log-info">
             <template v-if="group.protocol">
@@ -1272,6 +1272,8 @@ onUnmounted(() => {
   margin-left: 20px;
   --indent-base: 12px;
   --indent-step: 16px;
+  /* 缩进上限：链路层级过深时封顶，避免整行被推出可视区 */
+  --indent-max: 96px;
   content-visibility: auto;
   contain-intrinsic-size: auto 120px;
 }
@@ -1288,7 +1290,8 @@ onUnmounted(() => {
 .log-entry:last-child { border-bottom: none; }
 .log-entry-clickable { cursor: pointer; }
 .log-entry-clickable:hover { background: var(--bg-hover); }
-.log-info { color: var(--text-secondary); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* min-width: 0 允许该列收缩，长文本不会把行撑出容器、时间列不会被挤出可视区 */
+.log-info { color: var(--text-secondary); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .log-time { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 .log-message { color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; flex-shrink: 1; }
 .log-message-error { color: var(--accent-red); }
@@ -1473,6 +1476,8 @@ onUnmounted(() => {
     margin-left: 8px;
     --indent-base: 8px;
     --indent-step: 12px;
+    /* 窄屏缩进上限更小：路由条数多时靠缩进叠加会超屏宽，右侧时间被推出可视区 */
+    --indent-max: 48px;
   }
   .log-entry {
     padding: 6px 8px;
